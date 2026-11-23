@@ -1,0 +1,24 @@
+<resources>
+    <string name="app_name">Nova VPN</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_profiles">Profiles</string>
+    <string name="nav_stats">Stats</string>
+    <string name="nav_settings">Settings</string>
+    <string name="tile_label">Nova VPN</string>
+    <string name="widget_description">Quickly connect or pause Nova VPN from your home screen</string>
+    <string name="notif_channel_vpn">VPN Connection</string>
+    <string name="notif_channel_vpn_desc">Persistent status, live speed, and quick controls while Nova VPN is active</string>
+    <string name="notif_action_disconnect">Disconnect</string>
+    <string name="notif_action_pause">Pause</string>
+    <string name="notif_action_resume">Resume</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_paused">Paused</string>
+    <string name="status_reconnecting">Reconnecting…</string>
+    <string name="status_error">Connection Error</string>
+    <string name="tap_to_connect">Tap to connect</string>
+    <string name="tap_to_disconnect">Connected · Tap to disconnect</string>
+    <string name="slide_to_connect">slide to connect</string>
+    <string name="slide_to_disconnect">slide to disconnect</string>
+</resources>

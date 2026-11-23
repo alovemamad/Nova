@@ -1,0 +1,24 @@
+<resources>
+    <string name="app_name">نوا وی‌پی‌ان</string>
+    <string name="nav_home">خانه</string>
+    <string name="nav_profiles">پروفایل‌ها</string>
+    <string name="nav_stats">آمار</string>
+    <string name="nav_settings">تنظیمات</string>
+    <string name="tile_label">Nova VPN</string>
+    <string name="widget_description">اتصال یا توقف سریع نوا وی‌پی‌ان از صفحه اصلی</string>
+    <string name="notif_channel_vpn">وضعیت اتصال VPN</string>
+    <string name="notif_channel_vpn_desc">نمایش وضعیت اتصال، سرعت لحظه‌ای و دکمه‌های کنترل سریع</string>
+    <string name="notif_action_disconnect">قطع اتصال</string>
+    <string name="notif_action_pause">توقف موقت</string>
+    <string name="notif_action_resume">ادامه</string>
+    <string name="status_disconnected">متصل نیست</string>
+    <string name="status_connecting">در حال اتصال…</string>
+    <string name="status_connected">متصل</string>
+    <string name="status_paused">متوقف موقت</string>
+    <string name="status_reconnecting">اتصال مجدد…</string>
+    <string name="status_error">خطای اتصال</string>
+    <string name="tap_to_connect">برای اتصال لمس کنید</string>
+    <string name="tap_to_disconnect">متصل · برای قطع لمس کنید</string>
+    <string name="slide_to_connect">برای اتصال بکشید</string>
+    <string name="slide_to_disconnect">برای قطع بکشید</string>
+</resources>

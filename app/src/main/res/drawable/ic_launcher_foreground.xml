@@ -1,0 +1,30 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer shield prism inside 66dp safe zone (24..84) -->
+    <path
+        android:fillType="evenOdd"
+        android:pathData="M54,23 L79,32.5 L79,55.5 C79,69.5 67.8,79.8 54,85 C40.2,79.8 29,69.5 29,55.5 L29,32.5 Z M42,40 L42,68 L48,68 L48,51.5 L60,68 L66,68 L66,40 L60,40 L60,56.5 L48,40 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="79"
+                android:endY="85"
+                android:startX="29"
+                android:startY="23"
+                android:type="linear">
+                <item
+                    android:color="#FF00E5CC"
+                    android:offset="0.0" />
+                <item
+                    android:color="#FF38BDF8"
+                    android:offset="0.45" />
+                <item
+                    android:color="#FF7C5CFF"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

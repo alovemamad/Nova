@@ -1,0 +1,6 @@
+{
+  "name": "Nova VPN",
+  "description": "Production Android VPN client with Liquid Glass UI, Aether/Psiphon/Tor multi-route tunneling, smart diagnostics, and split tunneling.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

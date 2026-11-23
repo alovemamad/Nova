@@ -1,0 +1,67 @@
+You are a senior Android engineer. Build a COMPLETE, production-quality Android VPN client called "Nova VPN" (package app.novavpn). Output the whole project, every file in full, with no placeholders, no "TODO", no "rest of code here". If output is long, continue in multiple messages and tell me which files are done.
+
+## 1. Stack
+- Kotlin, Jetpack Compose, Material 3, minSdk 26, targetSdk 35, compileSdk 35, AGP 8.7+, Kotlin 2.0+, JDK 17.
+- Single module :app, MVVM with StateFlow, Kotlin coroutines. No Hilt needed; keep dependencies minimal.
+- Include Gradle wrapper files, .gitignore, proguard rules, and a GitHub Actions workflow that builds debug AND release APKs. Debug must build without any secret; release signs only if keystore secrets exist (never fail the whole workflow when they are missing).
+- ABIs: arm64-v8a, armeabi-v7a, x86_64. Every native component must be built for all three, so the universal APK never ships a partial ABI.
+
+## 2. Architecture (traffic flow)
+apps -> VpnService TUN -> TUN engine -> local SOCKS5 (127.0.0.1) -> core -> internet
+- Core (runs as a supervised child process from nativeLibraryDir): Aether (CluvexStudio/Aether), with optional Psiphon and Tor (Lyrebird for obfs4/webtunnel) routes.
+- TUN engines: sing-box (libbox, gVisor stack) as default, hev-socks5-tunnel as automatic fallback. Fall back automatically if the default fails to start.
+- Modes: VPN (whole device) and Proxy-only (local SOCKS5 + optional HTTP proxy).
+- Routes: Aether, Aether->Psiphon, Aether->Tor, Psiphon only, Tor only.
+- Aether protocols: MASQUE, WireGuard, WARP-in-MASQUE, WARP-in-WARP, MASQUE-in-MASQUE.
+
+## 3. Features (all required)
+From both reference apps:
+- One-tap connect with animated connection orb, status pill, timer, live ping, down/up speed, exit IP with country flag, reason of last drop.
+- Smart reconnect: core death, failed pings, network change (Wi-Fi <-> mobile), exponential backoff, "fresh scan" vs "last good gateway", never burn attempts while offline.
+- Pause/resume (interface off, core stays alive).
+- Split tunneling (include/exclude) with searchable app picker (icons, system-app toggle).
+- Routing rules: block list, direct list (domain, IP, CIDR, port), custom DNS (DoH/DoT/plain), upstream proxy.
+- Custom endpoint IP:port, scan level, obfuscation profile, IPv4/IPv6, MTU, TCP buffer, ping interval/failure limit, extra core args (validated, no shell injection).
+- Psiphon region picker; Tor custom bridges (obfs4/webtunnel) with paste/import.
+- Share proxy to other devices: off by default, listens on 127.0.0.1 unless the user enables sharing.
+- Quick Settings tile, home-screen widget, start on boot, battery-optimization shortcut.
+- Logs screen (copy, share, clear), settings backup/restore to JSON, check-for-updates (GitHub releases, notify only, never auto-install).
+- Persian (RTL) and English, dark/light/dynamic color.
+
+New additions (please implement all):
+1. Kill switch / "Block connections without VPN" (setBlocking + always-on VPN guidance with a deep link to system VPN settings).
+2. Auto-connect rules: on untrusted Wi-Fi, on app launch of selected apps, on boot.
+3. Profiles: save/duplicate/rename/export/import named profiles (route + protocol + all tuning). QR code import/export and clipboard import.
+4. Smart "Auto" mode: tries routes in order and keeps the first one that passes a real HTTPS test; remembers the best route per network (SSID/mobile).
+5. Built-in diagnostics screen: DNS leak test, IPv6 leak test, WebRTC-independent exit IP check, latency to 3 endpoints, MTU probe, one-tap "Fix connection" that applies safe fixes.
+6. Data usage stats per day/week/month with a chart, per-session history.
+7. Notification with Disconnect / Pause actions and live speed.
+8. App lock (biometric/PIN) and a "hide from recents" option.
+9. Onboarding (3 screens), permission explainer (VPN, notifications, battery), and clear error messages with a suggested action for every failure.
+10. Accessibility: TalkBack labels, 48dp targets, font scaling up to 200%.
+
+## 4. Design
+- Modern, calm, premium look: deep navy/near-black dark theme, one accent gradient (teal -> violet), glassy cards, 20-28dp rounded corners, subtle motion (orb pulse while connecting, smooth state transitions, haptics on connect).
+- Bottom navigation: Home, Profiles, Stats, Settings. Settings has collapsible sections.
+- Persian font (Vazirmatn) bundled; correct RTL mirroring, Persian/Latin digits option.
+- Provide an adaptive launcher icon (vector) and monochrome themed icon.
+
+## 5. Correctness rules (very important)
+- Thread-safe shared state: use StateFlow.update{}, @Volatile or Mutex for every field touched by more than one thread/coroutine. No read-modify-write on .value.
+- Never block the main thread (no process waits or sleeps in onDestroy/onRevoke).
+- Foreground service type specialUse with proper subtype property; handle Android 13+ notification permission and Android 14/15 FGS rules; handle START_STICKY null intent safely (restore only if the user had the VPN on).
+- The app's own sockets must be excluded from the TUN (addDisallowedApplication) and protect() used where required, so no routing loops.
+- Core process: SIGTERM then SIGKILL, kill orphaned helpers (psiphon/lyrebird) of our own uid, detect port conflicts before start, parse core log for readiness (do not trust an open port alone).
+- All exported components minimal: only launcher activity, QS tile and widget exported. BootReceiver not exported.
+- Validate every user input (IP, CIDR, ports, DNS, bridge lines, extra args). Reject shell metacharacters; pass args as a list, never through a shell.
+- Do not log secrets, bridge lines or full IPs of other devices.
+- Settings stored with DataStore; migrations handled so updates never reset user data.
+
+## 6. Deliverables
+1. Full file tree first.
+2. Every file in full: Gradle files, manifest, all Kotlin sources, resources (values, values-fa, drawables, xml), proguard, workflow, README (EN + FA).
+3. A native build section: exact scripts/CI steps to produce libaether.so, libpsiphon.so, liblyrebird.so, libhev-socks5-tunnel.so for all 3 ABIs and libbox.aar covering the same ABIs, plus where each file lands (jniLibs / app/libs).
+4. Unit tests for: argument builder, input validators, reconnect state machine, CIDR/domain rule parser, settings migration.
+5. A final self-review: list every place where a race condition, leak, crash or permission problem could occur and show how the code prevents it. Then compile-check mentally and fix any error before finishing.
+
+Respond with the file tree now, then generate files in logical order: build files -> core/engine -> service -> data -> UI -> resources -> CI -> tests -> README.

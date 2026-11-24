@@ -46,6 +46,10 @@
     <string name="home_proxy_creds_body">SOCKS5 :%1$d%2$s · کاربر: %3$s · رمز: %4$s</string>
     <string name="home_proxy_creds_copy">کپی اطلاعات</string>
     <string name="home_proxy_creds_copied">اطلاعات پروکسی کپی شد</string>
+    <string name="home_proxy_endpoints_title">آدرس‌های فعال پروکسی</string>
+    <string name="home_proxy_endpoints_body">SOCKS5 %1$s:%2$d%3$s</string>
+    <string name="home_proxy_endpoints_copy">کپی آدرس</string>
+    <string name="home_proxy_endpoints_copied">آدرس پروکسی کپی شد</string>
     <string name="home_paused_banner_title">تونل VPN موقتاً متوقف است</string>
     <string name="home_paused_banner_body">رابط TUN بسته شده است. ترافیک برنامه‌ها هم‌اکنون بدون پوشش VPN مستقیماً از شبکه عبور می‌کند.</string>
 

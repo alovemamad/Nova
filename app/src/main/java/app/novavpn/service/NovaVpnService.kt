@@ -242,7 +242,7 @@ class NovaVpnService : VpnService() {
 
             override suspend fun openAndStartTun(
                 socksPort: Int,
-                auth: SessionProxyAuth
+                auth: SessionProxyAuth?
             ): TunnelLifecycleCoordinator.TunStepResult {
                 val settings = settingsRepo.getSettings()
                 val profile = settingsRepo.getActiveProfile()
@@ -311,7 +311,7 @@ class NovaVpnService : VpnService() {
                 tunEngine: TunEngineType,
                 socksPort: Int,
                 httpPort: Int?,
-                auth: SessionProxyAuth,
+                auth: SessionProxyAuth?,
                 pingMs: Int?,
                 resumed: Boolean
             ) {
@@ -336,8 +336,8 @@ class NovaVpnService : VpnService() {
                         socksPort = socksPort,
                         httpPort = httpPort,
                         lanShareActive = settings.shareProxyOnLan,
-                        sessionProxyUser = auth.username,
-                        sessionProxyPass = auth.password,
+                        sessionProxyUser = auth?.username,
+                        sessionProxyPass = auth?.password,
                         errorMessage = null,
                         suggestedFix = SuggestedFixAction.NONE
                     )
@@ -408,7 +408,7 @@ class NovaVpnService : VpnService() {
         }
     }
 
-    private fun startTelemetryLoop(profile: VpnProfile, socksPort: Int, auth: SessionProxyAuth) {
+    private fun startTelemetryLoop(profile: VpnProfile, socksPort: Int, auth: SessionProxyAuth?) {
         telemetryJob?.cancel()
         val controller = ServiceLocator.vpnController
         val diagnostics = ServiceLocator.diagnosticsEngine

@@ -1,17 +1,14 @@
 package app.novavpn.core.process
 
-import app.novavpn.core.SessionProxyAuth
 import app.novavpn.domain.model.AetherProtocol
 import app.novavpn.domain.model.AppSettings
+import app.novavpn.domain.model.DnsMode
 import app.novavpn.domain.model.ObfuscationProfile
+import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.VpnProfile
 import app.novavpn.domain.routing.RuleKind
 import app.novavpn.domain.routing.RoutingRuleParser
 import app.novavpn.domain.validation.InputValidators
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import java.io.File
 
 interface CoreAdapter {
@@ -22,237 +19,307 @@ interface CoreAdapter {
 }
 
 /**
- * Assumed CLI contract for Aether (`libaether.so`):
- * - `--bind <host:port>` SOCKS5 listen address
- * - `--http-bind <host:port>` optional HTTP proxy listen address
- * - `--socks-user <user> --socks-pass <pass>` SOCKS5 authentication
- * - `--http-user <user> --http-pass <pass>` HTTP proxy authentication (when `--http-bind` is set)
- * - `--protocol masque|wireguard|warp-in-masque|warp-in-warp|masque-in-masque`
- * - `--obfs auto|none|quic-tls|wg-noise|aggressive`
- * - `--endpoint <host:port>` OR `--scan --scan-level <1..3>`
- * - `--ipv4-only` | `--ipv6-only`
- * - `--mtu <576..1500>` `--tcp-buf <N>k`
+ * Verified CLI contract for CluvexStudio/Aether v2.4.0 (`libaether.so`):
+ * - `--config <path>` identity config path inside writable app files dir
+ * - `--bind <host:port>` SOCKS5 listen address (no auth; loopback by default)
+ * - `--http-proxy <host:port>` optional HTTP CONNECT listen address
+ * - `--masque` | `--wg` | `--gool` | `--gool --gool-classic` | `--mim`
+ * - `--h3` (default QUIC/HTTP3) or `--h2` (overridable via extra args)
+ * - `--noize <off|light|firewall|balanced|gfw|aggressive>`
+ * - `--peer <ip:port>` / `--wg-peer <ip:port>` / `--wiw-outer <ip:port>` / `--mim-outer <ip:port>`
+ * - `--turbo` | `--balanced` | `--thorough`
+ * - `--quick-reconnect` | `--no-quick-reconnect`
+ * - `-4` | `-6` | `--dual`
+ * - `--dns <ip[,ip]>` (inside-tunnel plain resolvers when plain IP DNS is configured)
  * - `--upstream <uri>`
- * - `--direct <cidr|domain>` (repeatable)
- * - Readiness stdout/stderr line: contains "socks5 listening" or "tunnel ready"
+ * - `--route-direct <comma-separated>` / `--route-block <comma-separated>`
+ * - Built-in Psiphon orchestration: `--psiphon` / `--psiphon-only` with `--psiphon-bin`, `--psiphon-dir`, `--psiphon-bind`, `--psiphon-http`, `--psiphon-region`
+ * - Built-in Arti Tor orchestration: `--tor` / `--tor-only` with `--tor-dir`, `--tor-bind`, `--tor-http`, `--tor-pt <proto=path>`, `--tor-bridge` / `--tor-bridges`
+ * - Env: `AETHER_MASQUE_MTU=<576..1500>`
  */
 object AetherCoreAdapter : CoreAdapter {
     override val id: String = "aether"
     override val requiredBinaryNames: List<String> = listOf("libaether.so")
 
-    private val ENDPOINT_REGEX = Regex("""(\d{1,3}(?:\.\d{1,3}){3}:\d{2,5})""")
+    private val IPV4_ENDPOINT_REGEX = Regex("""(\d{1,3}(?:\.\d{1,3}){3}:\d{2,5})""")
+    private val IPV6_ENDPOINT_REGEX = Regex("""(\[[0-9a-fA-F:]+]:\d{2,5})""")
 
-    fun buildArgs(
+    fun buildTunnelArgs(
         nativeDir: File,
-        bindAddress: String,
-        httpBind: String?,
-        auth: SessionProxyAuth,
+        workDir: File,
+        socksBindAddress: String,
+        httpBindAddress: String?,
         profile: VpnProfile,
         settings: AppSettings,
         useFreshScan: Boolean,
         extraArgs: List<String>,
-        upstreamSocks: String?
+        routeChain: RouteChain,
+        chainExitSocksBind: String? = null,
+        chainExitHttpBind: String? = null
     ): List<String> {
         val bin = File(nativeDir, "libaether.so").absolutePath
-        val args = mutableListOf(bin)
-        args.addAll(listOf("--bind", bindAddress))
-        args.addAll(listOf("--socks-user", auth.username, "--socks-pass", auth.password))
-        if (httpBind != null) {
-            args.addAll(listOf("--http-bind", httpBind))
-            args.addAll(listOf("--http-user", auth.username, "--http-pass", auth.password))
-        }
+        val configPath = File(workDir, "aether.toml").absolutePath
+        val args = mutableListOf(bin, "--config", configPath)
 
-        val protoFlag = when (profile.aetherProtocol) {
-            AetherProtocol.MASQUE -> "masque"
-            AetherProtocol.WIREGUARD -> "wireguard"
-            AetherProtocol.WARP_IN_MASQUE -> "warp-in-masque"
-            AetherProtocol.WARP_IN_WARP -> "warp-in-warp"
-            AetherProtocol.MASQUE_IN_MASQUE -> "masque-in-masque"
-        }
-        args.addAll(listOf("--protocol", protoFlag))
-
-        val obfsFlag = when (profile.obfuscation) {
-            ObfuscationProfile.AUTO -> "auto"
-            ObfuscationProfile.NONE -> "none"
-            ObfuscationProfile.QUIC_TLS_CAMO -> "quic-tls"
-            ObfuscationProfile.WIREGUARD_NOISE -> "wg-noise"
-            ObfuscationProfile.AGGRESSIVE_DPI -> "aggressive"
-        }
-        args.addAll(listOf("--obfs", obfsFlag))
-
-        val endpoint = when {
-            profile.customEndpoint.isNotBlank() -> profile.customEndpoint.trim()
-            !useFreshScan && settings.preferLastGoodGateway && settings.lastKnownGoodEndpoint.isNotBlank() ->
-                settings.lastKnownGoodEndpoint.trim()
-            else -> ""
-        }
-        if (endpoint.isNotBlank()) {
-            args.addAll(listOf("--endpoint", endpoint))
-        } else {
-            args.add("--scan")
-            args.addAll(listOf("--scan-level", profile.scanLevel.coerceIn(1, 3).toString()))
-        }
-
-        if (profile.ipv4Enabled && !profile.ipv6Enabled) {
-            args.add("--ipv4-only")
-        } else if (!profile.ipv4Enabled && profile.ipv6Enabled) {
-            args.add("--ipv6-only")
-        }
-
-        args.addAll(listOf("--mtu", profile.mtu.coerceIn(576, 1500).toString()))
-        args.addAll(listOf("--tcp-buf", "${profile.tcpBufferKb.coerceIn(16, 512)}k"))
-
-        if (profile.upstreamProxyUri.isNotBlank()) {
-            args.addAll(listOf("--upstream", profile.upstreamProxyUri.trim()))
-        } else if (upstreamSocks != null) {
-            args.addAll(listOf("--upstream", upstreamSocks))
-        }
-
-        val directParsed = RoutingRuleParser.parse(profile.directRules)
-        directParsed.validRules.forEach { rule ->
-            if (rule.kind == RuleKind.IP_CIDR || rule.kind == RuleKind.DOMAIN || rule.kind == RuleKind.DOMAIN_SUFFIX) {
-                args.addAll(listOf("--direct", rule.rawLine))
+        when (routeChain) {
+            RouteChain.PSIPHON_ONLY -> {
+                args.add("--psiphon-only")
+                args.addAll(listOf("--bind", socksBindAddress))
+                appendPsiphonArgs(
+                    args = args,
+                    nativeDir = nativeDir,
+                    workDir = workDir,
+                    profile = profile,
+                    bindOverride = null,
+                    httpBind = httpBindAddress
+                )
+                appendUpstream(args, profile)
+                args.addAll(extraArgs)
+                return args
             }
+
+            RouteChain.TOR_ONLY -> {
+                args.add("--tor-only")
+                args.addAll(listOf("--bind", socksBindAddress))
+                appendTorArgs(
+                    args = args,
+                    nativeDir = nativeDir,
+                    workDir = workDir,
+                    profile = profile,
+                    bindOverride = null,
+                    httpBind = httpBindAddress
+                )
+                appendUpstream(args, profile)
+                args.addAll(extraArgs)
+                return args
+            }
+
+            RouteChain.AETHER, RouteChain.SMART_AUTO -> {
+                args.addAll(listOf("--bind", socksBindAddress))
+                if (httpBindAddress != null) {
+                    args.addAll(listOf("--http-proxy", httpBindAddress))
+                }
+            }
+
+            RouteChain.AETHER_PSIPHON -> {
+                args.addAll(listOf("--bind", socksBindAddress))
+                args.add("--psiphon")
+                appendPsiphonArgs(
+                    args = args,
+                    nativeDir = nativeDir,
+                    workDir = workDir,
+                    profile = profile,
+                    bindOverride = chainExitSocksBind,
+                    httpBind = chainExitHttpBind
+                )
+            }
+
+            RouteChain.AETHER_TOR -> {
+                args.addAll(listOf("--bind", socksBindAddress))
+                args.add("--tor")
+                appendTorArgs(
+                    args = args,
+                    nativeDir = nativeDir,
+                    workDir = workDir,
+                    profile = profile,
+                    bindOverride = chainExitSocksBind,
+                    httpBind = chainExitHttpBind
+                )
+            }
+        }
+
+        // Core WARP/MASQUE transport selection (explicit so interactive prompts never trigger)
+        when (profile.aetherProtocol) {
+            AetherProtocol.MASQUE -> {
+                args.add("--masque")
+                args.add("--h3")
+            }
+            AetherProtocol.WIREGUARD -> args.add("--wg")
+            AetherProtocol.WARP_IN_MASQUE -> {
+                args.add("--gool")
+                args.add("--h3")
+            }
+            AetherProtocol.WARP_IN_WARP -> {
+                args.add("--gool")
+                args.add("--gool-classic")
+            }
+            AetherProtocol.MASQUE_IN_MASQUE -> {
+                args.add("--mim")
+                args.add("--h3")
+            }
+        }
+
+        val noizeFlag = when (profile.obfuscation) {
+            ObfuscationProfile.AUTO -> "balanced"
+            ObfuscationProfile.NONE -> "off"
+            ObfuscationProfile.QUIC_TLS_CAMO -> "light"
+            ObfuscationProfile.WIREGUARD_NOISE -> "balanced"
+            ObfuscationProfile.AGGRESSIVE_DPI -> "gfw"
+        }
+        args.addAll(listOf("--noize", noizeFlag))
+
+        val explicitEndpoint = profile.customEndpoint.trim()
+        if (explicitEndpoint.isNotBlank()) {
+            when (profile.aetherProtocol) {
+                AetherProtocol.WIREGUARD -> args.addAll(listOf("--wg-peer", explicitEndpoint))
+                AetherProtocol.WARP_IN_WARP -> args.addAll(listOf("--wiw-outer", explicitEndpoint))
+                AetherProtocol.MASQUE_IN_MASQUE -> args.addAll(listOf("--mim-outer", explicitEndpoint))
+                AetherProtocol.MASQUE, AetherProtocol.WARP_IN_MASQUE -> args.addAll(listOf("--peer", explicitEndpoint))
+            }
+        } else if (!useFreshScan && settings.preferLastGoodGateway) {
+            args.add("--quick-reconnect")
+        } else {
+            args.add("--no-quick-reconnect")
+        }
+
+        val scanFlag = when (profile.scanLevel.coerceIn(1, 3)) {
+            1 -> "--turbo"
+            3 -> "--thorough"
+            else -> "--balanced"
+        }
+        args.add(scanFlag)
+
+        when {
+            profile.ipv4Enabled && profile.ipv6Enabled -> args.add("--dual")
+            !profile.ipv4Enabled && profile.ipv6Enabled -> args.add("-6")
+            else -> args.add("-4")
+        }
+
+        if (profile.dnsMode == DnsMode.PLAIN) {
+            val dnsIps = listOf(profile.customDnsPrimary.trim(), profile.customDnsSecondary.trim())
+                .filter { it.isNotBlank() && InputValidators.isValidIp(it) }
+                .distinct()
+            if (dnsIps.isNotEmpty()) {
+                args.addAll(listOf("--dns", dnsIps.joinToString(",")))
+            }
+        }
+
+        appendUpstream(args, profile)
+
+        val directCsv = formatRoutingRulesCsv(profile.directRules)
+        if (directCsv.isNotEmpty()) {
+            args.addAll(listOf("--route-direct", directCsv))
+        }
+        val blockCsv = formatRoutingRulesCsv(profile.blockRules)
+        if (blockCsv.isNotEmpty()) {
+            args.addAll(listOf("--route-block", blockCsv))
         }
 
         args.addAll(extraArgs)
         return args
     }
 
+    private fun appendUpstream(args: MutableList<String>, profile: VpnProfile) {
+        val upstream = profile.upstreamProxyUri.trim()
+        if (upstream.isNotBlank()) {
+            args.addAll(listOf("--upstream", upstream))
+        }
+    }
+
+    private fun appendPsiphonArgs(
+        args: MutableList<String>,
+        nativeDir: File,
+        workDir: File,
+        profile: VpnProfile,
+        bindOverride: String?,
+        httpBind: String?
+    ) {
+        val psiphonBin = File(nativeDir, "libpsiphon.so").absolutePath
+        val psiphonDir = File(workDir, "psiphon_state").apply { mkdirs() }.absolutePath
+        args.addAll(listOf("--psiphon-bin", psiphonBin))
+        args.addAll(listOf("--psiphon-dir", psiphonDir))
+        if (bindOverride != null) {
+            args.addAll(listOf("--psiphon-bind", bindOverride))
+        }
+        if (httpBind != null) {
+            args.addAll(listOf("--psiphon-http", httpBind))
+        }
+        val region = profile.psiphonRegion.trim()
+        if (region.isNotBlank() && !region.equals("AUTO", ignoreCase = true)) {
+            args.addAll(listOf("--psiphon-region", region))
+        }
+    }
+
+    private fun appendTorArgs(
+        args: MutableList<String>,
+        nativeDir: File,
+        workDir: File,
+        profile: VpnProfile,
+        bindOverride: String?,
+        httpBind: String?
+    ) {
+        val lyrebirdBin = File(nativeDir, "liblyrebird.so").absolutePath
+        val torDir = File(workDir, "tor_state").apply { mkdirs() }.absolutePath
+        args.addAll(listOf("--tor-dir", torDir))
+        if (bindOverride != null) {
+            args.addAll(listOf("--tor-bind", bindOverride))
+        }
+        if (httpBind != null) {
+            args.addAll(listOf("--tor-http", httpBind))
+        }
+        listOf("obfs4", "webtunnel", "snowflake", "meek_lite").forEach { ptProto ->
+            args.addAll(listOf("--tor-pt", "$ptProto=$lyrebirdBin"))
+        }
+        if (profile.torUseBridges) {
+            val validBridges = profile.torBridges
+                .filter { InputValidators.validateTorBridgeLine(it).isValid }
+                .map { it.trim().removePrefix("Bridge ").trim() }
+            if (validBridges.isNotEmpty()) {
+                validBridges.forEach { bridge ->
+                    args.addAll(listOf("--tor-bridge", bridge))
+                }
+            } else {
+                args.add("--tor-bridges")
+            }
+        }
+    }
+
+    internal fun formatRoutingRulesCsv(rawRules: String): String {
+        val parsed = RoutingRuleParser.parse(rawRules)
+        return parsed.validRules.mapNotNull { rule ->
+            when (rule.kind) {
+                RuleKind.IP_CIDR, RuleKind.DOMAIN, RuleKind.DOMAIN_SUFFIX -> rule.rawLine
+                RuleKind.PORT -> "port:${rule.value}"
+                RuleKind.GEOIP, RuleKind.GEOSITE -> if (rule.value == "private") "private" else null
+            }
+        }.distinct().joinToString(",")
+    }
+
     override fun isReadinessLine(line: String): Boolean {
         val lower = line.lowercase()
-        return lower.contains("socks5 listening") ||
-            lower.contains("proxy listening") ||
-            lower.contains("tunnel ready") ||
-            lower.contains("listening on")
+        return lower.contains("socks5 server listening on") ||
+            lower.contains("socks5 listening") ||
+            lower.contains("tunnel ready")
+    }
+
+    fun isPsiphonReadinessLine(line: String): Boolean {
+        val lower = line.lowercase()
+        return lower.contains("psiphon is ready") ||
+            lower.contains("socks proxy listening")
+    }
+
+    fun isTorReadinessLine(line: String): Boolean {
+        val lower = line.lowercase()
+        return lower.contains("tor is ready") ||
+            lower.contains("bootstrapped 100%")
     }
 
     override fun extractEndpoint(line: String): String? {
-        if (!line.contains("endpoint=", ignoreCase = true) && !line.contains("connected to ", ignoreCase = true)) {
-            return null
-        }
-        return ENDPOINT_REGEX.find(line)?.groupValues?.get(1)
-    }
-}
-
-/**
- * Assumed CLI contract for Psiphon wrapper (`libpsiphon.so`):
- * - Invoked as `libpsiphon.so -config <psiphon_config.json>`
- * - Config keys: `DataRootDirectory`, `LocalSocksProxyPort`, `ListenInterface`, optional `LocalHttpProxyPort`,
- *   optional `EgressRegion`, optional `UpstreamProxyUrl` (socks5://user:pass@host:port), `EmitDiagnosticNotices: true`
- * - Readiness line: `"SOCKS proxy listening"` OR diagnostic JSON containing `"Tunnels"` and `"count":1`
- */
-object PsiphonCoreAdapter : CoreAdapter {
-    override val id: String = "psiphon"
-    override val requiredBinaryNames: List<String> = listOf("libpsiphon.so")
-
-    private val json = Json { prettyPrint = true }
-
-    fun writeConfigAndBuildArgs(
-        nativeDir: File,
-        workDir: File,
-        socksListen: String,
-        httpListen: String?,
-        region: String,
-        upstreamProxy: String?
-    ): Pair<List<String>, File> {
-        val dataDir = File(workDir, "psiphon_data").apply { mkdirs() }
-        val file = File(workDir, "psiphon_config.json")
-        val socksHost = socksListen.substringBeforeLast(':')
-        val socksPort = socksListen.substringAfterLast(':').toInt()
-
-        val obj = buildJsonObject {
-            put("DataRootDirectory", dataDir.absolutePath)
-            put("LocalSocksProxyPort", socksPort)
-            put("ListenInterface", socksHost)
-            if (httpListen != null) {
-                put("LocalHttpProxyPort", httpListen.substringAfterLast(':').toInt())
-            }
-            if (region.isNotBlank() && region != "AUTO") {
-                put("EgressRegion", region)
-            }
-            if (!upstreamProxy.isNullOrBlank()) {
-                put("UpstreamProxyUrl", upstreamProxy)
-            }
-            put("EmitDiagnosticNotices", true)
-        }
-        file.writeText(json.encodeToString(obj))
-        val args = listOf(File(nativeDir, "libpsiphon.so").absolutePath, "-config", file.absolutePath)
-        return args to file
-    }
-
-    override fun isReadinessLine(line: String): Boolean {
         val lower = line.lowercase()
-        return lower.contains("socks proxy listening") ||
-            (lower.contains("\"noticetype\":\"tunnels\"") && lower.contains("\"count\":1")) ||
-            (lower.contains("tunnels") && lower.contains("count: 1"))
+        val hasMarker = lower.contains("selected masque gateway") ||
+            lower.contains("selected wireguard endpoint") ||
+            lower.contains("using cloudflare edge") ||
+            lower.contains("using saved endpoint") ||
+            lower.contains("endpoint=") ||
+            lower.contains("connected to ")
+        if (!hasMarker) return null
+        return IPV4_ENDPOINT_REGEX.find(line)?.groupValues?.get(1)
+            ?: IPV6_ENDPOINT_REGEX.find(line)?.groupValues?.get(1)
     }
 }
 
 /**
- * Assumed CLI contract for Tor + Lyrebird (`libtor.so` + `liblyrebird.so`):
- * - `libtor.so -f <torrc>` runs the Tor daemon
- * - `liblyrebird.so` is invoked by Tor itself via `ClientTransportPlugin obfs4,webtunnel exec <liblyrebird.so>`
- * - Readiness line emitted by Tor: `"Bootstrapped 100%"`
- * Note: Tor routes fail cleanly with MissingBinary unless BOTH `libtor.so` and `liblyrebird.so` are present.
- */
-object TorCoreAdapter : CoreAdapter {
-    override val id: String = "tor"
-    override val requiredBinaryNames: List<String> = listOf("libtor.so", "liblyrebird.so")
-
-    fun writeTorrcAndBuildArgs(
-        nativeDir: File,
-        workDir: File,
-        socksListen: String,
-        auth: SessionProxyAuth,
-        profile: VpnProfile,
-        upstreamHostPort: String?,
-        upstreamAuth: SessionProxyAuth?
-    ): Pair<List<String>, File> {
-        val stateDir = File(workDir, "tor_state").apply { mkdirs() }
-        val torrc = File(workDir, "torrc")
-        val torBin = File(nativeDir, "libtor.so").absolutePath
-        val lyrebirdBin = File(nativeDir, "liblyrebird.so").absolutePath
-        val validBridges = profile.torBridges.filter { InputValidators.validateTorBridgeLine(it).isValid }
-
-        val lines = buildList {
-            add("DataDirectory ${stateDir.absolutePath}")
-            add("SocksPort $socksListen")
-            // Isolate local clients with ephemeral session credentials via Tor's SOCKS auth or IsolateClientAddr
-            add("IsolateSOCKSAuth 1")
-            if (upstreamHostPort != null) {
-                add("Socks5Proxy $upstreamHostPort")
-                if (upstreamAuth != null) {
-                    add("Socks5ProxyUsername ${upstreamAuth.username}")
-                    add("Socks5ProxyPassword ${upstreamAuth.password}")
-                }
-            }
-            if (profile.torUseBridges && validBridges.isNotEmpty()) {
-                add("UseBridges 1")
-                add("ClientTransportPlugin obfs4,webtunnel,snowflake,meek_lite exec $lyrebirdBin")
-                validBridges.forEach { b ->
-                    add("Bridge ${b.trim().removePrefix("Bridge ").trim()}")
-                }
-            }
-            add("Log notice stdout")
-        }
-        torrc.writeText(lines.joinToString("\n"))
-        // Only libtor.so is launched directly; Tor spawns liblyrebird.so when UseBridges is enabled
-        val args = listOf(torBin, "-f", torrc.absolutePath)
-        return args to torrc
-    }
-
-    override fun isReadinessLine(line: String): Boolean {
-        val lower = line.lowercase()
-        return lower.contains("bootstrapped 100%")
-    }
-}
-
-/**
- * Assumed contract for hev-socks5-tunnel (JNI-only):
- * - Class: `hev.htproxy.TProxyService`
- * - Methods: `TProxyStartService(String configPath, int tunFd)` and `TProxyStopService()`
- * - Native library: `libhev-socks5-tunnel.so` loaded inside the JNI class.
+ * hev-socks5-tunnel JNI adapter (`app/libs/hev-socks5-tunnel.aar` -> `libhev-socks5-tunnel.so`).
  */
 object HevCoreAdapter {
     const val JNI_CLASS_NAME = "hev.htproxy.TProxyService"

@@ -266,8 +266,8 @@ class VpnController(
                         socksPort = outcome.socksPort,
                         httpPort = outcome.httpPort,
                         lanShareActive = settings.shareProxyOnLan,
-                        sessionProxyUser = outcome.auth.username,
-                        sessionProxyPass = outcome.auth.password
+                        sessionProxyUser = outcome.auth?.username,
+                        sessionProxyPass = outcome.auth?.password
                     )
                 }
                 notifySystemSurfaces()
@@ -279,7 +279,7 @@ class VpnController(
         }
     }
 
-    private fun startProxyOnlyTelemetry(socksPort: Int, auth: SessionProxyAuth, profile: VpnProfile) {
+    private fun startProxyOnlyTelemetry(socksPort: Int, auth: SessionProxyAuth?, profile: VpnProfile) {
         proxyMonitorJob?.cancel()
         proxyMonitorJob = scope.launch {
             var lastRx = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)

@@ -260,23 +260,55 @@ fun HomeScreen(
             }
         }
 
-        // Ephemeral Session Proxy Credentials banner when in Proxy-Only or LAN Share mode
+        // Ephemeral Session Proxy Credentials / Active Endpoints banner when in Proxy-Only or LAN Share mode
         val user = status.sessionProxyUser
         val pass = status.sessionProxyPass
+        val hasCreds = !user.isNullOrBlank() && !pass.isNullOrBlank()
         if ((settings.vpnMode == VpnMode.PROXY_ONLY || status.lanShareActive) &&
-            !user.isNullOrBlank() && !pass.isNullOrBlank() &&
             (status.state == VpnState.CONNECTED || status.state == VpnState.RECONNECTING)
         ) {
             item {
+                val bindHost = if (status.lanShareActive) "0.0.0.0" else "127.0.0.1"
                 val httpPart = status.httpPort?.let { " · HTTP :$it" } ?: ""
-                val credsSummary = stringResource(
-                    R.string.home_proxy_creds_body,
-                    status.socksPort,
-                    httpPart,
-                    user,
-                    pass
-                )
-                val copiedMsg = stringResource(R.string.home_proxy_creds_copied)
+                val cardTitle = if (hasCreds) {
+                    stringResource(R.string.home_proxy_creds_title)
+                } else {
+                    stringResource(R.string.home_proxy_endpoints_title)
+                }
+                val cardSummary = if (hasCreds) {
+                    stringResource(
+                        R.string.home_proxy_creds_body,
+                        status.socksPort,
+                        httpPart,
+                        user,
+                        pass
+                    )
+                } else {
+                    fmtDigits(
+                        stringResource(
+                            R.string.home_proxy_endpoints_body,
+                            bindHost,
+                            status.socksPort,
+                            httpPart
+                        )
+                    )
+                }
+                val copyLabel = if (hasCreds) {
+                    stringResource(R.string.home_proxy_creds_copy)
+                } else {
+                    stringResource(R.string.home_proxy_endpoints_copy)
+                }
+                val copiedMsg = if (hasCreds) {
+                    stringResource(R.string.home_proxy_creds_copied)
+                } else {
+                    stringResource(R.string.home_proxy_endpoints_copied)
+                }
+                val clipValue = if (hasCreds) {
+                    "$user:$pass"
+                } else {
+                    "$bindHost:${status.socksPort}" + (status.httpPort?.let { " / $bindHost:$it" } ?: "")
+                }
+
                 GlassCard(
                     modifier = Modifier
                         .widthIn(max = 600.dp)
@@ -293,23 +325,23 @@ fun HomeScreen(
                                 Icon(Icons.Rounded.Lock, contentDescription = null, tint = look.accent, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = stringResource(R.string.home_proxy_creds_title),
+                                    text = cardTitle,
                                     style = MaterialTheme.typography.titleMedium,
                                     color = look.textPrimary
                                 )
                             }
                             TextButton(onClick = {
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                cm?.setPrimaryClip(ClipData.newPlainText("Nova Proxy Credentials", "$user:$pass"))
+                                cm?.setPrimaryClip(ClipData.newPlainText("Nova Proxy", clipValue))
                                 onPostMessage(copiedMsg)
                             }) {
                                 Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text(stringResource(R.string.home_proxy_creds_copy))
+                                Text(copyLabel)
                             }
                         }
                         Text(
-                            text = credsSummary,
+                            text = cardSummary,
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
                             color = look.textSecondary
                         )

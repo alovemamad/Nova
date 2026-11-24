@@ -1,6 +1,7 @@
 package app.novavpn.core.tun
 
 import app.novavpn.domain.model.DnsMode
+import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.SplitTunnelMode
 import app.novavpn.domain.model.TunEnginePreference
 import app.novavpn.domain.model.VpnProfile
@@ -42,9 +43,12 @@ object SplitTunnelPlanner {
             SplitTunnelMode.DISABLED -> emptyList<String>() to listOf(selfPackage)
         }
 
+        val isTorRoute = profile.routeChain == RouteChain.TOR_ONLY || profile.routeChain == RouteChain.AETHER_TOR
+
         // Virtual DNS 10.10.0.2 is handled by sing-box `hijack-dns` AND by hev-socks5-tunnel `mapdns`.
-        // When PLAIN DNS with explicit IPv4 is used on HEV_SOCKS5_ONLY, we can pass the IPv4 server directly too.
+        // Tor does not relay arbitrary UDP traffic, so Tor routes must always use virtual DNS 10.10.0.2.
         val primaryDns = when {
+            isTorRoute -> "10.10.0.2"
             tunPreference == TunEnginePreference.HEV_SOCKS5_ONLY &&
                 profile.dnsMode == DnsMode.PLAIN &&
                 profile.customDnsPrimary.count { it == '.' } == 3 -> profile.customDnsPrimary.trim()
@@ -53,8 +57,12 @@ object SplitTunnelPlanner {
             else -> "10.10.0.2"
         }
 
-        val secondaryDns = profile.customDnsSecondary.trim()
-            .takeIf { it.isNotBlank() && it.count { c -> c == '.' } == 3 && it != primaryDns }
+        val secondaryDns = if (isTorRoute) {
+            null
+        } else {
+            profile.customDnsSecondary.trim()
+                .takeIf { it.isNotBlank() && it.count { c -> c == '.' } == 3 && it != primaryDns }
+        }
 
         return Result.success(
             VpnInterfacePlan(

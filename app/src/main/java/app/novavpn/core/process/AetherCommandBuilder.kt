@@ -12,7 +12,10 @@ import java.io.File
 data class LaunchStage(
     val adapter: CoreAdapter,
     val args: List<String>,
-    val preflightBinaries: List<File>
+    val preflightBinaries: List<File>,
+    val envVars: Map<String, String> = emptyMap(),
+    val readinessTimeoutMs: Long = 45_000L,
+    val readinessMatcher: ((String) -> Boolean)? = null
 )
 
 data class BuiltLaunchPlan(
@@ -20,13 +23,10 @@ data class BuiltLaunchPlan(
     val stages: List<LaunchStage>,
     val finalSocksPort: Int,
     val finalHttpPort: Int?,
-    val sessionAuth: SessionProxyAuth,
+    val sessionAuth: SessionProxyAuth?,
     val generatedConfigFiles: List<File>
 ) {
-    // Convenience accessors for tests & callers
     val aetherArgs: List<String>? get() = stages.firstOrNull { it.adapter == AetherCoreAdapter }?.args
-    val psiphonArgs: List<String>? get() = stages.firstOrNull { it.adapter == PsiphonCoreAdapter }?.args
-    val torArgs: List<String>? get() = stages.firstOrNull { it.adapter == TorCoreAdapter }?.args
 }
 
 object AetherCommandBuilder {
@@ -38,7 +38,7 @@ object AetherCommandBuilder {
         settings: AppSettings,
         resolvedRoute: RouteChain,
         useFreshScan: Boolean,
-        sessionAuth: SessionProxyAuth = SessionProxyAuth.generate()
+        sessionAuth: SessionProxyAuth? = null
     ): Result<BuiltLaunchPlan> = runCatching {
         val socksPort = settings.localSocksPort
         require(InputValidators.validatePort(socksPort).isValid) { "Invalid local SOCKS5 port: $socksPort" }
@@ -61,117 +61,137 @@ object AetherCommandBuilder {
 
         val extraArgs = InputValidators.parseAndValidateExtraArgs(profile.extraCoreArgs).getOrThrow()
         val bindHost = if (settings.shareProxyOnLan) "0.0.0.0" else "127.0.0.1"
-        val generatedFiles = mutableListOf<File>()
-        val stages = mutableListOf<LaunchStage>()
-
         val aetherInternalPort = if (socksPort + 20 <= 65535) socksPort + 20 else socksPort - 20
+        val mtuValue = profile.mtu.coerceIn(576, 1500).toString()
+        val aetherEnv = mapOf("AETHER_MASQUE_MTU" to mtuValue)
 
-        fun stageBins(adapter: CoreAdapter): List<File> =
-            adapter.requiredBinaryNames.map { File(nativeDir, it) }
+        val aetherBin = File(nativeDir, "libaether.so")
+        val psiphonBin = File(nativeDir, "libpsiphon.so")
+        val lyrebirdBin = File(nativeDir, "liblyrebird.so")
 
-        when (resolvedRoute) {
+        val stage: LaunchStage = when (resolvedRoute) {
             RouteChain.AETHER, RouteChain.SMART_AUTO -> {
-                val args = AetherCoreAdapter.buildArgs(
+                val args = AetherCoreAdapter.buildTunnelArgs(
                     nativeDir = nativeDir,
-                    bindAddress = "$bindHost:$socksPort",
-                    httpBind = httpPort?.let { "$bindHost:$it" },
-                    auth = sessionAuth,
+                    workDir = workDir,
+                    socksBindAddress = "$bindHost:$socksPort",
+                    httpBindAddress = httpPort?.let { "$bindHost:$it" },
                     profile = profile,
                     settings = settings,
                     useFreshScan = useFreshScan,
                     extraArgs = extraArgs,
-                    upstreamSocks = null
+                    routeChain = resolvedRoute
                 )
-                stages.add(LaunchStage(AetherCoreAdapter, args, stageBins(AetherCoreAdapter)))
+                LaunchStage(
+                    adapter = AetherCoreAdapter,
+                    args = args,
+                    preflightBinaries = listOf(aetherBin),
+                    envVars = aetherEnv,
+                    readinessTimeoutMs = 45_000L,
+                    readinessMatcher = AetherCoreAdapter::isReadinessLine
+                )
             }
 
             RouteChain.PSIPHON_ONLY -> {
-                val (args, cfg) = PsiphonCoreAdapter.writeConfigAndBuildArgs(
+                val args = AetherCoreAdapter.buildTunnelArgs(
                     nativeDir = nativeDir,
                     workDir = workDir,
-                    socksListen = "$bindHost:$socksPort",
-                    httpListen = httpPort?.let { "$bindHost:$it" },
-                    region = profile.psiphonRegion,
-                    upstreamProxy = profile.upstreamProxyUri.takeIf { it.isNotBlank() }
+                    socksBindAddress = "$bindHost:$socksPort",
+                    httpBindAddress = httpPort?.let { "$bindHost:$it" },
+                    profile = profile,
+                    settings = settings,
+                    useFreshScan = useFreshScan,
+                    extraArgs = extraArgs,
+                    routeChain = RouteChain.PSIPHON_ONLY
                 )
-                generatedFiles.add(cfg)
-                stages.add(LaunchStage(PsiphonCoreAdapter, args, stageBins(PsiphonCoreAdapter)))
+                LaunchStage(
+                    adapter = AetherCoreAdapter,
+                    args = args,
+                    preflightBinaries = listOf(aetherBin, psiphonBin),
+                    envVars = emptyMap(),
+                    readinessTimeoutMs = 60_000L,
+                    readinessMatcher = AetherCoreAdapter::isPsiphonReadinessLine
+                )
             }
 
             RouteChain.AETHER_PSIPHON -> {
-                val aetherArgs = AetherCoreAdapter.buildArgs(
+                val args = AetherCoreAdapter.buildTunnelArgs(
                     nativeDir = nativeDir,
-                    bindAddress = "127.0.0.1:$aetherInternalPort",
-                    httpBind = null,
-                    auth = sessionAuth,
+                    workDir = workDir,
+                    socksBindAddress = "127.0.0.1:$aetherInternalPort",
+                    httpBindAddress = null,
                     profile = profile,
                     settings = settings,
                     useFreshScan = useFreshScan,
                     extraArgs = extraArgs,
-                    upstreamSocks = null
+                    routeChain = RouteChain.AETHER_PSIPHON,
+                    chainExitSocksBind = "$bindHost:$socksPort",
+                    chainExitHttpBind = httpPort?.let { "$bindHost:$it" }
                 )
-                val upstreamUrl = "socks5://${sessionAuth.username}:${sessionAuth.password}@127.0.0.1:$aetherInternalPort"
-                val (psiphonArgs, cfg) = PsiphonCoreAdapter.writeConfigAndBuildArgs(
-                    nativeDir = nativeDir,
-                    workDir = workDir,
-                    socksListen = "$bindHost:$socksPort",
-                    httpListen = httpPort?.let { "$bindHost:$it" },
-                    region = profile.psiphonRegion,
-                    upstreamProxy = upstreamUrl
+                LaunchStage(
+                    adapter = AetherCoreAdapter,
+                    args = args,
+                    preflightBinaries = listOf(aetherBin, psiphonBin),
+                    envVars = aetherEnv,
+                    readinessTimeoutMs = 75_000L,
+                    readinessMatcher = AetherCoreAdapter::isPsiphonReadinessLine
                 )
-                generatedFiles.add(cfg)
-                stages.add(LaunchStage(AetherCoreAdapter, aetherArgs, stageBins(AetherCoreAdapter)))
-                stages.add(LaunchStage(PsiphonCoreAdapter, psiphonArgs, stageBins(PsiphonCoreAdapter)))
             }
 
             RouteChain.TOR_ONLY -> {
-                val (torArgs, torrc) = TorCoreAdapter.writeTorrcAndBuildArgs(
+                val args = AetherCoreAdapter.buildTunnelArgs(
                     nativeDir = nativeDir,
                     workDir = workDir,
-                    socksListen = "$bindHost:$socksPort",
-                    auth = sessionAuth,
-                    profile = profile,
-                    upstreamHostPort = null,
-                    upstreamAuth = null
-                )
-                generatedFiles.add(torrc)
-                stages.add(LaunchStage(TorCoreAdapter, torArgs, stageBins(TorCoreAdapter)))
-            }
-
-            RouteChain.AETHER_TOR -> {
-                val aetherArgs = AetherCoreAdapter.buildArgs(
-                    nativeDir = nativeDir,
-                    bindAddress = "127.0.0.1:$aetherInternalPort",
-                    httpBind = null,
-                    auth = sessionAuth,
+                    socksBindAddress = "$bindHost:$socksPort",
+                    httpBindAddress = httpPort?.let { "$bindHost:$it" },
                     profile = profile,
                     settings = settings,
                     useFreshScan = useFreshScan,
                     extraArgs = extraArgs,
-                    upstreamSocks = null
+                    routeChain = RouteChain.TOR_ONLY
                 )
-                val (torArgs, torrc) = TorCoreAdapter.writeTorrcAndBuildArgs(
+                LaunchStage(
+                    adapter = AetherCoreAdapter,
+                    args = args,
+                    preflightBinaries = listOf(aetherBin, lyrebirdBin),
+                    envVars = emptyMap(),
+                    readinessTimeoutMs = 90_000L,
+                    readinessMatcher = AetherCoreAdapter::isTorReadinessLine
+                )
+            }
+
+            RouteChain.AETHER_TOR -> {
+                val args = AetherCoreAdapter.buildTunnelArgs(
                     nativeDir = nativeDir,
                     workDir = workDir,
-                    socksListen = "$bindHost:$socksPort",
-                    auth = sessionAuth,
+                    socksBindAddress = "127.0.0.1:$aetherInternalPort",
+                    httpBindAddress = null,
                     profile = profile,
-                    upstreamHostPort = "127.0.0.1:$aetherInternalPort",
-                    upstreamAuth = sessionAuth
+                    settings = settings,
+                    useFreshScan = useFreshScan,
+                    extraArgs = extraArgs,
+                    routeChain = RouteChain.AETHER_TOR,
+                    chainExitSocksBind = "$bindHost:$socksPort",
+                    chainExitHttpBind = httpPort?.let { "$bindHost:$it" }
                 )
-                generatedFiles.add(torrc)
-                stages.add(LaunchStage(AetherCoreAdapter, aetherArgs, stageBins(AetherCoreAdapter)))
-                stages.add(LaunchStage(TorCoreAdapter, torArgs, stageBins(TorCoreAdapter)))
+                LaunchStage(
+                    adapter = AetherCoreAdapter,
+                    args = args,
+                    preflightBinaries = listOf(aetherBin, lyrebirdBin),
+                    envVars = aetherEnv,
+                    readinessTimeoutMs = 90_000L,
+                    readinessMatcher = AetherCoreAdapter::isTorReadinessLine
+                )
             }
         }
 
         BuiltLaunchPlan(
             effectiveRoute = resolvedRoute,
-            stages = stages,
+            stages = listOf(stage),
             finalSocksPort = socksPort,
             finalHttpPort = httpPort,
             sessionAuth = sessionAuth,
-            generatedConfigFiles = generatedFiles
+            generatedConfigFiles = emptyList()
         )
     }
 }

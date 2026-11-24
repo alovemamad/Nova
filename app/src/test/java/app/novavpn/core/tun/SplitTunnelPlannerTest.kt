@@ -1,10 +1,12 @@
 package app.novavpn.core.tun
 
 import app.novavpn.domain.model.DnsMode
+import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.SplitTunnelMode
 import app.novavpn.domain.model.TunEnginePreference
 import app.novavpn.domain.model.VpnProfile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -77,5 +79,22 @@ class SplitTunnelPlannerTest {
             tunPreference = TunEnginePreference.HEV_SOCKS5_ONLY
         ).getOrThrow()
         assertEquals("9.9.9.9", plainPlan.primaryDnsServer)
+
+        val torPlan = SplitTunnelPlanner.plan(
+            selfPackage = selfPkg,
+            mode = SplitTunnelMode.DISABLED,
+            selectedPackages = emptySet(),
+            profile = VpnProfile(
+                id = "3",
+                name = "Tor",
+                routeChain = RouteChain.AETHER_TOR,
+                dnsMode = DnsMode.PLAIN,
+                customDnsPrimary = "9.9.9.9",
+                customDnsSecondary = "1.1.1.1"
+            ),
+            tunPreference = TunEnginePreference.HEV_SOCKS5_ONLY
+        ).getOrThrow()
+        assertEquals("10.10.0.2", torPlan.primaryDnsServer)
+        assertNull(torPlan.secondaryDnsServer)
     }
 }

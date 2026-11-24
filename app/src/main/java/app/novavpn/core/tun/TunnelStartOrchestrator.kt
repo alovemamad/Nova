@@ -20,7 +20,7 @@ sealed class CoreProbeOutcome {
         val plan: BuiltLaunchPlan,
         val socksPort: Int,
         val httpPort: Int?,
-        val auth: SessionProxyAuth,
+        val auth: SessionProxyAuth?,
         val initialPingMs: Int?
     ) : CoreProbeOutcome()
 
@@ -68,7 +68,7 @@ class TunnelStartOrchestrator(
     ): CoreProbeOutcome {
         val candidates = resolveCandidateRoutes(profile, settings, networkKey)
         val bindHost = if (settings.shareProxyOnLan) "0.0.0.0" else "127.0.0.1"
-        val auth = SessionProxyAuth.generate()
+        val auth: SessionProxyAuth? = null
 
         var lastError = "Failed to establish tunnel core"
         var dropReason = DropReason.CORE_EXITED
@@ -110,7 +110,7 @@ class TunnelStartOrchestrator(
                     }
                     var pingMs: Int? = null
                     if (verifyHttpsAfterCoreStart) {
-                        val check = diagnostics.verifyRealHttpsConnectivity(coreRes.socksPort, auth)
+                        val check = diagnostics.verifyRealHttpsConnectivity(coreRes.socksPort, plan.sessionAuth)
                         if (check.isFailure && candidates.size > 1) {
                             lastError = check.exceptionOrNull()?.message ?: "Route $route failed HTTPS verification"
                             coreManager.stopAll()
@@ -128,7 +128,7 @@ class TunnelStartOrchestrator(
                         plan = plan,
                         socksPort = coreRes.socksPort,
                         httpPort = coreRes.httpPort,
-                        auth = auth,
+                        auth = plan.sessionAuth,
                         initialPingMs = pingMs
                     )
                 }

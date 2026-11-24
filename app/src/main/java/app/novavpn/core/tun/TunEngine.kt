@@ -32,7 +32,7 @@ interface TunEngine {
         tunFd: Int,
         socksHost: String,
         socksPort: Int,
-        auth: SessionProxyAuth,
+        auth: SessionProxyAuth?,
         profile: VpnProfile,
         protectFd: (Int) -> Boolean
     )
@@ -54,7 +54,7 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
         tunFd: Int,
         socksHost: String,
         socksPort: Int,
-        auth: SessionProxyAuth,
+        auth: SessionProxyAuth?,
         profile: VpnProfile,
         protectFd: (Int) -> Boolean
     ) = withContext(Dispatchers.IO) {
@@ -133,7 +133,7 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
         fun buildSingBoxConfig(
             socksHost: String,
             socksPort: Int,
-            auth: SessionProxyAuth,
+            auth: SessionProxyAuth?,
             profile: VpnProfile
         ): String {
             val remoteDnsServer = buildRemoteDnsServer(profile)
@@ -190,8 +190,10 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
                         put("server", socksHost)
                         put("server_port", socksPort)
                         put("version", "5")
-                        put("username", auth.username)
-                        put("password", auth.password)
+                        if (auth != null && auth.username.isNotBlank() && auth.password.isNotBlank()) {
+                            put("username", auth.username)
+                            put("password", auth.password)
+                        }
                     })
                     add(buildJsonObject {
                         put("type", "direct")
@@ -303,7 +305,7 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
         tunFd: Int,
         socksHost: String,
         socksPort: Int,
-        auth: SessionProxyAuth,
+        auth: SessionProxyAuth?,
         profile: VpnProfile,
         protectFd: (Int) -> Boolean
     ) = withContext(Dispatchers.IO) {
@@ -320,9 +322,15 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
 
         try {
             val startMethod = clazz.getMethod("TProxyStartService", String::class.java, Int::class.javaPrimitiveType)
-            startMethod.invoke(null, confFile.absolutePath, tunFd)
+            val result = startMethod.invoke(null, confFile.absolutePath, tunFd)
+            if (result is Boolean && !result) {
+                throw TunEngineException("hev-socks5-tunnel TProxyStartService returned false")
+            }
             usingJni = true
             LogRepository.i("HevTun", "hev-socks5-tunnel started via JNI (fd=$tunFd)")
+        } catch (e: TunEngineException) {
+            usingJni = false
+            throw e
         } catch (e: Throwable) {
             usingJni = false
             throw TunEngineException("hev-socks5-tunnel JNI start failed: ${e.cause?.message ?: e.message}", e)
@@ -343,7 +351,7 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
         fun buildHevYaml(
             socksHost: String,
             socksPort: Int,
-            auth: SessionProxyAuth,
+            auth: SessionProxyAuth?,
             profile: VpnProfile
         ): String = buildString {
             appendLine("tunnel:")
@@ -355,8 +363,10 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
             appendLine("socks5:")
             appendLine("  port: $socksPort")
             appendLine("  address: $socksHost")
-            appendLine("  username: '${auth.username}'")
-            appendLine("  password: '${auth.password}'")
+            if (auth != null && auth.username.isNotBlank() && auth.password.isNotBlank()) {
+                appendLine("  username: '${auth.username}'")
+                appendLine("  password: '${auth.password}'")
+            }
             appendLine("  udp: 'udp'")
             appendLine("mapdns:")
             appendLine("  address: 10.10.0.2")
@@ -383,7 +393,7 @@ class TunEngineManager(private val context: Context) {
     suspend fun startTun(
         tunInterface: ParcelFileDescriptor,
         socksPort: Int,
-        auth: SessionProxyAuth,
+        auth: SessionProxyAuth?,
         profile: VpnProfile,
         preference: TunEnginePreference,
         protectFd: (Int) -> Boolean

@@ -22,7 +22,7 @@ class TunnelLifecycleCoordinatorTest {
                 route = RouteChain.AETHER,
                 socksPort = 24808,
                 httpPort = null,
-                auth = SessionProxyAuth("u", "p"),
+                auth = null,
                 pingMs = 42
             )
         var tunResult: TunnelLifecycleCoordinator.TunStepResult =
@@ -50,7 +50,7 @@ class TunnelLifecycleCoordinatorTest {
 
         override suspend fun openAndStartTun(
             socksPort: Int,
-            auth: SessionProxyAuth
+            auth: SessionProxyAuth?
         ): TunnelLifecycleCoordinator.TunStepResult {
             if (tunResult is TunnelLifecycleCoordinator.TunStepResult.Ready) {
                 tunOpen = true
@@ -73,7 +73,7 @@ class TunnelLifecycleCoordinatorTest {
             tunEngine: TunEngineType,
             socksPort: Int,
             httpPort: Int?,
-            auth: SessionProxyAuth,
+            auth: SessionProxyAuth?,
             pingMs: Int?,
             resumed: Boolean
         ) {

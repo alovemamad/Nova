@@ -33,7 +33,7 @@ class TunnelLifecycleCoordinator(
         suspend fun hasTunOpen(): Boolean
         suspend fun openAndStartTun(
             socksPort: Int,
-            auth: SessionProxyAuth
+            auth: SessionProxyAuth?
         ): TunStepResult
 
         suspend fun stopTunOnly(closeTunFd: Boolean)
@@ -43,7 +43,7 @@ class TunnelLifecycleCoordinator(
             tunEngine: TunEngineType,
             socksPort: Int,
             httpPort: Int?,
-            auth: SessionProxyAuth,
+            auth: SessionProxyAuth?,
             pingMs: Int?,
             resumed: Boolean
         )
@@ -61,7 +61,7 @@ class TunnelLifecycleCoordinator(
             val route: RouteChain,
             val socksPort: Int,
             val httpPort: Int?,
-            val auth: SessionProxyAuth,
+            val auth: SessionProxyAuth?,
             val pingMs: Int?
         ) : CoreStepResult()
 
@@ -104,6 +104,9 @@ class TunnelLifecycleCoordinator(
         private set
 
     @Volatile
+    private var hasActiveCoreSession: Boolean = false
+
+    @Volatile
     private var activeRoute: RouteChain = RouteChain.SMART_AUTO
 
     @Volatile
@@ -130,8 +133,7 @@ class TunnelLifecycleCoordinator(
 
     suspend fun resume() = lifecycleMutex.withLock {
         if (!isPaused || isUserStopping) return@withLock
-        val auth = activeAuth
-        if (auth == null) {
+        if (!hasActiveCoreSession) {
             stopLocked(
                 reason = DropReason.CORE_EXITED,
                 errorMessage = "No active core session to resume",
@@ -141,6 +143,7 @@ class TunnelLifecycleCoordinator(
             return@withLock
         }
 
+        val auth = activeAuth
         val tunRes = runCatchingCancellable { ops.openAndStartTun(activeSocksPort, auth) }
             .getOrElse { TunStepResult.Failed(DropReason.TUN_START_FAILED, it.message ?: "TUN resume failed", SuggestedFixAction.SWITCH_TO_HEV_TUN) }
 
@@ -206,6 +209,7 @@ class TunnelLifecycleCoordinator(
                 stopLocked(coreRes.reason, coreRes.errorMessage, coreRes.suggestedFix, stopService = true)
             }
             is CoreStepResult.Ready -> {
+                hasActiveCoreSession = true
                 activeSocksPort = coreRes.socksPort
                 activeHttpPort = coreRes.httpPort
                 activeAuth = coreRes.auth
@@ -255,6 +259,7 @@ class TunnelLifecycleCoordinator(
     ) = withContext(NonCancellable) {
         isUserStopping = true
         isPaused = false
+        hasActiveCoreSession = false
         activeAuth = null
         state = if (errorMessage != null) VpnState.ERROR else VpnState.DISCONNECTED
         runCatchingCancellable { ops.stopAllCoreAndTun() }

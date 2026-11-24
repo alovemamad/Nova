@@ -46,6 +46,10 @@
     <string name="home_proxy_creds_body">SOCKS5 :%1$d%2$s · User: %3$s · Pass: %4$s</string>
     <string name="home_proxy_creds_copy">Copy Creds</string>
     <string name="home_proxy_creds_copied">Proxy credentials copied</string>
+    <string name="home_proxy_endpoints_title">Active Proxy Endpoints</string>
+    <string name="home_proxy_endpoints_body">SOCKS5 %1$s:%2$d%3$s</string>
+    <string name="home_proxy_endpoints_copy">Copy Address</string>
+    <string name="home_proxy_endpoints_copied">Proxy address copied</string>
     <string name="home_paused_banner_title">VPN Tunnel Paused</string>
     <string name="home_paused_banner_body">TUN is closed. App traffic currently goes direct over your regular network without VPN protection.</string>
 

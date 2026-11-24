@@ -76,12 +76,15 @@ class CoreProcessManager(
 
         for (stage in plan.stages) {
             val stageName = stage.adapter.id
+            val isReadyLine = stage.readinessMatcher ?: stage.adapter::isReadinessLine
             val readyDeferred = CompletableDeferred<Result<String?>>()
+            val lastErrorLine = AtomicReference<String?>(null)
             val pb = ProcessBuilder(stage.args)
                 .directory(workDir())
                 .redirectErrorStream(true)
             pb.environment()["HOME"] = workDir().absolutePath
             pb.environment()["TMPDIR"] = context.cacheDir.absolutePath
+            stage.envVars.forEach { (k, v) -> pb.environment()[k] = v }
 
             val proc = try {
                 withContext(Dispatchers.IO) { pb.start() }
@@ -100,12 +103,18 @@ class CoreProcessManager(
                         while (isActive) {
                             line = reader.readLine() ?: break
                             LogRepository.i(stageName, line)
+                            if (line.contains("Error:", ignoreCase = true) ||
+                                line.contains("[-]", ignoreCase = false) ||
+                                line.contains("error", ignoreCase = true)
+                            ) {
+                                lastErrorLine.set(line.trim())
+                            }
 
                             stage.adapter.extractEndpoint(line)?.let { ep ->
                                 lastDetectedEndpoint.set(ep)
                             }
 
-                            if (!readySignaled && stage.adapter.isReadinessLine(line)) {
+                            if (!readySignaled && isReadyLine(line)) {
                                 readySignaled = true
                                 readyDeferred.complete(Result.success(lastDetectedEndpoint.get()))
                             }
@@ -119,7 +128,10 @@ class CoreProcessManager(
 
                 val code = runCatching { proc.waitFor() }.getOrDefault(-1)
                 if (!readySignaled) {
-                    readyDeferred.complete(Result.failure(IllegalStateException("$stageName exited before ready (code=$code)")))
+                    val detail = lastErrorLine.get()?.let { ": $it" } ?: ""
+                    readyDeferred.complete(
+                        Result.failure(IllegalStateException("$stageName exited before ready (code=$code)$detail"))
+                    )
                 }
                 if (!shuttingDown) {
                     LogRepository.w("CoreProcess", "$stageName exited unexpectedly with code $code")
@@ -128,7 +140,7 @@ class CoreProcessManager(
             }
             readerJobs.add(job)
 
-            val readyResult = withTimeoutOrNull(18_000L) { readyDeferred.await() }
+            val readyResult = withTimeoutOrNull(stage.readinessTimeoutMs) { readyDeferred.await() }
             if (readyResult == null) {
                 stopInternal()
                 return@withLock CoreStartResult.Failed("$stageName timed out waiting for readiness log")

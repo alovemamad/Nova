@@ -88,4 +88,29 @@ class SingBoxConfigTest {
         assertEquals("9.9.9.9", plainServer["server"]!!.jsonPrimitive.content)
         assertEquals("5353", plainServer["server_port"]!!.jsonPrimitive.content)
     }
+
+    @Test
+    fun `omits socks5 credentials in sing-box JSON and hev YAML when auth is null`() {
+        val profile = VpnProfile(id = "noauth", name = "NoAuth", mtu = 1280)
+
+        val singJson = Json.parseToJsonElement(
+            SingBoxTunEngine.buildSingBoxConfig("127.0.0.1", 24808, null, profile)
+        ).jsonObject
+        val proxyOutbound = singJson["outbounds"]!!.jsonArray
+            .map { it.jsonObject }
+            .first { it["tag"]?.jsonPrimitive?.content == "proxy" }
+        assertFalse(proxyOutbound.containsKey("username"))
+        assertFalse(proxyOutbound.containsKey("password"))
+
+        val hevNoAuth = HevSocks5TunEngine.buildHevYaml("127.0.0.1", 24808, null, profile)
+        assertTrue(hevNoAuth.contains("port: 24808"))
+        assertTrue(hevNoAuth.contains("address: 127.0.0.1"))
+        assertTrue(hevNoAuth.contains("address: 10.10.0.2"))
+        assertFalse(hevNoAuth.contains("username:"))
+        assertFalse(hevNoAuth.contains("password:"))
+
+        val hevWithAuth = HevSocks5TunEngine.buildHevYaml("127.0.0.1", 24808, auth, profile)
+        assertTrue(hevWithAuth.contains("username: 'nova_user'"))
+        assertTrue(hevWithAuth.contains("password: 'p@ss\"word\\test'"))
+    }
 }

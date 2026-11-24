@@ -1,18 +1,14 @@
 package app.novavpn.core.process
 
-import app.novavpn.core.SessionProxyAuth
 import app.novavpn.domain.model.AetherProtocol
 import app.novavpn.domain.model.AppSettings
+import app.novavpn.domain.model.DnsMode
 import app.novavpn.domain.model.ObfuscationProfile
 import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.VpnMode
 import app.novavpn.domain.model.VpnProfile
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -25,7 +21,7 @@ class AetherCommandBuilderTest {
     val tempFolder = TemporaryFolder()
 
     @Test
-    fun `builds Aether MASQUE command list with expected flags and session auth`() {
+    fun `builds Aether MASQUE command list with real v2_4_0 flags and MTU env var`() {
         val nativeDir = tempFolder.newFolder("jni")
         val workDir = tempFolder.newFolder("work")
         val profile = VpnProfile(
@@ -36,8 +32,12 @@ class AetherCommandBuilderTest {
             obfuscation = ObfuscationProfile.QUIC_TLS_CAMO,
             customEndpoint = "162.159.192.1:2408",
             mtu = 1320,
-            tcpBufferKb = 128,
-            extraCoreArgs = "--workers 4"
+            scanLevel = 1,
+            dnsMode = DnsMode.PLAIN,
+            customDnsPrimary = "1.1.1.1",
+            directRules = "*.ir\n192.168.0.0/16",
+            blockRules = "ads.example.com\nport:5353",
+            extraCoreArgs = "--verbose"
         )
         val settings = AppSettings(
             vpnMode = VpnMode.PROXY_ONLY,
@@ -45,7 +45,6 @@ class AetherCommandBuilderTest {
             localHttpPort = 10809,
             shareProxyOnLan = false
         )
-        val auth = SessionProxyAuth("nova_test", "secretpass123")
 
         val plan = AetherCommandBuilder.build(
             nativeDir = nativeDir,
@@ -54,26 +53,31 @@ class AetherCommandBuilderTest {
             settings = settings,
             resolvedRoute = RouteChain.AETHER,
             useFreshScan = false,
-            sessionAuth = auth
+            sessionAuth = null
         ).getOrThrow()
 
+        val stage = plan.stages.single()
         val args = plan.aetherArgs!!
-        assertNull(plan.psiphonArgs)
-        assertNull(plan.torArgs)
+        assertNull(plan.sessionAuth)
+        assertEquals("1320", stage.envVars["AETHER_MASQUE_MTU"])
         assertTrue(args.first().endsWith("libaether.so"))
+        assertTrue(args.containsAll(listOf("--config", "${workDir.absolutePath}/aether.toml")))
         assertTrue(args.containsAll(listOf("--bind", "127.0.0.1:10808")))
-        assertTrue(args.containsAll(listOf("--socks-user", "nova_test", "--socks-pass", "secretpass123")))
-        assertTrue(args.containsAll(listOf("--http-bind", "127.0.0.1:10809")))
-        assertTrue(args.containsAll(listOf("--http-user", "nova_test", "--http-pass", "secretpass123")))
-        assertTrue(args.containsAll(listOf("--protocol", "masque")))
-        assertTrue(args.containsAll(listOf("--obfs", "quic-tls")))
-        assertTrue(args.containsAll(listOf("--endpoint", "162.159.192.1:2408")))
-        assertTrue(args.containsAll(listOf("--mtu", "1320")))
-        assertTrue(args.containsAll(listOf("--workers", "4")))
+        assertTrue(args.containsAll(listOf("--http-proxy", "127.0.0.1:10809")))
+        assertTrue(args.containsAll(listOf("--masque", "--h3")))
+        assertTrue(args.containsAll(listOf("--noize", "light")))
+        assertTrue(args.containsAll(listOf("--peer", "162.159.192.1:2408")))
+        assertTrue(args.contains("--turbo"))
+        assertTrue(args.contains("-4"))
+        assertTrue(args.containsAll(listOf("--dns", "1.1.1.1")))
+        assertTrue(args.containsAll(listOf("--route-direct", "*.ir,192.168.0.0/16")))
+        assertTrue(args.containsAll(listOf("--route-block", "ads.example.com,port:5353")))
+        assertTrue(args.contains("--verbose"))
+        assertTrue(stage.readinessMatcher!!.invoke("[+] socks5 server listening on 127.0.0.1:10808"))
     }
 
     @Test
-    fun `builds Aether to Psiphon chained plan using authenticated internal port`() {
+    fun `builds Aether plus Psiphon unified launch stage with psiphon-bin and readiness matcher`() {
         val nativeDir = tempFolder.newFolder("jni2")
         val workDir = tempFolder.newFolder("work2")
         val profile = VpnProfile(
@@ -82,8 +86,7 @@ class AetherCommandBuilderTest {
             routeChain = RouteChain.AETHER_PSIPHON,
             psiphonRegion = "DE"
         )
-        val settings = AppSettings(vpnMode = VpnMode.VPN, localSocksPort = 10808)
-        val auth = SessionProxyAuth("nova_u", "nova_p")
+        val settings = AppSettings(vpnMode = VpnMode.PROXY_ONLY, localSocksPort = 10808, localHttpPort = 10809)
 
         val plan = AetherCommandBuilder.build(
             nativeDir = nativeDir,
@@ -92,32 +95,36 @@ class AetherCommandBuilderTest {
             settings = settings,
             resolvedRoute = RouteChain.AETHER_PSIPHON,
             useFreshScan = true,
-            sessionAuth = auth
+            sessionAuth = null
         ).getOrThrow()
 
-        assertNotNull(plan.aetherArgs)
-        assertNotNull(plan.psiphonArgs)
-        assertTrue(plan.aetherArgs!!.contains("127.0.0.1:10828"))
-        assertTrue(plan.aetherArgs!!.contains("--scan"))
-        val cfgFile = plan.generatedConfigFiles.single()
-        val parsed = Json.parseToJsonElement(cfgFile.readText()).jsonObject
-        assertEquals("DE", parsed["EgressRegion"]?.jsonPrimitive?.content)
-        assertEquals("socks5://nova_u:nova_p@127.0.0.1:10828", parsed["UpstreamProxyUrl"]?.jsonPrimitive?.content)
+        val stage = plan.stages.single()
+        val args = stage.args
+        assertEquals(setOf("libaether.so", "libpsiphon.so"), stage.preflightBinaries.map { it.name }.toSet())
+        assertTrue(args.containsAll(listOf("--bind", "127.0.0.1:10828")))
+        assertTrue(args.contains("--psiphon"))
+        assertTrue(args.containsAll(listOf("--psiphon-bin", "${nativeDir.absolutePath}/libpsiphon.so")))
+        assertTrue(args.containsAll(listOf("--psiphon-bind", "127.0.0.1:10808")))
+        assertTrue(args.containsAll(listOf("--psiphon-http", "127.0.0.1:10809")))
+        assertTrue(args.containsAll(listOf("--psiphon-region", "DE")))
+        assertTrue(args.contains("--no-quick-reconnect"))
+        assertFalse(stage.readinessMatcher!!.invoke("[+] socks5 server listening on 127.0.0.1:10828"))
+        assertTrue(stage.readinessMatcher.invoke("[+] psiphon is ready; socks=127.0.0.1:10808"))
     }
 
     @Test
-    fun `TOR_ONLY and AETHER_TOR require both libtor_so and liblyrebird_so in preflightBinaries`() {
+    fun `TOR_ONLY and AETHER_TOR require libaether_so and liblyrebird_so and wire PT flags`() {
         val nativeDir = tempFolder.newFolder("jni_tor")
         val workDir = tempFolder.newFolder("work_tor")
+        val bridgeLine = "obfs4 192.0.2.1:443 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA cert=abc iat-mode=0"
         val profile = VpnProfile(
             id = "p_tor",
             name = "Tor",
             routeChain = RouteChain.AETHER_TOR,
             torUseBridges = true,
-            torBridges = listOf("obfs4 192.0.2.1:443 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA cert=abc iat-mode=0")
+            torBridges = listOf(bridgeLine)
         )
         val settings = AppSettings(vpnMode = VpnMode.VPN, localSocksPort = 24808)
-        val auth = SessionProxyAuth("nova_tor", "pass_tor")
 
         val plan = AetherCommandBuilder.build(
             nativeDir = nativeDir,
@@ -126,14 +133,18 @@ class AetherCommandBuilderTest {
             settings = settings,
             resolvedRoute = RouteChain.AETHER_TOR,
             useFreshScan = false,
-            sessionAuth = auth
+            sessionAuth = null
         ).getOrThrow()
 
-        val torStage = plan.stages.first { it.adapter == TorCoreAdapter }
-        val binNames = torStage.preflightBinaries.map { it.name }.toSet()
-        assertEquals(setOf("libtor.so", "liblyrebird.so"), binNames)
-        assertNotNull(plan.torArgs)
-        assertTrue(plan.torArgs!!.first().endsWith("libtor.so"))
+        val stage = plan.stages.single()
+        val binNames = stage.preflightBinaries.map { it.name }.toSet()
+        assertEquals(setOf("libaether.so", "liblyrebird.so"), binNames)
+        assertTrue(stage.args.contains("--tor"))
+        assertTrue(stage.args.containsAll(listOf("--tor-bind", "127.0.0.1:24808")))
+        assertTrue(stage.args.containsAll(listOf("--tor-pt", "obfs4=${nativeDir.absolutePath}/liblyrebird.so")))
+        assertTrue(stage.args.containsAll(listOf("--tor-bridge", bridgeLine)))
+        assertFalse(stage.readinessMatcher!!.invoke("[+] socks5 server listening on 127.0.0.1:24828"))
+        assertTrue(stage.readinessMatcher.invoke("[+] tor is ready; socks=127.0.0.1:24808"))
 
         val torOnlyPlan = AetherCommandBuilder.build(
             nativeDir = nativeDir,
@@ -142,12 +153,12 @@ class AetherCommandBuilderTest {
             settings = settings,
             resolvedRoute = RouteChain.TOR_ONLY,
             useFreshScan = false,
-            sessionAuth = auth
+            sessionAuth = null
         ).getOrThrow()
-        assertEquals(
-            setOf("libtor.so", "liblyrebird.so"),
-            torOnlyPlan.stages.single().preflightBinaries.map { it.name }.toSet()
-        )
+        val torOnlyStage = torOnlyPlan.stages.single()
+        assertEquals(setOf("libaether.so", "liblyrebird.so"), torOnlyStage.preflightBinaries.map { it.name }.toSet())
+        assertTrue(torOnlyStage.args.contains("--tor-only"))
+        assertTrue(torOnlyStage.args.containsAll(listOf("--bind", "127.0.0.1:24808")))
     }
 
     @Test

@@ -1,5 +1,8 @@
 package app.novavpn.ui.home
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,7 +22,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
@@ -27,6 +32,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -38,8 +44,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.novavpn.domain.model.AppSettings
@@ -63,7 +70,7 @@ import app.novavpn.ui.theme.fmtDigits
 import app.novavpn.ui.theme.formatBytes
 import app.novavpn.ui.theme.formatDurationHms
 import app.novavpn.ui.theme.formatSpeedRate
-import app.novavpn.ui.theme.tr
+import com.example.R
 
 @Composable
 fun HomeScreen(
@@ -76,8 +83,10 @@ fun HomeScreen(
     onPauseResume: () -> Unit,
     onSelectProfileClick: () -> Unit,
     onSuggestedFixClick: (SuggestedFixAction) -> Unit,
-    onDismissError: () -> Unit
+    onDismissError: () -> Unit,
+    onPostMessage: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val look = LocalGlassLook.current
 
     val stateColor = when (status.state) {
@@ -89,12 +98,12 @@ fun HomeScreen(
     }
 
     val stateLabel = when (status.state) {
-        VpnState.CONNECTED -> tr("Connected", "متصل")
-        VpnState.CONNECTING -> tr("Connecting…", "در حال اتصال…")
-        VpnState.RECONNECTING -> tr("Reconnecting #${status.reconnectAttempt}", "اتصال مجدد #${status.reconnectAttempt}")
-        VpnState.PAUSED -> tr("Paused", "متوقف")
-        VpnState.ERROR -> tr("Connection Issue", "خطای اتصال")
-        VpnState.DISCONNECTED -> tr("Disconnected", "قطع‌شده")
+        VpnState.CONNECTED -> stringResource(R.string.status_connected)
+        VpnState.CONNECTING -> stringResource(R.string.status_connecting)
+        VpnState.RECONNECTING -> stringResource(R.string.status_reconnecting_attempt, status.reconnectAttempt)
+        VpnState.PAUSED -> stringResource(R.string.status_paused)
+        VpnState.ERROR -> stringResource(R.string.status_error)
+        VpnState.DISCONNECTED -> stringResource(R.string.status_disconnected)
     }
 
     LazyColumn(
@@ -116,15 +125,15 @@ fun HomeScreen(
             ) {
                 Column {
                     Text(
-                        text = tr("Nova VPN", "نوا وی‌پی‌ان"),
+                        text = stringResource(R.string.app_name),
                         style = MaterialTheme.typography.headlineMedium,
                         color = look.textPrimary
                     )
                     Text(
                         text = if (settings.vpnMode == VpnMode.VPN) {
-                            tr("Full Device Tunnel", "تونل کامل دستگاه")
+                            stringResource(R.string.home_full_device_tunnel)
                         } else {
-                            tr("Local Proxy Only (${status.socksPort})", "پروکسی محلی (${status.socksPort})")
+                            fmtDigits(stringResource(R.string.home_local_proxy_only, status.socksPort))
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = look.textSecondary
@@ -198,16 +207,111 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    if (status.state == VpnState.PAUSED) tr("Resume", "ادامه") else tr("Pause", "توقف موقت")
+                                    stringResource(
+                                        if (status.state == VpnState.PAUSED) R.string.notif_action_resume
+                                        else R.string.notif_action_pause
+                                    )
                                 )
                             }
                         }
                         GlassCircleButton(
                             icon = Icons.Rounded.Refresh,
-                            contentDescription = tr("Fresh Gateway Scan", "اسکن دروازه جدید"),
+                            contentDescription = stringResource(R.string.home_fresh_scan),
                             onClick = onFreshScanReconnect,
                             tint = look.accent,
                             modifier = Modifier.testTag("fresh_scan_button")
+                        )
+                    }
+                }
+            }
+        }
+
+        // Explicit bypass warning banner when paused
+        if (status.state == VpnState.PAUSED) {
+            item {
+                GlassCard(
+                    modifier = Modifier
+                        .widthIn(max = 600.dp)
+                        .fillMaxWidth()
+                        .testTag("pause_warning_banner"),
+                    tintOverride = look.warning.copy(alpha = 0.16f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.WarningAmber, contentDescription = null, tint = look.warning)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.home_paused_banner_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = look.warning
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = stringResource(R.string.home_paused_banner_body),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = look.textPrimary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Ephemeral Session Proxy Credentials banner when in Proxy-Only or LAN Share mode
+        val user = status.sessionProxyUser
+        val pass = status.sessionProxyPass
+        if ((settings.vpnMode == VpnMode.PROXY_ONLY || status.lanShareActive) &&
+            !user.isNullOrBlank() && !pass.isNullOrBlank() &&
+            (status.state == VpnState.CONNECTED || status.state == VpnState.RECONNECTING)
+        ) {
+            item {
+                val httpPart = status.httpPort?.let { " · HTTP :$it" } ?: ""
+                val credsSummary = stringResource(
+                    R.string.home_proxy_creds_body,
+                    status.socksPort,
+                    httpPart,
+                    user,
+                    pass
+                )
+                val copiedMsg = stringResource(R.string.home_proxy_creds_copied)
+                GlassCard(
+                    modifier = Modifier
+                        .widthIn(max = 600.dp)
+                        .fillMaxWidth()
+                        .testTag("proxy_credentials_card")
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.Lock, contentDescription = null, tint = look.accent, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = stringResource(R.string.home_proxy_creds_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = look.textPrimary
+                                )
+                            }
+                            TextButton(onClick = {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                cm?.setPrimaryClip(ClipData.newPlainText("Nova Proxy Credentials", "$user:$pass"))
+                                onPostMessage(copiedMsg)
+                            }) {
+                                Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(stringResource(R.string.home_proxy_creds_copy))
+                            }
+                        }
+                        Text(
+                            text = credsSummary,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
+                            color = look.textSecondary
                         )
                     }
                 }
@@ -228,7 +332,7 @@ fun HomeScreen(
                             Icon(Icons.Rounded.ErrorOutline, contentDescription = null, tint = look.danger)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = tr("Connection Failure", "خطای اتصال"),
+                                text = stringResource(R.string.home_connection_failure),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = look.danger
                             )
@@ -245,7 +349,7 @@ fun HomeScreen(
                             horizontalArrangement = Arrangement.End
                         ) {
                             TextButton(onClick = onDismissError) {
-                                Text(tr("Dismiss", "بستن"))
+                                Text(stringResource(R.string.home_dismiss))
                             }
                             if (status.suggestedFix != SuggestedFixAction.NONE) {
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -264,7 +368,7 @@ fun HomeScreen(
             }
         }
 
-        // Live Speed & Telemetry Card
+        // Live Speed & Telemetry Card (clearly labeled as Tunnel Traffic)
         if (settings.glass.homeSpeed) {
             item {
                 GlassCard(
@@ -281,7 +385,7 @@ fun HomeScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Rounded.ArrowDownward, contentDescription = null, tint = look.accent, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text(tr("Download", "دریافت"), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
+                                    Text(stringResource(R.string.home_download_tunnel), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
                                 }
                                 Text(
                                     text = fmtDigits(formatSpeedRate(status.downSpeedBps)),
@@ -299,7 +403,7 @@ fun HomeScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Rounded.Speed, contentDescription = null, tint = look.textSecondary, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text(tr("Ping", "پینگ"), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
+                                    Text(stringResource(R.string.home_ping), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
                                 }
                                 Text(
                                     text = status.pingMs?.let { fmtDigits("${it} ms") } ?: "—",
@@ -319,7 +423,7 @@ fun HomeScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Rounded.ArrowUpward, contentDescription = null, tint = look.secondaryAccent, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text(tr("Upload", "ارسال"), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
+                                    Text(stringResource(R.string.home_upload_tunnel), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
                                 }
                                 Text(
                                     text = fmtDigits(formatSpeedRate(status.upSpeedBps)),
@@ -360,7 +464,7 @@ fun HomeScreen(
                             modifier = Modifier.testTag("home_profile_row")
                         ) {
                             Text(
-                                text = tr("Switch", "تغییر"),
+                                text = stringResource(R.string.home_switch),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = look.accent
                             )
@@ -369,12 +473,15 @@ fun HomeScreen(
                         val exitTitle = if (!status.exitIp.isNullOrBlank()) {
                             "${countryCodeToFlag(status.exitCountryCode)} ${status.exitIp}"
                         } else {
-                            tr("Exit IP: Not probed yet", "آی‌پی خروجی: نامشخص")
+                            stringResource(R.string.home_exit_ip_unknown)
                         }
+                        val lastDropPrefix = if (status.lastDropReason != DropReason.NONE && status.lastDropReason != DropReason.USER_DISCONNECTED) {
+                            stringResource(R.string.home_last_drop, status.lastDropReason.name)
+                        } else null
                         val exitSub = buildString {
                             status.exitCity?.let { append("$it · ") }
-                            if (status.lastDropReason != DropReason.NONE && status.lastDropReason != DropReason.USER_DISCONNECTED) {
-                                append(tr("Last drop: ", "آخرین قطع: ") + status.lastDropReason.name)
+                            if (lastDropPrefix != null) {
+                                append(lastDropPrefix)
                             } else {
                                 append(
                                     if (status.lanShareActive) "LAN Proxy: 0.0.0.0:${status.socksPort}"
@@ -397,14 +504,14 @@ fun HomeScreen(
 
 @Composable
 private fun suggestedFixLabel(action: SuggestedFixAction): String = when (action) {
-    SuggestedFixAction.GRANT_VPN_PERMISSION -> tr("Grant Permission", "تایید مجوز")
-    SuggestedFixAction.GRANT_NOTIFICATION_PERMISSION -> tr("Allow Alerts", "اجازه اعلان")
-    SuggestedFixAction.OPEN_BATTERY_SETTINGS -> tr("Battery Settings", "تنظیمات باتری")
-    SuggestedFixAction.OPEN_VPN_SETTINGS -> tr("VPN Settings", "تنظیمات وی‌پی‌ان")
-    SuggestedFixAction.RUN_DIAGNOSTICS -> tr("Run Diagnostics", "اجرای عیب‌یابی")
-    SuggestedFixAction.APPLY_SAFE_FIX -> tr("Apply Safe Fix", "اعمال تنظیمات امن")
-    SuggestedFixAction.SWITCH_TO_HEV_TUN -> tr("Use Fallback TUN", "تغییر موتور TUN")
-    SuggestedFixAction.RESET_PORTS -> tr("Reset Ports", "تغییر پورت‌ها")
-    SuggestedFixAction.FRESH_SCAN -> tr("Fresh Scan", "اسکن مجدد")
+    SuggestedFixAction.GRANT_VPN_PERMISSION -> stringResource(R.string.fix_grant_vpn)
+    SuggestedFixAction.GRANT_NOTIFICATION_PERMISSION -> stringResource(R.string.fix_allow_alerts)
+    SuggestedFixAction.OPEN_BATTERY_SETTINGS -> stringResource(R.string.fix_battery)
+    SuggestedFixAction.OPEN_VPN_SETTINGS -> stringResource(R.string.fix_vpn_settings)
+    SuggestedFixAction.RUN_DIAGNOSTICS -> stringResource(R.string.fix_diagnostics)
+    SuggestedFixAction.APPLY_SAFE_FIX -> stringResource(R.string.fix_apply_safe)
+    SuggestedFixAction.SWITCH_TO_HEV_TUN -> stringResource(R.string.fix_hev_tun)
+    SuggestedFixAction.RESET_PORTS -> stringResource(R.string.fix_reset_ports)
+    SuggestedFixAction.FRESH_SCAN -> stringResource(R.string.fix_fresh_scan)
     SuggestedFixAction.NONE -> ""
 }

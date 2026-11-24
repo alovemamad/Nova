@@ -4,11 +4,12 @@ set -euo pipefail
 # Nova VPN Native Cross-Compilation Script
 # Targets: arm64-v8a, armeabi-v7a, x86_64
 # Produces:
-#   app/src/main/jniLibs/<abi>/libaether.so
-#   app/src/main/jniLibs/<abi>/libpsiphon.so
-#   app/src/main/jniLibs/<abi>/liblyrebird.so
-#   app/src/main/jniLibs/<abi>/libhev-socks5-tunnel.so
-#   app/libs/libbox.aar
+#   app/src/main/jniLibs/<abi>/libaether.so             (Aether CLI proxy core)
+#   app/src/main/jniLibs/<abi>/libpsiphon.so            (Psiphon CLI wrapper)
+#   app/src/main/jniLibs/<abi>/libtor.so                (Tor daemon CLI invoked with -f <torrc>)
+#   app/src/main/jniLibs/<abi>/liblyrebird.so           (Lyrebird PT spawned by Tor ClientTransportPlugin)
+#   app/src/main/jniLibs/<abi>/libhev-socks5-tunnel.so  (JNI lib loaded by hev.htproxy.TProxyService)
+#   app/libs/libbox.aar                                 (sing-box gVisor TUN engine via gomobile)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NATIVE_SRC_DIR="${ROOT_DIR}/native-src"
@@ -76,27 +77,58 @@ build_go_bin() {
   done
 }
 
-# 1. Aether core (MASQUE / WireGuard / obfuscation)
+# 1. Aether core (MASQUE / WireGuard / obfuscation, supports --socks-user/--socks-pass & --http-user/--http-pass)
 build_go_bin "${NATIVE_SRC_DIR}/aether" "./cmd/aether" "libaether.so"
 
-# 2. Optional Psiphon tunnel core
+# 2. Optional Psiphon tunnel core (`libpsiphon.so -config <psiphon_config.json>`)
 build_go_bin "${NATIVE_SRC_DIR}/psiphon" "./MobileLibrary/psi" "libpsiphon.so"
 
-# 3. Tor / Lyrebird pluggable transport binary
+# 3. Tor daemon (`libtor.so -f <torrc>`) — required alongside liblyrebird.so for TOR_ONLY and AETHER_TOR
+if [[ -d "${NATIVE_SRC_DIR}/tor" ]]; then
+  for abi in arm64-v8a armeabi-v7a x86_64; do
+    case "${abi}" in
+      arm64-v8a)   host_triple="aarch64-linux-android";  cc_prefix="aarch64-linux-android${API_LEVEL}" ;;
+      armeabi-v7a) host_triple="armv7a-linux-androideabi"; cc_prefix="armv7a-linux-androideabi${API_LEVEL}" ;;
+      x86_64)      host_triple="x86_64-linux-android";   cc_prefix="x86_64-linux-android${API_LEVEL}" ;;
+    esac
+    echo "==> Building libtor.so for ${abi}"
+    (
+      cd "${NATIVE_SRC_DIR}/tor"
+      build_dir="${NATIVE_SRC_DIR}/tor/build-${abi}"
+      mkdir -p "${build_dir}"
+      cd "${build_dir}"
+      CC="${TOOLCHAIN}/bin/${cc_prefix}-clang" \
+      AR="${TOOLCHAIN}/bin/llvm-ar" \
+      RANLIB="${TOOLCHAIN}/bin/llvm-ranlib" \
+      CFLAGS="-fPIE -Os" LDFLAGS="-pie" \
+      ../configure --host="${host_triple}" --disable-asciidoc --disable-manpage --disable-html-manual || true
+      make -j"$(nproc 2>/dev/null || echo 4)" src/app/tor
+      cp src/app/tor "${JNI_OUT}/${abi}/libtor.so"
+    )
+  done
+else
+  echo "WARN: ${NATIVE_SRC_DIR}/tor not found; skipping libtor.so (Tor routes require BOTH libtor.so and liblyrebird.so)."
+fi
+
+# 4. Lyrebird pluggable transport (spawned by Tor via ClientTransportPlugin exec liblyrebird.so)
 build_go_bin "${NATIVE_SRC_DIR}/lyrebird" "./cmd/lyrebird" "liblyrebird.so"
 
-# 4. hev-socks5-tunnel (C NDK build fallback TUN engine)
+# 5. hev-socks5-tunnel (C NDK build fallback TUN engine exposing JNI class hev.htproxy.TProxyService)
+#    Java wrapper class `hev.htproxy.TProxyService` must expose `TProxyStartService(String, int)` & `TProxyStopService()`
+#    and load `System.loadLibrary("hev-socks5-tunnel")` from `libhev-socks5-tunnel.so`.
 if [[ -d "${NATIVE_SRC_DIR}/hev-socks5-tunnel" ]]; then
-  echo "==> Building libhev-socks5-tunnel.so via ndk-build"
+  echo "==> Building libhev-socks5-tunnel.so via ndk-build (target JNI: hev.htproxy.TProxyService)"
   "${NDK_HOME}/ndk-build" \
     NDK_PROJECT_PATH="${NATIVE_SRC_DIR}/hev-socks5-tunnel" \
     APP_BUILD_SCRIPT="${NATIVE_SRC_DIR}/hev-socks5-tunnel/Android.mk" \
     APP_ABI="arm64-v8a armeabi-v7a x86_64" \
     APP_PLATFORM="android-${API_LEVEL}" \
     NDK_LIBS_OUT="${JNI_OUT}"
+else
+  echo "WARN: ${NATIVE_SRC_DIR}/hev-socks5-tunnel not found; skipping libhev-socks5-tunnel.so."
 fi
 
-# 5. sing-box libbox.aar (default gVisor TUN engine)
+# 6. sing-box libbox.aar (default gVisor TUN engine)
 if [[ -d "${NATIVE_SRC_DIR}/sing-box" ]] && command -v gomobile >/dev/null 2>&1; then
   echo "==> Building libbox.aar with gomobile"
   (

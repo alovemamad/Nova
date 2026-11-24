@@ -1,5 +1,6 @@
 package app.novavpn.ui.glass
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,10 +39,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import app.novavpn.ui.theme.tr
+import com.example.R
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -55,17 +57,16 @@ sealed interface NovaDestination {
 data class NovaTabSpec(
     val dest: NovaDestination,
     val tag: String,
-    val titleEn: String,
-    val titleFa: String,
+    @StringRes val titleRes: Int,
     val iconSelected: ImageVector,
     val iconUnselected: ImageVector
 )
 
 val novaTabs = listOf(
-    NovaTabSpec(NovaDestination.Home, "tab_home", "Home", "خانه", Icons.Rounded.Home, Icons.Outlined.Home),
-    NovaTabSpec(NovaDestination.Profiles, "tab_profiles", "Profiles", "پروفایل‌ها", Icons.Rounded.Layers, Icons.Outlined.Layers),
-    NovaTabSpec(NovaDestination.Stats, "tab_stats", "Stats", "آمار", Icons.Rounded.Analytics, Icons.Outlined.Analytics),
-    NovaTabSpec(NovaDestination.Settings, "tab_settings", "Settings", "تنظیمات", Icons.Rounded.Settings, Icons.Outlined.Settings)
+    NovaTabSpec(NovaDestination.Home, "tab_home", R.string.nav_home, Icons.Rounded.Home, Icons.Outlined.Home),
+    NovaTabSpec(NovaDestination.Profiles, "tab_profiles", R.string.nav_profiles, Icons.Rounded.Layers, Icons.Outlined.Layers),
+    NovaTabSpec(NovaDestination.Stats, "tab_stats", R.string.nav_stats, Icons.Rounded.Analytics, Icons.Outlined.Analytics),
+    NovaTabSpec(NovaDestination.Settings, "tab_settings", R.string.nav_settings, Icons.Rounded.Settings, Icons.Outlined.Settings)
 )
 
 @Composable
@@ -93,7 +94,7 @@ fun GlassTabBar(
         ) {
             novaTabs.forEach { tab ->
                 val selected = current == tab.dest
-                val label = tr(tab.titleEn, tab.titleFa)
+                val label = stringResource(tab.titleRes)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -149,7 +150,7 @@ fun GlassNavigationRail(
         Spacer(modifier = Modifier.height(16.dp))
         novaTabs.forEach { tab ->
             val selected = current == tab.dest
-            val label = tr(tab.titleEn, tab.titleFa)
+            val label = stringResource(tab.titleRes)
             NavigationRailItem(
                 selected = selected,
                 onClick = { onSelect(tab.dest) },

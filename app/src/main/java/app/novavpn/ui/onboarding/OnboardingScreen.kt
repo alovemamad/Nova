@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -53,7 +54,7 @@ import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassDivider
 import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.LocalGlassLook
-import app.novavpn.ui.theme.tr
+import com.example.R
 
 @Composable
 fun OnboardingScreen(
@@ -99,7 +100,7 @@ fun OnboardingScreen(
                 horizontalArrangement = Arrangement.End
             ) {
                 TextButton(onClick = onFinish, modifier = Modifier.testTag("onboarding_skip")) {
-                    Text(tr("Skip", "رد شدن"), color = look.textSecondary)
+                    Text(stringResource(R.string.onb_skip), color = look.textSecondary)
                 }
             }
 
@@ -138,17 +139,14 @@ fun OnboardingScreen(
                     when (page) {
                         0 -> {
                             Text(
-                                text = tr("Welcome to Nova VPN", "به نوا وی‌پی‌ان خوش آمدید"),
+                                text = stringResource(R.string.onb_welcome_title),
                                 style = MaterialTheme.typography.headlineMedium,
                                 color = look.textPrimary,
                                 textAlign = TextAlign.Center
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = tr(
-                                    "Multi-engine encrypted tunneling powered by Aether (MASQUE / WireGuard), Psiphon, and Tor — wrapped in adaptive Liquid Glass.",
-                                    "تونل رمزنگاری‌شده چندموتوره با پشتیبانی از Aether، Psiphon و Tor در یک رابط کاربری مدرن."
-                                ),
+                                text = stringResource(R.string.onb_welcome_body),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = look.textSecondary,
                                 textAlign = TextAlign.Center
@@ -156,17 +154,14 @@ fun OnboardingScreen(
                         }
                         1 -> {
                             Text(
-                                text = tr("Smart Adaptive Routing", "مسیریابی هوشمند و پایدار"),
+                                text = stringResource(R.string.onb_routing_title),
                                 style = MaterialTheme.typography.headlineMedium,
                                 color = look.textPrimary,
                                 textAlign = TextAlign.Center
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = tr(
-                                    "Smart Auto probes your network with real HTTPS checks and remembers the fastest route per Wi-Fi or mobile carrier, with sing-box gVisor TUN and automatic fallback.",
-                                    "حالت هوشمند مسیرهای مختلف را با تست واقعی HTTPS بررسی کرده و سریع‌ترین مسیر را برای هر شبکه ذخیره می‌کند."
-                                ),
+                                text = stringResource(R.string.onb_routing_body),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = look.textSecondary,
                                 textAlign = TextAlign.Center
@@ -174,15 +169,15 @@ fun OnboardingScreen(
                         }
                         else -> {
                             Text(
-                                text = tr("Permissions & Reliability", "دسترسی‌ها و پایداری"),
+                                text = stringResource(R.string.onb_perms_title),
                                 style = MaterialTheme.typography.headlineMedium,
                                 color = look.textPrimary,
                                 textAlign = TextAlign.Center
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             GlassRow(
-                                title = tr("VPN Tunnel Permission", "مجوز تونل وی‌پی‌ان"),
-                                subtitle = if (vpnGranted) tr("Granted", "تایید شده") else tr("Required to route device traffic", "برای هدایت ترافیک نیاز است"),
+                                title = stringResource(R.string.onb_vpn_perm),
+                                subtitle = stringResource(if (vpnGranted) R.string.onb_vpn_granted else R.string.onb_vpn_required),
                                 icon = Icons.Rounded.VpnKey,
                                 onClick = {
                                     prepareVpnIntent()?.let { vpnLauncher.launch(it) }
@@ -191,21 +186,21 @@ fun OnboardingScreen(
                                 if (vpnGranted) {
                                     Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = look.success)
                                 } else {
-                                    Text(tr("Grant", "تایید"), color = look.accent, fontWeight = FontWeight.Bold)
+                                    Text(stringResource(R.string.onb_grant), color = look.accent, fontWeight = FontWeight.Bold)
                                 }
                             }
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 GlassDivider()
                                 GlassRow(
-                                    title = tr("Live Status Notification", "اعلان وضعیت اتصال"),
-                                    subtitle = if (notifGranted) tr("Allowed", "فعال") else tr("Shows speed & pause controls", "نمایش سرعت و دکمه توقف"),
+                                    title = stringResource(R.string.onb_notif_perm),
+                                    subtitle = stringResource(if (notifGranted) R.string.onb_notif_allowed else R.string.onb_notif_desc),
                                     icon = Icons.Rounded.NotificationsActive,
                                     onClick = { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
                                 ) {
                                     if (notifGranted) {
                                         Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = look.success)
                                     } else {
-                                        Text(tr("Allow", "اجازه"), color = look.accent, fontWeight = FontWeight.Bold)
+                                        Text(stringResource(R.string.onb_allow), color = look.accent, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -218,13 +213,13 @@ fun OnboardingScreen(
                                     onClick = onOpenBatterySettings,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text(tr("Battery Opt.", "بهینه‌سازی باتری"), maxLines = 1)
+                                    Text(stringResource(R.string.onb_battery), maxLines = 1)
                                 }
                                 OutlinedButton(
                                     onClick = onOpenVpnSettings,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text(tr("Always-on VPN", "اتصال همیشگی"), maxLines = 1)
+                                    Text(stringResource(R.string.onb_always_on), maxLines = 1)
                                 }
                             }
                         }
@@ -256,7 +251,7 @@ fun OnboardingScreen(
                             onClick = { page-- },
                             modifier = Modifier.weight(1f).height(52.dp)
                         ) {
-                            Text(tr("Back", "قبلی"))
+                            Text(stringResource(R.string.onb_back))
                         }
                     }
                     Button(
@@ -273,7 +268,7 @@ fun OnboardingScreen(
                             .testTag("onboarding_next")
                     ) {
                         Text(
-                            text = if (page < 2) tr("Continue", "ادامه") else tr("Start Using Nova", "شروع استفاده"),
+                            text = stringResource(if (page < 2) R.string.onb_continue else R.string.onb_finish),
                             fontWeight = FontWeight.Bold
                         )
                     }

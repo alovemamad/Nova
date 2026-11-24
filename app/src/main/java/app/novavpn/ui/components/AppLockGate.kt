@@ -27,16 +27,16 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,25 +45,47 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
+import app.novavpn.data.store.PinVerifyResult
 import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.theme.LocalHostActivity
 import app.novavpn.ui.theme.fmtDigits
-import app.novavpn.ui.theme.tr
+import com.example.R
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun AppLockGate(
     hasPin: Boolean,
+    lockoutUntilMs: Long,
     onBiometricUnlocked: () -> Unit,
-    onVerifyPin: (String) -> Boolean
+    onVerifyPin: suspend (String) -> PinVerifyResult
 ) {
     val context = LocalContext.current
+    val hostActivity = LocalHostActivity.current
     val look = LocalGlassLook.current
+    val scope = rememberCoroutineScope()
     var entered by remember { mutableStateOf("") }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var remainingLockSec by remember(lockoutUntilMs) {
+        mutableLongStateOf(((lockoutUntilMs - System.currentTimeMillis()).coerceAtLeast(0L) + 999L) / 1000L)
+    }
+
+    LaunchedEffect(lockoutUntilMs) {
+        while (true) {
+            val remMs = lockoutUntilMs - System.currentTimeMillis()
+            if (remMs <= 0L) {
+                remainingLockSec = 0L
+                break
+            }
+            remainingLockSec = (remMs + 999L) / 1000L
+            delay(1000L)
+        }
+    }
 
     val canUseBiometric = remember(context) {
         val mgr = BiometricManager.from(context)
@@ -72,8 +94,8 @@ fun AppLockGate(
     }
 
     fun launchBiometric() {
-        val activity = context as? FragmentActivity ?: return
-        val executor = ContextCompat.getMainExecutor(context)
+        val activity = hostActivity ?: return
+        val executor = ContextCompat.getMainExecutor(activity)
         val prompt = BiometricPrompt(
             activity,
             executor,
@@ -84,8 +106,8 @@ fun AppLockGate(
             }
         )
         val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Unlock Nova VPN")
-            .setSubtitle("Verify your identity to access tunnels and profiles")
+            .setTitle(context.getString(R.string.lock_title))
+            .setSubtitle(context.getString(R.string.lock_subtitle))
             .setAllowedAuthenticators(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
             )
@@ -93,9 +115,38 @@ fun AppLockGate(
         prompt.authenticate(info)
     }
 
-    LaunchedEffect(canUseBiometric) {
-        if (canUseBiometric) {
+    LaunchedEffect(canUseBiometric, hostActivity) {
+        if (canUseBiometric && hostActivity != null) {
             launchBiometric()
+        }
+    }
+
+    val lockedOutText = if (remainingLockSec > 0L) {
+        stringResource(R.string.lock_locked_out, remainingLockSec)
+    } else null
+
+    val wrongPinTemplate = context.getString(R.string.lock_incorrect_pin)
+    val lockedOutTemplate = context.getString(R.string.lock_locked_out)
+
+    fun submitPin() {
+        if (remainingLockSec > 0L || entered.length < 4) return
+        val attempt = entered
+        scope.launch {
+            when (val res = onVerifyPin(attempt)) {
+                is PinVerifyResult.Success -> {
+                    entered = ""
+                    errorMsg = null
+                }
+                is PinVerifyResult.WrongPin -> {
+                    entered = ""
+                    errorMsg = String.format(wrongPinTemplate, res.remainingBeforeLockout)
+                }
+                is PinVerifyResult.LockedOut -> {
+                    entered = ""
+                    remainingLockSec = res.remainingSeconds
+                    errorMsg = String.format(lockedOutTemplate, res.remainingSeconds)
+                }
+            }
         }
     }
 
@@ -133,34 +184,35 @@ fun AppLockGate(
                 }
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = tr("Nova VPN Locked", "نوا وی‌پی‌ان قفل است"),
+                    text = stringResource(R.string.lock_title),
                     style = MaterialTheme.typography.headlineSmall,
                     color = look.textPrimary
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = tr("Enter your PIN or use biometrics", "پین خود را وارد کنید یا از بیومتریک استفاده کنید"),
+                    text = stringResource(R.string.lock_subtitle),
                     style = MaterialTheme.typography.bodySmall,
                     color = look.textSecondary
                 )
 
                 if (hasPin) {
                     Spacer(modifier = Modifier.height(18.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        repeat(6) { idx ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        repeat(8) { idx ->
                             val filled = idx < entered.length
                             Box(
                                 modifier = Modifier
-                                    .size(14.dp)
+                                    .size(12.dp)
                                     .clip(CircleShape)
                                     .background(if (filled) look.accent else look.cardBorder.copy(alpha = 0.35f))
                             )
                         }
                     }
 
-                    if (errorMsg != null) {
+                    val activeError = lockedOutText ?: errorMsg
+                    if (activeError != null) {
                         Spacer(modifier = Modifier.height(10.dp))
-                        Text(errorMsg!!, color = look.danger, style = MaterialTheme.typography.bodySmall)
+                        Text(activeError, color = look.danger, style = MaterialTheme.typography.bodySmall)
                     }
 
                     Spacer(modifier = Modifier.height(18.dp))
@@ -180,29 +232,19 @@ fun AppLockGate(
                                             .clip(CircleShape)
                                             .background(look.cardSurface)
                                             .border(1.dp, look.cardBorder, CircleShape)
-                                            .clickable {
+                                            .clickable(enabled = remainingLockSec == 0L || key == "BIO") {
                                                 errorMsg = null
                                                 when (key) {
                                                     "DEL" -> if (entered.isNotEmpty()) entered = entered.dropLast(1)
                                                     "BIO" -> if (canUseBiometric) launchBiometric()
-                                                    else -> {
-                                                        if (entered.length < 6) {
-                                                            entered += key
-                                                            if (entered.length >= 4 && onVerifyPin(entered)) {
-                                                                entered = ""
-                                                            } else if (entered.length == 6) {
-                                                                errorMsg = "Incorrect PIN"
-                                                                entered = ""
-                                                            }
-                                                        }
-                                                    }
+                                                    else -> if (entered.length < 8) entered += key
                                                 }
                                             },
                                         contentAlignment = Alignment.Center
                                     ) {
                                         when (key) {
-                                            "DEL" -> Icon(Icons.AutoMirrored.Rounded.Backspace, contentDescription = "Delete", tint = look.textPrimary)
-                                            "BIO" -> Icon(Icons.Rounded.Fingerprint, contentDescription = "Biometric", tint = if (canUseBiometric) look.accent else look.textMuted)
+                                            "DEL" -> Icon(Icons.AutoMirrored.Rounded.Backspace, contentDescription = stringResource(R.string.common_clear), tint = look.textPrimary)
+                                            "BIO" -> Icon(Icons.Rounded.Fingerprint, contentDescription = stringResource(R.string.lock_authenticate), tint = if (canUseBiometric) look.accent else look.textMuted)
                                             else -> Text(fmtDigits(key), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = look.textPrimary)
                                         }
                                     }
@@ -210,18 +252,14 @@ fun AppLockGate(
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     if (entered.length >= 4) {
                         Button(
-                            onClick = {
-                                if (!onVerifyPin(entered)) {
-                                    errorMsg = "Incorrect PIN"
-                                    entered = ""
-                                }
-                            },
+                            onClick = ::submitPin,
+                            enabled = remainingLockSec == 0L,
                             modifier = Modifier.testTag("pin_unlock_button")
                         ) {
-                            Text(tr("Unlock", "باز کردن قفل"))
+                            Text(stringResource(R.string.lock_unlock))
                         }
                     }
                 } else if (canUseBiometric) {
@@ -229,7 +267,7 @@ fun AppLockGate(
                     Button(onClick = ::launchBiometric, modifier = Modifier.testTag("biometric_unlock_button")) {
                         Icon(Icons.Rounded.Fingerprint, contentDescription = null)
                         Spacer(modifier = Modifier.size(8.dp))
-                        Text(tr("Authenticate", "احراز هویت"))
+                        Text(stringResource(R.string.lock_authenticate))
                     }
                 }
             }
@@ -253,7 +291,7 @@ fun ProfileQrDialog(
                 if (qrBitmap != null) {
                     Image(
                         bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "Profile QR Code",
+                        contentDescription = profileName,
                         modifier = Modifier
                             .size(220.dp)
                             .clip(RoundedCornerShape(16.dp))
@@ -270,12 +308,12 @@ fun ProfileQrDialog(
         },
         confirmButton = {
             Button(onClick = onCopyUri) {
-                Text(tr("Copy Link", "کپی لینک"))
+                Text(stringResource(R.string.profiles_copy_link))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(tr("Close", "بستن"))
+                Text(stringResource(R.string.common_close))
             }
         }
     )

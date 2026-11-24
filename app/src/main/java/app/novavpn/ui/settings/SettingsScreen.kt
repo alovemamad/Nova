@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,13 +32,15 @@ import androidx.compose.material.icons.rounded.GppGood
 import androidx.compose.material.icons.rounded.Lan
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Restore
-import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.VpnLock
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.novavpn.domain.model.AppLanguage
 import app.novavpn.domain.model.AppSettings
@@ -71,8 +73,8 @@ import app.novavpn.ui.glass.GlassSegmented
 import app.novavpn.ui.glass.GlassSwitchRow
 import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.resolveGlassTintColor
-import app.novavpn.ui.theme.tr
 import com.example.BuildConfig
+import com.example.R
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -102,6 +104,7 @@ fun SettingsScreen(
     var exportedJson by remember { mutableStateOf<String?>(null) }
     var showPortsDialog by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
+    var showSystemKillSwitchDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
@@ -113,7 +116,7 @@ fun SettingsScreen(
     ) {
         item {
             Text(
-                text = tr("Settings", "تنظیمات"),
+                text = stringResource(R.string.settings_title),
                 style = MaterialTheme.typography.headlineMedium,
                 color = look.textPrimary,
                 modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth()
@@ -123,23 +126,23 @@ fun SettingsScreen(
         // TUNNEL & ROUTING
         item {
             GlassGroup(
-                title = tr("Tunnel & Network", "تونل و شبکه"),
+                title = stringResource(R.string.settings_section_tunnel),
                 modifier = Modifier.widthIn(max = 600.dp)
             ) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                    Text(tr("Operation Mode", "حالت اجرا"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                    Text(stringResource(R.string.settings_operation_mode), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     Spacer(modifier = Modifier.height(6.dp))
                     GlassSegmented(
                         options = listOf(
-                            VpnMode.VPN to tr("VPN Tunnel", "تونل کامل"),
-                            VpnMode.PROXY_ONLY to tr("Proxy Only", "فقط پروکسی")
+                            VpnMode.VPN to stringResource(R.string.settings_mode_vpn),
+                            VpnMode.PROXY_ONLY to stringResource(R.string.settings_mode_proxy)
                         ),
                         selected = settings.vpnMode,
                         onSelect = { mode -> onUpdateSettings { it.copy(vpnMode = mode) } },
                         modifier = Modifier.testTag("settings_mode_segmented")
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text(tr("TUN Engine", "موتور TUN"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                    Text(stringResource(R.string.settings_tun_engine), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     Spacer(modifier = Modifier.height(6.dp))
                     GlassSegmented(
                         options = listOf(
@@ -153,31 +156,31 @@ fun SettingsScreen(
                 }
                 GlassDivider()
                 GlassRow(
-                    title = tr("Split Tunneling", "تونل‌زنی انتخابی برنامه‌ها"),
-                    subtitle = "${settings.splitTunnelMode.name} · ${settings.splitTunnelPackages.size} ${tr("apps", "برنامه")}",
+                    title = stringResource(R.string.settings_split_tunnel),
+                    subtitle = stringResource(R.string.settings_apps_count, settings.splitTunnelMode.name, settings.splitTunnelPackages.size),
                     icon = Icons.Rounded.Apps,
                     onClick = { showSplitPicker = true },
                     modifier = Modifier.testTag("settings_split_tunnel_row")
                 )
                 GlassDivider()
                 GlassRow(
-                    title = tr("Local Proxy Ports", "پورت‌های محلی"),
+                    title = stringResource(R.string.settings_local_ports),
                     subtitle = "SOCKS5 :${settings.localSocksPort} · HTTP :${settings.localHttpPort}",
                     icon = Icons.Rounded.Dns,
                     onClick = { showPortsDialog = true }
                 )
                 GlassDivider()
                 GlassSwitchRow(
-                    title = tr("Share Proxy to LAN", "اشتراک پروکسی در شبکه محلی"),
-                    subtitle = tr("Warning: binds 0.0.0.0 without auth; use only on trusted Wi-Fi", "هشدار: فقط در شبکه وای‌فای مطمئن فعال کنید"),
+                    title = stringResource(R.string.settings_lan_share),
+                    subtitle = stringResource(R.string.settings_lan_share_desc),
                     icon = Icons.Rounded.Lan,
                     checked = settings.shareProxyOnLan,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(shareProxyOnLan = checked) } }
                 )
                 GlassDivider()
                 GlassSwitchRow(
-                    title = tr("Prefer Last Good Gateway", "اولویت با آخرین سرور سالم"),
-                    subtitle = tr("Faster connect; disable to run a fresh endpoint scan each time", "اتصال سریع‌تر؛ با غیرفعال کردن هر بار اسکن تازه انجام می‌شود"),
+                    title = stringResource(R.string.settings_prefer_last),
+                    subtitle = stringResource(R.string.settings_prefer_last_desc),
                     icon = Icons.Rounded.Speed,
                     checked = settings.preferLastGoodGateway,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(preferLastGoodGateway = checked) } }
@@ -188,39 +191,42 @@ fun SettingsScreen(
         // RELIABILITY & AUTOMATION
         item {
             GlassGroup(
-                title = tr("Reliability & Automation", "پایداری و اتوماسیون"),
+                title = stringResource(R.string.settings_section_reliability),
                 modifier = Modifier.widthIn(max = 600.dp)
             ) {
                 GlassSwitchRow(
-                    title = tr("Blocking Kill Switch", "کیل‌سوئیچ مسدودکننده"),
-                    subtitle = tr("Blocks non-tunnel traffic inside VpnService", "جلوگیری از نشت ترافیک در زمان قطع تونل"),
+                    title = stringResource(R.string.settings_keep_tun_reconnect),
+                    subtitle = stringResource(R.string.settings_keep_tun_reconnect_desc),
                     icon = Icons.Rounded.GppGood,
-                    checked = settings.killSwitchBlocking,
-                    onCheckedChange = { checked -> onUpdateSettings { it.copy(killSwitchBlocking = checked) } }
+                    checked = settings.keepTunOnReconnect,
+                    onCheckedChange = { checked -> onUpdateSettings { it.copy(keepTunOnReconnect = checked) } },
+                    modifier = Modifier.testTag("settings_keep_tun_switch")
                 )
                 GlassDivider()
                 GlassRow(
-                    title = tr("Always-on VPN System Settings", "تنظیمات اتصال همیشگی اندروید"),
-                    subtitle = tr("Enforce strict system-level Kill Switch", "فعال‌سازی کیل‌سوئیچ سیستمی اندروید"),
+                    title = stringResource(R.string.settings_always_on),
+                    subtitle = stringResource(R.string.settings_always_on_desc),
                     icon = Icons.Rounded.VpnLock,
-                    onClick = onOpenVpnSettings
+                    onClick = { showSystemKillSwitchDialog = true },
+                    modifier = Modifier.testTag("settings_system_killswitch_row")
                 )
                 GlassDivider()
+                val disabledLabel = stringResource(R.string.settings_disabled)
                 GlassRow(
-                    title = tr("Auto-Connect Rules", "قوانین اتصال خودکار"),
+                    title = stringResource(R.string.settings_auto_connect),
                     subtitle = buildString {
                         if (settings.autoConnect.startOnBoot) append("Boot · ")
                         if (settings.autoConnect.onUntrustedWifi) append("Untrusted Wi-Fi · ")
                         if (settings.autoConnect.onAppLaunchEnabled) append("${settings.autoConnect.triggerPackages.size} apps")
-                        if (isEmpty()) append(tr("Disabled", "غیرفعال"))
+                        if (isEmpty()) append(disabledLabel)
                     },
                     icon = Icons.Rounded.AutoMode,
                     onClick = { showAutoConnect = true }
                 )
                 GlassDivider()
                 GlassRow(
-                    title = tr("Battery Optimization Exemption", "استثنای بهینه‌سازی باتری"),
-                    subtitle = tr("Prevent OS from killing background VPN service", "جلوگیری از بسته شدن تونل در پس‌زمینه"),
+                    title = stringResource(R.string.settings_battery_opt),
+                    subtitle = stringResource(R.string.settings_battery_opt_desc),
                     icon = Icons.Rounded.BatterySaver,
                     onClick = onOpenBatterySettings
                 )
@@ -230,12 +236,12 @@ fun SettingsScreen(
         // SECURITY & PRIVACY
         item {
             GlassGroup(
-                title = tr("Security & Privacy", "امنیت و حریم خصوصی"),
+                title = stringResource(R.string.settings_section_security),
                 modifier = Modifier.widthIn(max = 600.dp)
             ) {
                 GlassSwitchRow(
-                    title = tr("App Lock (Biometric / PIN)", "قفل برنامه (اثرانگشت / رمز)"),
-                    subtitle = if (settings.appLockEnabled) tr("Enabled", "فعال") else tr("Protect access to Nova VPN", "محافظت از دسترسی به برنامه"),
+                    title = stringResource(R.string.settings_app_lock),
+                    subtitle = if (settings.appLockEnabled) stringResource(R.string.settings_enabled) else stringResource(R.string.settings_app_lock_desc),
                     icon = Icons.Rounded.Fingerprint,
                     checked = settings.appLockEnabled,
                     onCheckedChange = { checked ->
@@ -245,8 +251,8 @@ fun SettingsScreen(
                 )
                 GlassDivider()
                 GlassSwitchRow(
-                    title = tr("Hide from Recents", "مخفی کردن از برنامه‌های اخیر"),
-                    subtitle = tr("Applies FLAG_SECURE screenshot & recents blur protection", "محافظت از پیش‌نمایش صفحه در بخش برنامه‌های اخیر"),
+                    title = stringResource(R.string.settings_hide_recents),
+                    subtitle = stringResource(R.string.settings_hide_recents_desc),
                     icon = Icons.Rounded.VisibilityOff,
                     checked = settings.hideFromRecents,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(hideFromRecents = checked) } }
@@ -257,25 +263,25 @@ fun SettingsScreen(
         // LIQUID GLASS & APPEARANCE
         item {
             GlassGroup(
-                title = tr("Liquid Glass & Language", "ظاهر شیشه‌ای و زبان"),
+                title = stringResource(R.string.settings_section_glass),
                 modifier = Modifier.widthIn(max = 600.dp)
             ) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(tr("Theme", "تم"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                    Text(stringResource(R.string.settings_theme), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     GlassSegmented(
                         options = listOf(
-                            AppThemeMode.DARK to tr("Dark", "تیره"),
-                            AppThemeMode.LIGHT to tr("Light", "روشن"),
-                            AppThemeMode.SYSTEM to tr("System", "سیستم")
+                            AppThemeMode.DARK to stringResource(R.string.settings_dark),
+                            AppThemeMode.LIGHT to stringResource(R.string.settings_light),
+                            AppThemeMode.SYSTEM to stringResource(R.string.settings_system)
                         ),
                         selected = settings.themeMode,
                         onSelect = { m -> onUpdateSettings { it.copy(themeMode = m) } }
                     )
 
-                    Text(tr("Language", "زبان"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                    Text(stringResource(R.string.settings_language), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     GlassSegmented(
                         options = listOf(
-                            AppLanguage.SYSTEM to tr("System", "سیستم"),
+                            AppLanguage.SYSTEM to stringResource(R.string.settings_system),
                             AppLanguage.EN to "English",
                             AppLanguage.FA to "فارسی"
                         ),
@@ -284,10 +290,10 @@ fun SettingsScreen(
                         modifier = Modifier.testTag("settings_language_segmented")
                     )
 
-                    Text(tr("Digits", "ارقام"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                    Text(stringResource(R.string.settings_digits), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     GlassSegmented(
                         options = listOf(
-                            DigitMode.LOCALE to tr("Auto", "خودکار"),
+                            DigitMode.LOCALE to stringResource(R.string.settings_auto),
                             DigitMode.LATIN to "123",
                             DigitMode.PERSIAN to "۱۲۳"
                         ),
@@ -295,17 +301,17 @@ fun SettingsScreen(
                         onSelect = { d -> onUpdateSettings { it.copy(digitMode = d) } }
                     )
 
-                    Text(tr("Glass Material", "جنس شیشه"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                    Text(stringResource(R.string.settings_glass_material), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     GlassSegmented(
                         options = listOf(
-                            GlassMaterial.CLEAR to tr("Clear", "شفاف"),
-                            GlassMaterial.TINTED to tr("Tinted", "رنگی")
+                            GlassMaterial.CLEAR to stringResource(R.string.settings_clear),
+                            GlassMaterial.TINTED to stringResource(R.string.settings_tinted)
                         ),
                         selected = settings.glass.material,
                         onSelect = { mat -> onUpdateSettings { it.copy(glass = it.glass.copy(material = mat)) } }
                     )
 
-                    Text(tr("Wallpaper Aura", "پس‌زمینه"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                    Text(stringResource(R.string.settings_wallpaper), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         GlassWallpaper.entries.forEach { wp ->
                             FilterChip(
@@ -316,7 +322,7 @@ fun SettingsScreen(
                         }
                     }
 
-                    Text(tr("Connect Control", "دکمه اتصال"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                    Text(stringResource(R.string.settings_connect_control), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         GlassConnectControl.entries.forEach { ctrl ->
                             FilterChip(
@@ -327,7 +333,7 @@ fun SettingsScreen(
                         }
                     }
 
-                    Text(tr("Accent Tint", "رنگ تاکیدی"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                    Text(stringResource(R.string.settings_accent_tint), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         GlassTint.entries.forEach { tint ->
                             val (primaryTint, _) = resolveGlassTintColor(tint)
@@ -350,7 +356,7 @@ fun SettingsScreen(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     GlassDivider()
                     GlassSwitchRow(
-                        title = tr("Dynamic System Colors", "رنگ پویا از تصویر زمینه"),
+                        title = stringResource(R.string.settings_dynamic_color),
                         icon = Icons.Rounded.Palette,
                         checked = settings.dynamicColor,
                         onCheckedChange = { checked -> onUpdateSettings { it.copy(dynamicColor = checked) } }
@@ -358,13 +364,13 @@ fun SettingsScreen(
                 }
                 GlassDivider()
                 GlassSwitchRow(
-                    title = tr("Motion Tilt Highlights", "بازتاب نور با حرکت گوشی"),
+                    title = stringResource(R.string.settings_motion_tilt),
                     checked = settings.glass.motionHighlights,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(glass = it.glass.copy(motionHighlights = checked)) } }
                 )
                 GlassDivider()
                 GlassSwitchRow(
-                    title = tr("Reduce Transparency", "کاهش شفافیت (عملکرد بالاتر)"),
+                    title = stringResource(R.string.settings_reduce_transparency),
                     checked = settings.glass.reduceTransparency,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(glass = it.glass.copy(reduceTransparency = checked)) } }
                 )
@@ -374,20 +380,20 @@ fun SettingsScreen(
         // LOGS, BACKUP & UPDATES
         item {
             GlassGroup(
-                title = tr("Maintenance", "نگهداری و ابزارها"),
+                title = stringResource(R.string.settings_section_maintenance),
                 modifier = Modifier.widthIn(max = 600.dp)
             ) {
                 GlassRow(
-                    title = tr("View Diagnostic Logs", "مشاهده لاگ‌های سیستم"),
-                    subtitle = "${logs.size} ${tr("entries recorded", "خط ثبت شده")}",
+                    title = stringResource(R.string.settings_view_logs),
+                    subtitle = stringResource(R.string.settings_logs_count, logs.size),
                     icon = Icons.Rounded.BugReport,
                     onClick = { showLogs = true },
                     modifier = Modifier.testTag("settings_logs_row")
                 )
                 GlassDivider()
                 GlassRow(
-                    title = tr("Backup & Restore (JSON)", "پشتیبان‌گیری و بازیابی"),
-                    subtitle = tr("Export or import all profiles and preferences", "خروجی یا بازیابی تمام پروفایل‌ها و تنظیمات"),
+                    title = stringResource(R.string.settings_backup_restore),
+                    subtitle = stringResource(R.string.settings_backup_desc),
                     icon = Icons.Rounded.Restore,
                     onClick = {
                         onExportBackup { raw ->
@@ -398,7 +404,7 @@ fun SettingsScreen(
                 )
                 GlassDivider()
                 GlassRow(
-                    title = tr("Check for Updates", "بررسی نسخه جدید"),
+                    title = stringResource(R.string.settings_check_updates),
                     subtitle = "v${BuildConfig.VERSION_NAME}",
                     icon = Icons.Rounded.CloudDownload,
                     onClick = {
@@ -408,6 +414,27 @@ fun SettingsScreen(
                 )
             }
         }
+    }
+
+    if (showSystemKillSwitchDialog) {
+        AlertDialog(
+            onDismissRequest = { showSystemKillSwitchDialog = false },
+            title = { Text(stringResource(R.string.settings_always_on_dialog_title)) },
+            text = { Text(stringResource(R.string.settings_always_on_dialog_body)) },
+            confirmButton = {
+                Button(onClick = {
+                    showSystemKillSwitchDialog = false
+                    onOpenVpnSettings()
+                }) {
+                    Text(stringResource(R.string.settings_open_vpn_settings))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSystemKillSwitchDialog = false }) {
+                    Text(stringResource(R.string.common_close))
+                }
+            }
+        )
     }
 
     if (showSplitPicker) {
@@ -468,7 +495,7 @@ fun SettingsScreen(
         PortsEditorDialog(
             settings = settings,
             onSave = { socks, http ->
-                onUpdateSettings { it.copy(localSocksPort = socks, localHttpPort = http) }
+                onUpdateSettings { it.copy(localSocksPort = socks, localHttpPort = http, portsInitialized = true) }
                 showPortsDialog = false
             },
             onDismiss = { showPortsDialog = false }

@@ -252,8 +252,12 @@ object InputValidators {
         // Redact obfs4 cert= and webtunnel url=
         sanitized = sanitized.replace(Regex("""cert=[A-Za-z0-9+/=]+"""), "cert=[REDACTED]")
         sanitized = sanitized.replace(Regex("""url=https?://\S+"""), "url=[REDACTED]")
-        // Redact proxy credentials user:pass@
+        // Redact proxy credentials user:pass@ and CLI auth flags
         sanitized = sanitized.replace(Regex("""(socks5|https?)://[^:@\s]+:[^@\s]+@"""), "$1://[REDACTED]@")
+        sanitized = sanitized.replace(
+            Regex("""(--(?:socks|http)-(?:user|pass)|Socks5ProxyPassword|Socks5ProxyUsername)\s+\S+"""),
+            "$1 [REDACTED]"
+        )
         // Mask non-loopback IPv4 addresses (keep first two octets for troubleshooting)
         sanitized = sanitized.replace(Regex("""\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b""")) { m ->
             val full = m.value

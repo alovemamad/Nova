@@ -3,10 +3,8 @@ package app.novavpn.service
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.net.VpnService
 import android.widget.RemoteViews
 import app.novavpn.ServiceLocator
 import app.novavpn.domain.model.VpnState
@@ -14,31 +12,6 @@ import com.example.MainActivity
 import com.example.R
 
 class NovaVpnWidgetProvider : AppWidgetProvider() {
-
-    override fun onReceive(context: Context, intent: Intent) {
-        ServiceLocator.init(context.applicationContext)
-        super.onReceive(context, intent)
-        if (intent.action == ACTION_WIDGET_TOGGLE) {
-            val controller = ServiceLocator.vpnController
-            val state = controller.status.value.state
-            if (state == VpnState.DISCONNECTED || state == VpnState.ERROR) {
-                if (VpnService.prepare(context) != null) {
-                    context.startActivity(
-                        Intent(context, MainActivity::class.java).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                    )
-                } else {
-                    controller.connect()
-                }
-            } else {
-                controller.disconnect()
-            }
-            val mgr = AppWidgetManager.getInstance(context)
-            val ids = mgr.getAppWidgetIds(ComponentName(context, NovaVpnWidgetProvider::class.java))
-            onUpdate(context, mgr, ids)
-        }
-    }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         ServiceLocator.init(context.applicationContext)
@@ -58,8 +31,9 @@ class NovaVpnWidgetProvider : AppWidgetProvider() {
             else -> context.getString(R.string.tap_to_connect)
         }
 
-        val toggleIntent = Intent(context, NovaVpnWidgetProvider::class.java).apply {
-            action = ACTION_WIDGET_TOGGLE
+        // Target the non-exported internal receiver via an explicit component Intent
+        val toggleIntent = Intent(context, NovaWidgetActionReceiver::class.java).apply {
+            action = NovaWidgetActionReceiver.ACTION_WIDGET_TOGGLE
         }
         val togglePi = PendingIntent.getBroadcast(
             context,
@@ -84,9 +58,5 @@ class NovaVpnWidgetProvider : AppWidgetProvider() {
             }
             appWidgetManager.updateAppWidget(id, views)
         }
-    }
-
-    companion object {
-        const val ACTION_WIDGET_TOGGLE = "app.novavpn.ACTION_WIDGET_TOGGLE"
     }
 }

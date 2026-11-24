@@ -1,5 +1,6 @@
 package app.novavpn.core.net
 
+import app.novavpn.core.SessionProxyAuth
 import app.novavpn.data.log.LogRepository
 import app.novavpn.domain.model.DiagnosticReport
 import app.novavpn.domain.model.DnsMode
@@ -14,12 +15,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.Proxy
 import java.net.Socket
 import java.util.concurrent.TimeUnit
+import javax.net.SocketFactory
 import kotlin.system.measureTimeMillis
 
 data class ExitGeoInfo(
@@ -28,23 +30,117 @@ data class ExitGeoInfo(
     val city: String?
 )
 
+/**
+ * Custom SocketFactory performing RFC 1928 / RFC 1929 SOCKS5 greeting + username/password
+ * authentication directly per socket, avoiding unsafe global java.net.Authenticator state.
+ */
+private class Socks5AuthSocketFactory(
+    private val proxyHost: String,
+    private val proxyPort: Int,
+    private val auth: SessionProxyAuth?
+) : SocketFactory() {
+
+    override fun createSocket(): Socket = Socks5Socket(proxyHost, proxyPort, auth)
+    override fun createSocket(host: String, port: Int): Socket = createSocket().apply {
+        connect(InetSocketAddress.createUnresolved(host, port))
+    }
+    override fun createSocket(host: String, port: Int, localHost: InetAddress?, localPort: Int): Socket = createSocket(host, port)
+    override fun createSocket(host: InetAddress, port: Int): Socket = createSocket().apply {
+        connect(InetSocketAddress(host, port))
+    }
+    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress?, localPort: Int): Socket = createSocket(address, port)
+
+    private class Socks5Socket(
+        private val proxyHost: String,
+        private val proxyPort: Int,
+        private val auth: SessionProxyAuth?
+    ) : Socket() {
+        override fun connect(endpoint: java.net.SocketAddress?, timeout: Int) {
+            val target = endpoint as? InetSocketAddress ?: throw IOException("Unsupported address")
+            super.connect(InetSocketAddress(proxyHost, proxyPort), if (timeout > 0) timeout else 5000)
+            val out = getOutputStream()
+            val inp = getInputStream()
+
+            if (auth != null) {
+                out.write(byteArrayOf(0x05, 0x02, 0x00, 0x02))
+            } else {
+                out.write(byteArrayOf(0x05, 0x01, 0x00))
+            }
+            out.flush()
+
+            val ver = inp.read()
+            val method = inp.read()
+            if (ver != 0x05 || method == 0xFF) throw IOException("SOCKS5 handshake rejected")
+
+            if (method == 0x02) {
+                val creds = auth ?: throw IOException("SOCKS5 requires auth")
+                val uBytes = creds.username.toByteArray(Charsets.UTF_8)
+                val pBytes = creds.password.toByteArray(Charsets.UTF_8)
+                val authPkt = ByteArray(3 + uBytes.size + pBytes.size)
+                authPkt[0] = 0x01
+                authPkt[1] = uBytes.size.toByte()
+                System.arraycopy(uBytes, 0, authPkt, 2, uBytes.size)
+                authPkt[2 + uBytes.size] = pBytes.size.toByte()
+                System.arraycopy(pBytes, 0, authPkt, 3 + uBytes.size, pBytes.size)
+                out.write(authPkt)
+                out.flush()
+                val authVer = inp.read()
+                val authStatus = inp.read()
+                if (authVer != 0x01 || authStatus != 0x00) throw IOException("SOCKS5 auth failed")
+            }
+
+            // CONNECT command with domain name (0x03) or IPv4 (0x01)
+            val hostStr = target.hostString
+            val port = target.port
+            val hostBytes = hostStr.toByteArray(Charsets.UTF_8)
+            val req = ByteArray(7 + hostBytes.size)
+            req[0] = 0x05
+            req[1] = 0x01
+            req[2] = 0x00
+            req[3] = 0x03
+            req[4] = hostBytes.size.toByte()
+            System.arraycopy(hostBytes, 0, req, 5, hostBytes.size)
+            req[5 + hostBytes.size] = ((port ushr 8) and 0xFF).toByte()
+            req[6 + hostBytes.size] = (port and 0xFF).toByte()
+            out.write(req)
+            out.flush()
+
+            val rVer = inp.read()
+            val rep = inp.read()
+            inp.read() // rsv
+            val atyp = inp.read()
+            if (rVer != 0x05 || rep != 0x00) throw IOException("SOCKS5 connect failed (rep=$rep)")
+            val skipBytes = when (atyp) {
+                0x01 -> 4 + 2
+                0x04 -> 16 + 2
+                0x03 -> (inp.read().coerceAtLeast(0)) + 2
+                else -> 6
+            }
+            repeat(skipBytes) { inp.read() }
+        }
+    }
+}
+
 class DiagnosticsEngine {
     private val json = Json { ignoreUnknownKeys = true }
 
-    private fun createClient(socksPort: Int?): OkHttpClient {
+    private fun createClient(socksPort: Int?, auth: SessionProxyAuth?): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(7, TimeUnit.SECONDS)
             .readTimeout(9, TimeUnit.SECONDS)
             .writeTimeout(7, TimeUnit.SECONDS)
         if (socksPort != null) {
-            builder.proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort)))
+            builder.socketFactory(Socks5AuthSocketFactory("127.0.0.1", socksPort, auth))
         }
         return builder.build()
     }
 
-    suspend fun verifyRealHttpsConnectivity(socksPort: Int?): Result<Int> = withContext(Dispatchers.IO) {
-        runCatching {
-            val client = createClient(socksPort)
+    suspend fun verifyRealHttpsConnectivity(
+        socksPort: Int?,
+        auth: SessionProxyAuth? = null
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        app.novavpn.core.runCatchingCancellable {
+            val client = createClient(socksPort, auth)
             val req = Request.Builder()
                 .url("https://cp.cloudflare.com/generate_204")
                 .header("User-Agent", "NovaVPN/1.0")
@@ -62,10 +158,9 @@ class DiagnosticsEngine {
         }
     }
 
-    suspend fun fetchExitIpInfo(socksPort: Int?): ExitGeoInfo? = withContext(Dispatchers.IO) {
-        val client = createClient(socksPort)
-        // Primary: ipwho.is
-        runCatching {
+    suspend fun fetchExitIpInfo(socksPort: Int?, auth: SessionProxyAuth? = null): ExitGeoInfo? = withContext(Dispatchers.IO) {
+        val client = createClient(socksPort, auth)
+        app.novavpn.core.runCatchingCancellable {
             val req = Request.Builder().url("https://ipwho.is/").build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) error("HTTP ${resp.code}")
@@ -77,15 +172,12 @@ class DiagnosticsEngine {
                 return@withContext ExitGeoInfo(ip, cc, city)
             }
         }
-        // Fallback: Cloudflare trace
-        runCatching {
+        app.novavpn.core.runCatchingCancellable {
             val req = Request.Builder().url("https://1.1.1.1/cdn-cgi/trace").build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) error("HTTP ${resp.code}")
                 val lines = (resp.body?.string() ?: "").lines().associate {
-                    val k = it.substringBefore('=')
-                    val v = it.substringAfter('=', "")
-                    k to v
+                    it.substringBefore('=') to it.substringAfter('=', "")
                 }
                 val ip = lines["ip"] ?: error("Missing ip")
                 val loc = lines["loc"]
@@ -97,29 +189,26 @@ class DiagnosticsEngine {
     suspend fun runFullDiagnostics(
         profile: VpnProfile,
         socksPort: Int?,
+        auth: SessionProxyAuth?,
         vpnConnected: Boolean
     ): DiagnosticReport = withContext(Dispatchers.IO) {
         val effectiveProxyPort = if (vpnConnected) socksPort else null
-        val exitInfo = fetchExitIpInfo(effectiveProxyPort)
+        val effectiveAuth = if (vpnConnected) auth else null
+        val exitInfo = fetchExitIpInfo(effectiveProxyPort, effectiveAuth)
 
-        // 1. DNS Leak check via DoH comparison + local resolver check
-        val (dnsSafe, dnsSummary) = checkDnsLeak(profile, effectiveProxyPort, vpnConnected)
+        val (dnsSafe, dnsSummary) = checkDnsLeak(profile, effectiveProxyPort, effectiveAuth, vpnConnected)
+        val (ipv6Safe, ipv6Summary) = checkIpv6Leak(profile, effectiveProxyPort, effectiveAuth, vpnConnected)
 
-        // 2. IPv6 Leak check
-        val (ipv6Safe, ipv6Summary) = checkIpv6Leak(profile, effectiveProxyPort, vpnConnected)
-
-        // 3. 3-Endpoint latency test
         val endpoints = listOf(
             "Cloudflare" to "1.1.1.1",
             "Google DNS" to "8.8.8.8",
             "Quad9" to "9.9.9.9"
         )
         val latencies = endpoints.map { (label, host) ->
-            measureTcpLatency(label, host, 443, effectiveProxyPort)
+            measureTcpLatency(label, host, 443, effectiveProxyPort, effectiveAuth)
         }
 
-        // 4. MTU Probe
-        val (recMtu, mtuSummary) = probeMtu(effectiveProxyPort, profile.mtu)
+        val (recMtu, mtuSummary) = probeMtu(effectiveProxyPort, effectiveAuth, profile.mtu)
 
         DiagnosticReport(
             running = false,
@@ -140,10 +229,11 @@ class DiagnosticsEngine {
     private fun checkDnsLeak(
         profile: VpnProfile,
         socksPort: Int?,
+        auth: SessionProxyAuth?,
         vpnConnected: Boolean
     ): Pair<Boolean, String> {
         return try {
-            val client = createClient(socksPort)
+            val client = createClient(socksPort, auth)
             val req = Request.Builder()
                 .url("https://cloudflare-dns.com/dns-query?name=example.com&type=A")
                 .header("Accept", "application/dns-json")
@@ -169,6 +259,7 @@ class DiagnosticsEngine {
     private fun checkIpv6Leak(
         profile: VpnProfile,
         socksPort: Int?,
+        auth: SessionProxyAuth?,
         vpnConnected: Boolean
     ): Pair<Boolean, String> {
         if (!vpnConnected) {
@@ -178,13 +269,13 @@ class DiagnosticsEngine {
             return true to if (hasLocalV6) "Device has IPv6; connect VPN with IPv6 blocked or tunneled" else "No active IPv6 route detected"
         }
         return if (!profile.ipv6Enabled) {
-            val client = createClient(socksPort)
+            val client = createClient(socksPort, auth)
             val reachableV6 = runCatching {
                 val req = Request.Builder().url("https://v6.ident.me/").build()
                 client.newCall(req).execute().use { it.isSuccessful }
             }.getOrDefault(false)
             if (reachableV6) {
-                false to "IPv6 reachable despite IPv6 disabled — enable Kill Switch"
+                false to "IPv6 reachable despite IPv6 disabled — enable System Always-on VPN"
             } else {
                 true to "No IPv6 leak detected (IPv6 suppressed)"
             }
@@ -193,16 +284,22 @@ class DiagnosticsEngine {
         }
     }
 
-    private fun measureTcpLatency(label: String, host: String, port: Int, socksPort: Int?): EndpointLatencyResult {
+    private fun measureTcpLatency(
+        label: String,
+        host: String,
+        port: Int,
+        socksPort: Int?,
+        auth: SessionProxyAuth?
+    ): EndpointLatencyResult {
         return try {
             val ms = measureTimeMillis {
                 val socket = if (socksPort != null) {
-                    Socket(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort)))
+                    Socks5AuthSocketFactory("127.0.0.1", socksPort, auth).createSocket()
                 } else {
                     Socket()
                 }
                 socket.use {
-                    it.connect(InetSocketAddress(host, port), 3500)
+                    it.connect(InetSocketAddress.createUnresolved(host, port), 3500)
                 }
             }
             EndpointLatencyResult(label, host, ms.toInt().coerceAtLeast(1), true)
@@ -211,9 +308,9 @@ class DiagnosticsEngine {
         }
     }
 
-    private fun probeMtu(socksPort: Int?, currentMtu: Int): Pair<Int, String> {
+    private fun probeMtu(socksPort: Int?, auth: SessionProxyAuth?, currentMtu: Int): Pair<Int, String> {
         val candidates = listOf(1400, 1340, 1280)
-        val client = createClient(socksPort)
+        val client = createClient(socksPort, auth)
         for (candidate in candidates) {
             val ok = runCatching {
                 val req = Request.Builder()
@@ -248,8 +345,8 @@ class DiagnosticsEngine {
     }
 
     suspend fun checkForUpdates(currentVersion: String): UpdateInfo = withContext(Dispatchers.IO) {
-        runCatching {
-            val client = createClient(null)
+        app.novavpn.core.runCatchingCancellable {
+            val client = createClient(null, null)
             val req = Request.Builder()
                 .url("https://api.github.com/repos/nova-vpn/nova-vpn-android/releases/latest")
                 .header("Accept", "application/vnd.github+json")

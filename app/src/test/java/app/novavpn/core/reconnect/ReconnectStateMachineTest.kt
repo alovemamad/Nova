@@ -61,4 +61,51 @@ class ReconnectStateMachineTest {
         val exhausted = sm.onCoreDied()
         assertEquals(ReconnectActionType.STOP_FAILED, exhausted.action)
     }
+
+    @Test
+    fun `handles offline pause and recovery without losing attempt budget`() {
+        val sm = ReconnectStateMachine(ReconnectMachineState(isOnline = true, maxAttempts = 3))
+        val lost = sm.onNetworkLost()
+        assertEquals(ReconnectActionType.WAIT_FOR_NETWORK, lost.action)
+        assertEquals(0, sm.state.attemptCount)
+
+        // Repeated ping failures while offline must not burn attempts
+        repeat(5) {
+            assertEquals(ReconnectActionType.WAIT_FOR_NETWORK, sm.onPingFailed().action)
+        }
+        assertEquals(0, sm.state.attemptCount)
+
+        val restored = sm.onNetworkAvailable("mobile")
+        assertEquals(ReconnectActionType.RECONNECT_WITH_DELAY, restored.action)
+        assertFalse(sm.state.waitingForNetwork)
+        assertTrue(sm.state.isOnline)
+    }
+
+    @Test
+    fun `remains consistent under concurrent network callbacks and ping updates`() {
+        val sm = ReconnectStateMachine(ReconnectMachineState(maxAttempts = 1000, pingFailureLimit = 2))
+        val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+        val threads = (1..8).map { idx ->
+            Thread {
+                runCatching {
+                    repeat(250) { step ->
+                        when ((idx + step) % 5) {
+                            0 -> sm.onPingFailed()
+                            1 -> sm.onPingSucceeded()
+                            2 -> sm.onNetworkLost()
+                            3 -> sm.onNetworkAvailable(if (step % 2 == 0) "wifi:A" else "mobile")
+                            4 -> sm.onCoreDied()
+                        }
+                    }
+                }.onFailure { errors.add(it) }
+            }
+        }
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+
+        assertTrue("Unexpected concurrency exceptions: $errors", errors.isEmpty())
+        val finalState = sm.state
+        assertTrue(finalState.attemptCount >= 0)
+        assertTrue(finalState.consecutivePingFailures >= 0)
+    }
 }

@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import app.novavpn.data.security.AppLockCrypto
 import app.novavpn.domain.model.AetherProtocol
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.NovaBackupPayload
@@ -25,16 +26,28 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.UUID
 
 private val Context.novaDataStore: DataStore<Preferences> by preferencesDataStore(name = "nova_vpn_settings")
+
+sealed class PinVerifyResult {
+    data object Success : PinVerifyResult()
+    data class WrongPin(val remainingBeforeLockout: Int) : PinVerifyResult()
+    data class LockedOut(val remainingSeconds: Long) : PinVerifyResult()
+}
 
 object SettingsMigrator {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
         coerceInputValues = true
+    }
+    private val secureRandom = SecureRandom()
+
+    fun generateRandomPorts(): Pair<Int, Int> {
+        val socks = 20000 + secureRandom.nextInt(25000)
+        return socks to (socks + 1)
     }
 
     fun migrateSettingsJson(rawJson: String?, legacyVpnMode: String?, legacyWasOn: Boolean): AppSettings {
@@ -43,9 +56,13 @@ object SettingsMigrator {
                 "PROXY" -> VpnMode.PROXY_ONLY
                 else -> VpnMode.VPN
             }
+            val (socks, http) = generateRandomPorts()
             return AppSettings(
                 schemaVersion = AppSettings.CURRENT_SCHEMA_VERSION,
                 vpnMode = mode,
+                localSocksPort = socks,
+                localHttpPort = http,
+                portsInitialized = true,
                 wasVpnActiveBeforeKill = legacyWasOn
             )
         }
@@ -54,11 +71,17 @@ object SettingsMigrator {
             val version = obj?.get("schemaVersion")?.jsonPrimitive?.intOrNull ?: 1
             val decoded = json.decodeFromString<AppSettings>(rawJson)
             if (version < AppSettings.CURRENT_SCHEMA_VERSION) {
-                // Preserve user data while filling newly added fields with safe defaults
+                val safeSocks = if (decoded.localSocksPort in 1024..65535) decoded.localSocksPort else 10808
+                val safeHttp = if (decoded.localHttpPort in 1024..65535 && decoded.localHttpPort != safeSocks) {
+                    decoded.localHttpPort
+                } else {
+                    safeSocks + 1
+                }
                 decoded.copy(
                     schemaVersion = AppSettings.CURRENT_SCHEMA_VERSION,
-                    localSocksPort = if (decoded.localSocksPort in 1024..65535) decoded.localSocksPort else 10808,
-                    localHttpPort = if (decoded.localHttpPort in 1024..65535) decoded.localHttpPort else 10809
+                    localSocksPort = safeSocks,
+                    localHttpPort = safeHttp,
+                    portsInitialized = true
                 )
             } else {
                 decoded
@@ -159,6 +182,16 @@ class SettingsRepository(private val context: Context) {
         return profiles.firstOrNull { it.id == settings.activeProfileId } ?: profiles.first()
     }
 
+    suspend fun ensurePerInstallRandomPorts() {
+        updateSettings { current ->
+            if (current.portsInitialized) current
+            else {
+                val (socks, http) = SettingsMigrator.generateRandomPorts()
+                current.copy(localSocksPort = socks, localHttpPort = http, portsInitialized = true)
+            }
+        }
+    }
+
     suspend fun updateSettings(transform: (AppSettings) -> AppSettings) {
         mutex.withLock {
             context.novaDataStore.edit { prefs ->
@@ -177,6 +210,67 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setVpnActiveState(active: Boolean) {
         updateSettings { it.copy(wasVpnActiveBeforeKill = active) }
+    }
+
+    suspend fun setAppLockPin(pin: String?) {
+        updateSettings { s ->
+            val blob = if (!pin.isNullOrBlank()) AppLockCrypto.sealWithKeystore(pin) else s.appLockVaultBlob
+            s.copy(
+                appLockEnabled = true,
+                appLockPinHash = "",
+                appLockVaultBlob = blob,
+                appLockFailedAttempts = 0,
+                appLockLockoutUntilMs = 0L
+            )
+        }
+    }
+
+    suspend fun disableAppLock() {
+        updateSettings { s ->
+            s.copy(
+                appLockEnabled = false,
+                appLockPinHash = "",
+                appLockVaultBlob = "",
+                appLockFailedAttempts = 0,
+                appLockLockoutUntilMs = 0L
+            )
+        }
+    }
+
+    suspend fun verifyPinAndMigrate(pin: String, nowMs: Long = System.currentTimeMillis()): PinVerifyResult {
+        var result: PinVerifyResult = PinVerifyResult.WrongPin(AppLockCrypto.MAX_FREE_ATTEMPTS)
+        updateSettings { s ->
+            if (s.appLockLockoutUntilMs > nowMs) {
+                val remSec = ((s.appLockLockoutUntilMs - nowMs) + 999L) / 1000L
+                result = PinVerifyResult.LockedOut(remSec)
+                return@updateSettings s
+            }
+            val matchedVault = s.appLockVaultBlob.isNotBlank() && AppLockCrypto.verifySealedBlob(pin, s.appLockVaultBlob)
+            val matchedLegacy = !matchedVault && AppLockCrypto.verifyLegacySha256(pin, s.appLockPinHash)
+
+            if (matchedVault || matchedLegacy) {
+                result = PinVerifyResult.Success
+                val migratedBlob = if (matchedLegacy) AppLockCrypto.sealWithKeystore(pin) else s.appLockVaultBlob
+                s.copy(
+                    appLockPinHash = "",
+                    appLockVaultBlob = migratedBlob,
+                    appLockFailedAttempts = 0,
+                    appLockLockoutUntilMs = 0L
+                )
+            } else {
+                val (nextAttempts, nextLockoutMs) = AppLockCrypto.computeNextLockout(s.appLockFailedAttempts, nowMs)
+                result = if (nextLockoutMs > nowMs) {
+                    PinVerifyResult.LockedOut(((nextLockoutMs - nowMs) + 999L) / 1000L)
+                } else {
+                    PinVerifyResult.WrongPin((AppLockCrypto.MAX_FREE_ATTEMPTS - nextAttempts).coerceAtLeast(0))
+                }
+                s.copy(
+                    appLockFailedAttempts = nextAttempts,
+                    appLockLockoutUntilMs = nextLockoutMs
+                )
+            }
+        }
+        return result
     }
 
     suspend fun saveProfile(profile: VpnProfile, setActive: Boolean = false) {
@@ -235,7 +329,13 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun exportBackupJson(): String {
         val payload = NovaBackupPayload(
-            settings = getSettings().copy(appLockPinHash = ""),
+            settings = getSettings().copy(
+                appLockEnabled = false,
+                appLockPinHash = "",
+                appLockVaultBlob = "",
+                appLockFailedAttempts = 0,
+                appLockLockoutUntilMs = 0L
+            ),
             profiles = getProfiles()
         )
         return json.encodeToString(payload)
@@ -254,19 +354,17 @@ class SettingsRepository(private val context: Context) {
                 val cleanSettings = payload.settings.copy(
                     schemaVersion = AppSettings.CURRENT_SCHEMA_VERSION,
                     activeProfileId = activeId,
+                    appLockEnabled = false,
+                    appLockPinHash = "",
+                    appLockVaultBlob = "",
+                    appLockFailedAttempts = 0,
+                    appLockLockoutUntilMs = 0L,
                     wasVpnActiveBeforeKill = false
                 )
                 prefs[Keys.SCHEMA_VERSION] = AppSettings.CURRENT_SCHEMA_VERSION
                 prefs[Keys.SETTINGS_JSON] = json.encodeToString(cleanSettings)
                 prefs[Keys.PROFILES_JSON] = json.encodeToString(validProfiles)
             }
-        }
-    }
-
-    companion object {
-        fun hashPin(pin: String): String {
-            val digest = MessageDigest.getInstance("SHA-256").digest("novavpn:$pin".toByteArray())
-            return digest.joinToString("") { "%02x".format(it) }
         }
     }
 }

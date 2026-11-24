@@ -2,6 +2,8 @@ package app.novavpn.core.tun
 
 import android.content.Context
 import android.os.ParcelFileDescriptor
+import app.novavpn.core.SessionProxyAuth
+import app.novavpn.core.process.HevCoreAdapter
 import app.novavpn.data.log.LogRepository
 import app.novavpn.domain.model.DnsMode
 import app.novavpn.domain.model.TunEnginePreference
@@ -11,8 +13,16 @@ import app.novavpn.domain.routing.RuleKind
 import app.novavpn.domain.routing.RoutingRuleParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 class TunEngineException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
@@ -22,7 +32,9 @@ interface TunEngine {
         tunFd: Int,
         socksHost: String,
         socksPort: Int,
-        profile: VpnProfile
+        auth: SessionProxyAuth,
+        profile: VpnProfile,
+        protectFd: (Int) -> Boolean
     )
     suspend fun stop()
 }
@@ -30,20 +42,29 @@ interface TunEngine {
 /**
  * Default TUN engine backed by sing-box (libbox.aar, gVisor stack).
  * Uses reflection against io.nekohasekai.libbox.* so the Kotlin codebase compiles cleanly
- * both before and after libbox.aar is dropped into app/libs/.
+ * without libbox.aar, while providing a functional PlatformInterface adapter.
  */
 class SingBoxTunEngine(private val context: Context) : TunEngine {
     override val type: TunEngineType = TunEngineType.SING_BOX_LIBBOX
+
+    @Volatile
     private var boxServiceInstance: Any? = null
 
-    override suspend fun start(tunFd: Int, socksHost: String, socksPort: Int, profile: VpnProfile) = withContext(Dispatchers.IO) {
+    override suspend fun start(
+        tunFd: Int,
+        socksHost: String,
+        socksPort: Int,
+        auth: SessionProxyAuth,
+        profile: VpnProfile,
+        protectFd: (Int) -> Boolean
+    ) = withContext(Dispatchers.IO) {
         val libboxClass = try {
             Class.forName("io.nekohasekai.libbox.Libbox")
         } catch (e: ClassNotFoundException) {
             throw TunEngineException("libbox.aar is not bundled in app/libs/", e)
         }
 
-        val configJson = buildSingBoxConfig(tunFd, socksHost, socksPort, profile)
+        val configJson = buildSingBoxConfig(socksHost, socksPort, auth, profile)
         val configFile = File(context.filesDir, "nova_core/singbox_tun.json").apply {
             parentFile?.mkdirs()
             writeText(configJson)
@@ -53,19 +74,35 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
         try {
             val platformInterfaceClass = Class.forName("io.nekohasekai.libbox.PlatformInterface")
             val newServiceMethod = libboxClass.getMethod("newService", String::class.java, platformInterfaceClass)
-            // Null platform interface proxy when only running fd-passed TUN -> SOCKS5
+
             val proxy = java.lang.reflect.Proxy.newProxyInstance(
                 platformInterfaceClass.classLoader,
                 arrayOf(platformInterfaceClass)
-            ) { _, method, _ ->
-                when (method.returnType) {
-                    Boolean::class.javaPrimitiveType -> false
-                    Int::class.javaPrimitiveType -> 0
-                    Long::class.javaPrimitiveType -> 0L
-                    String::class.java -> ""
-                    else -> null
+            ) { _, method, args ->
+                when (method.name) {
+                    "openTun" -> tunFd
+                    "autoDetectInterfaceControl", "protect" -> {
+                        val fd = (args?.firstOrNull() as? Int) ?: -1
+                        val ok = if (fd >= 0) protectFd(fd) else false
+                        if (method.returnType == Boolean::class.javaPrimitiveType) ok else Unit
+                    }
+                    "usePlatformAutoDetectInterfaceControl" -> true
+                    "useProcFS" -> false
+                    "underNetworkExtension", "includeAllNetworks" -> false
+                    "findConnectionOwner" -> 0
+                    "packageNameByUid" -> ""
+                    "uidByPackageName" -> 0
+                    else -> when (method.returnType) {
+                        Boolean::class.javaPrimitiveType -> false
+                        Int::class.javaPrimitiveType -> 0
+                        Long::class.javaPrimitiveType -> 0L
+                        String::class.java -> ""
+                        Void.TYPE -> Unit
+                        else -> null
+                    }
                 }
             }
+
             val service = newServiceMethod.invoke(null, configFile.readText(), proxy)
                 ?: throw TunEngineException("Libbox.newService returned null")
             service.javaClass.getMethod("start").invoke(service)
@@ -86,160 +123,254 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
         LogRepository.i("SingBoxTun", "libbox TUN stopped")
     }
 
-    fun buildSingBoxConfig(tunFd: Int, socksHost: String, socksPort: Int, profile: VpnProfile): String {
-        val dnsAddress = when (profile.dnsMode) {
-            DnsMode.DOH -> profile.customDnsPrimary.ifBlank { "https://cloudflare-dns.com/dns-query" }
-            DnsMode.DOT -> profile.customDnsPrimary.ifBlank { "tls://1.1.1.1" }
-            DnsMode.PLAIN -> profile.customDnsPrimary.ifBlank { "1.1.1.1" }
-        }
-        val blockRules = RoutingRuleParser.parse(profile.blockRules).validRules
-        val directRules = RoutingRuleParser.parse(profile.directRules).validRules
+    companion object {
+        private val json = Json { prettyPrint = true }
 
-        val routeRules = buildList {
-            add("""{"protocol":"dns","outbound":"dns-out"}""")
-            if (blockRules.isNotEmpty()) {
-                val domains = blockRules.filter { it.kind == RuleKind.DOMAIN }.map { "\"${it.value}\"" }
-                val suffixes = blockRules.filter { it.kind == RuleKind.DOMAIN_SUFFIX }.map { "\"${it.value}\"" }
-                val cidrs = blockRules.filter { it.kind == RuleKind.IP_CIDR }.map { "\"${it.value}\"" }
-                if (domains.isNotEmpty() || suffixes.isNotEmpty()) {
-                    add("""{"domain":[${domains.joinToString(",")}],"domain_suffix":[${suffixes.joinToString(",")}],"outbound":"block"}""")
+        /**
+         * Builds a modern sing-box 1.12+ JSON configuration using kotlinx.serialization.json
+         * (no string interpolation or deprecated `block`/`dns` outbounds or inbound `sniff`).
+         */
+        fun buildSingBoxConfig(
+            socksHost: String,
+            socksPort: Int,
+            auth: SessionProxyAuth,
+            profile: VpnProfile
+        ): String {
+            val remoteDnsServer = buildRemoteDnsServer(profile)
+            val blockRules = RoutingRuleParser.parse(profile.blockRules).validRules
+            val directRules = RoutingRuleParser.parse(profile.directRules).validRules
+
+            val routeRules = buildJsonArray {
+                // Current sing-box protocol sniffing + DNS hijacking via route action rules
+                add(buildJsonObject { put("action", "sniff") })
+                add(buildJsonObject {
+                    put("protocol", "dns")
+                    put("action", "hijack-dns")
+                })
+
+                if (blockRules.isNotEmpty()) {
+                    addRuleGroup(blockRules, action = "reject", outbound = null)
                 }
-                if (cidrs.isNotEmpty()) {
-                    add("""{"ip_cidr":[${cidrs.joinToString(",")}],"outbound":"block"}""")
+                if (directRules.isNotEmpty()) {
+                    addRuleGroup(directRules, action = "route", outbound = "direct")
                 }
             }
-            if (directRules.isNotEmpty()) {
-                val domains = directRules.filter { it.kind == RuleKind.DOMAIN }.map { "\"${it.value}\"" }
-                val suffixes = directRules.filter { it.kind == RuleKind.DOMAIN_SUFFIX }.map { "\"${it.value}\"" }
-                val cidrs = directRules.filter { it.kind == RuleKind.IP_CIDR }.map { "\"${it.value}\"" }
-                if (domains.isNotEmpty() || suffixes.isNotEmpty()) {
-                    add("""{"domain":[${domains.joinToString(",")}],"domain_suffix":[${suffixes.joinToString(",")}],"outbound":"direct"}""")
+
+            val root = buildJsonObject {
+                put("log", buildJsonObject { put("level", "warn") })
+                put("dns", buildJsonObject {
+                    put("servers", buildJsonArray {
+                        add(remoteDnsServer)
+                        add(buildJsonObject {
+                            put("tag", "local")
+                            put("type", "local")
+                        })
+                    })
+                    put("final", "remote")
+                    put("strategy", if (profile.ipv6Enabled) "prefer_ipv4" else "ipv4_only")
+                })
+                put("inbounds", buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", "tun")
+                        put("tag", "tun-in")
+                        put("interface_name", "tun0")
+                        put("address", buildJsonArray {
+                            add("10.10.0.1/24")
+                            if (profile.ipv6Enabled) add("fd00::1/64")
+                        })
+                        put("mtu", profile.mtu)
+                        put("stack", "gvisor")
+                        put("auto_route", false)
+                    })
+                })
+                put("outbounds", buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", "socks")
+                        put("tag", "proxy")
+                        put("server", socksHost)
+                        put("server_port", socksPort)
+                        put("version", "5")
+                        put("username", auth.username)
+                        put("password", auth.password)
+                    })
+                    add(buildJsonObject {
+                        put("type", "direct")
+                        put("tag", "direct")
+                    })
+                })
+                put("route", buildJsonObject {
+                    put("rules", routeRules)
+                    put("final", "proxy")
+                    put("auto_detect_interface", false)
+                })
+            }
+            return json.encodeToString(root)
+        }
+
+        private fun buildRemoteDnsServer(profile: VpnProfile): JsonObject {
+            val raw = profile.customDnsPrimary.trim()
+            return when (profile.dnsMode) {
+                DnsMode.DOH -> {
+                    val hostPortPath = raw.removePrefix("https://").removePrefix("http://")
+                        .ifBlank { "cloudflare-dns.com/dns-query" }
+                    val hostPart = hostPortPath.substringBefore('/')
+                    val host = hostPart.substringBefore(':')
+                    val port = hostPart.substringAfter(':', "").toIntOrNull() ?: 443
+                    val path = "/" + hostPortPath.substringAfter('/', "dns-query").trimStart('/')
+                    buildJsonObject {
+                        put("tag", "remote")
+                        put("type", "https")
+                        put("server", host)
+                        put("server_port", port)
+                        put("path", path)
+                        put("detour", "proxy")
+                    }
                 }
-                if (cidrs.isNotEmpty()) {
-                    add("""{"ip_cidr":[${cidrs.joinToString(",")}],"outbound":"direct"}""")
+                DnsMode.DOT -> {
+                    val hostPart = raw.removePrefix("tls://").ifBlank { "1.1.1.1" }
+                    val host = hostPart.substringBefore(':')
+                    val port = hostPart.substringAfter(':', "").toIntOrNull() ?: 853
+                    buildJsonObject {
+                        put("tag", "remote")
+                        put("type", "tls")
+                        put("server", host)
+                        put("server_port", port)
+                        put("detour", "proxy")
+                    }
                 }
-            }
-        }
-
-        return """
-        {
-          "log": { "level": "warn" },
-          "dns": {
-            "servers": [
-              { "tag": "remote", "address": "$dnsAddress", "detour": "proxy" },
-              { "tag": "local", "address": "local", "detour": "direct" }
-            ],
-            "strategy": "${if (profile.ipv6Enabled) "prefer_ipv4" else "ipv4_only"}"
-          },
-          "inbounds": [
-            {
-              "type": "tun",
-              "tag": "tun-in",
-              "interface_name": "tun0",
-              "file_descriptor": $tunFd,
-              "mtu": ${profile.mtu},
-              "stack": "gvisor",
-              "sniff": true
-            }
-          ],
-          "outbounds": [
-            {
-              "type": "socks",
-              "tag": "proxy",
-              "server": "$socksHost",
-              "server_port": $socksPort,
-              "version": "5"
-            },
-            { "type": "direct", "tag": "direct" },
-            { "type": "block", "tag": "block" },
-            { "type": "dns", "tag": "dns-out" }
-          ],
-          "route": {
-            "rules": [${routeRules.joinToString(",")}],
-            "final": "proxy"
-          }
-        }
-        """.trimIndent()
-    }
-}
-
-/**
- * Automatic fallback TUN engine backed by hev-socks5-tunnel (JNI or executable binary).
- */
-class HevSocks5TunEngine(private val context: Context) : TunEngine {
-    override val type: TunEngineType = TunEngineType.HEV_SOCKS5_TUNNEL
-    private var process: Process? = null
-    private var usingJni = false
-
-    override suspend fun start(tunFd: Int, socksHost: String, socksPort: Int, profile: VpnProfile) = withContext(Dispatchers.IO) {
-        val confFile = File(context.filesDir, "nova_core/hev_socks5.yml").apply {
-            parentFile?.mkdirs()
-            writeText(buildHevYaml(socksHost, socksPort, profile))
-        }
-
-        // First attempt JNI class hev.htproxy.TProxyService if bundled
-        val jniLoaded = runCatching {
-            val clazz = Class.forName("hev.htproxy.TProxyService")
-            val startMethod = clazz.getMethod("TProxyStartService", String::class.java, Int::class.javaPrimitiveType)
-            startMethod.invoke(null, confFile.absolutePath, tunFd)
-            usingJni = true
-            true
-        }.getOrDefault(false)
-
-        if (jniLoaded) {
-            LogRepository.i("HevTun", "hev-socks5-tunnel started via JNI (fd=$tunFd)")
-            return@withContext
-        }
-
-        // Fallback to native binary execution
-        val bin = File(context.applicationInfo.nativeLibraryDir, "libhev-socks5-tunnel.so")
-        if (!bin.exists() || !bin.canExecute()) {
-            throw TunEngineException("libhev-socks5-tunnel.so not found at ${bin.absolutePath}")
-        }
-
-        val pb = ProcessBuilder(bin.absolutePath, confFile.absolutePath, "--tun-fd", tunFd.toString())
-            .redirectErrorStream(true)
-        process = pb.start()
-        LogRepository.i("HevTun", "hev-socks5-tunnel process started (fd=$tunFd)")
-    }
-
-    override suspend fun stop() = withContext(Dispatchers.IO) {
-        if (usingJni) {
-            usingJni = false
-            runCatching {
-                val clazz = Class.forName("hev.htproxy.TProxyService")
-                clazz.getMethod("TProxyStopService").invoke(null)
-            }
-        }
-        process?.let { proc ->
-            runCatching {
-                if (proc.isAlive) {
-                    proc.destroy()
-                    if (!proc.waitFor(1000, TimeUnit.MILLISECONDS) && proc.isAlive) {
-                        proc.destroyForcibly()
+                DnsMode.PLAIN -> {
+                    val hostPart = raw.ifBlank { "1.1.1.1" }
+                    val host = hostPart.substringBefore(':')
+                    val port = hostPart.substringAfter(':', "").toIntOrNull() ?: 53
+                    buildJsonObject {
+                        put("tag", "remote")
+                        put("type", "udp")
+                        put("server", host)
+                        put("server_port", port)
+                        put("detour", "proxy")
                     }
                 }
             }
         }
-        process = null
+
+        private fun kotlinx.serialization.json.JsonArrayBuilder.addRuleGroup(
+            rules: List<app.novavpn.domain.routing.ParsedRoutingRule>,
+            action: String,
+            outbound: String?
+        ) {
+            val domains = rules.filter { it.kind == RuleKind.DOMAIN }.map { JsonPrimitive(it.value) }
+            val suffixes = rules.filter { it.kind == RuleKind.DOMAIN_SUFFIX }.map { JsonPrimitive(it.value) }
+            val cidrs = rules.filter { it.kind == RuleKind.IP_CIDR }.map { JsonPrimitive(it.value) }
+            val ports = rules.filter { it.kind == RuleKind.PORT }.mapNotNull { it.value.toIntOrNull()?.let(::JsonPrimitive) }
+
+            if (domains.isNotEmpty() || suffixes.isNotEmpty()) {
+                add(buildJsonObject {
+                    if (domains.isNotEmpty()) put("domain", JsonArray(domains))
+                    if (suffixes.isNotEmpty()) put("domain_suffix", JsonArray(suffixes))
+                    put("action", action)
+                    if (outbound != null) put("outbound", outbound)
+                })
+            }
+            if (cidrs.isNotEmpty()) {
+                add(buildJsonObject {
+                    put("ip_cidr", JsonArray(cidrs))
+                    put("action", action)
+                    if (outbound != null) put("outbound", outbound)
+                })
+            }
+            if (ports.isNotEmpty()) {
+                add(buildJsonObject {
+                    put("port", JsonArray(ports))
+                    put("action", action)
+                    if (outbound != null) put("outbound", outbound)
+                })
+            }
+        }
+    }
+}
+
+/**
+ * Automatic fallback TUN engine backed strictly by hev-socks5-tunnel JNI (`hev.htproxy.TProxyService`).
+ * Includes `mapdns` so virtual DNS at `10.10.0.2:53` resolves over SOCKS5 without leaking.
+ */
+class HevSocks5TunEngine(private val context: Context) : TunEngine {
+    override val type: TunEngineType = TunEngineType.HEV_SOCKS5_TUNNEL
+
+    @Volatile
+    private var usingJni = false
+
+    override suspend fun start(
+        tunFd: Int,
+        socksHost: String,
+        socksPort: Int,
+        auth: SessionProxyAuth,
+        profile: VpnProfile,
+        protectFd: (Int) -> Boolean
+    ) = withContext(Dispatchers.IO) {
+        val confFile = File(context.filesDir, "nova_core/hev_socks5.yml").apply {
+            parentFile?.mkdirs()
+            writeText(buildHevYaml(socksHost, socksPort, auth, profile))
+        }
+
+        val clazz = try {
+            Class.forName(HevCoreAdapter.JNI_CLASS_NAME)
+        } catch (e: ClassNotFoundException) {
+            throw TunEngineException("hev-socks5-tunnel JNI wrapper (${HevCoreAdapter.JNI_CLASS_NAME}) is not bundled", e)
+        }
+
+        try {
+            val startMethod = clazz.getMethod("TProxyStartService", String::class.java, Int::class.javaPrimitiveType)
+            startMethod.invoke(null, confFile.absolutePath, tunFd)
+            usingJni = true
+            LogRepository.i("HevTun", "hev-socks5-tunnel started via JNI (fd=$tunFd)")
+        } catch (e: Throwable) {
+            usingJni = false
+            throw TunEngineException("hev-socks5-tunnel JNI start failed: ${e.cause?.message ?: e.message}", e)
+        }
+    }
+
+    override suspend fun stop() = withContext(Dispatchers.IO) {
+        if (!usingJni) return@withContext
+        usingJni = false
+        runCatching {
+            val clazz = Class.forName(HevCoreAdapter.JNI_CLASS_NAME)
+            clazz.getMethod("TProxyStopService").invoke(null)
+        }
         LogRepository.i("HevTun", "hev-socks5-tunnel stopped")
     }
 
-    fun buildHevYaml(socksHost: String, socksPort: Int, profile: VpnProfile): String = """
-        tunnel:
-          mtu: ${profile.mtu}
-          ipv4: 10.10.0.1
-          ${if (profile.ipv6Enabled) "ipv6: 'fd00::1'" else ""}
-        socks5:
-          port: $socksPort
-          address: $socksHost
-          udp: 'udp'
-        misc:
-          task-stack-size: ${profile.tcpBufferKb * 1024}
-          connect-timeout: 5000
-          read-write-timeout: 60000
-          log-level: warn
-    """.trimIndent()
+    companion object {
+        fun buildHevYaml(
+            socksHost: String,
+            socksPort: Int,
+            auth: SessionProxyAuth,
+            profile: VpnProfile
+        ): String = buildString {
+            appendLine("tunnel:")
+            appendLine("  mtu: ${profile.mtu}")
+            appendLine("  ipv4: 10.10.0.1")
+            if (profile.ipv6Enabled) {
+                appendLine("  ipv6: 'fd00::1'")
+            }
+            appendLine("socks5:")
+            appendLine("  port: $socksPort")
+            appendLine("  address: $socksHost")
+            appendLine("  username: '${auth.username}'")
+            appendLine("  password: '${auth.password}'")
+            appendLine("  udp: 'udp'")
+            appendLine("mapdns:")
+            appendLine("  address: 10.10.0.2")
+            appendLine("  port: 53")
+            appendLine("  network: 240.0.0.0")
+            appendLine("  netmask: 240.0.0.0")
+            appendLine("  cache-size: 10000")
+            appendLine("misc:")
+            appendLine("  task-stack-size: ${profile.tcpBufferKb * 1024}")
+            appendLine("  connect-timeout: 5000")
+            appendLine("  read-write-timeout: 60000")
+            appendLine("  log-level: warn")
+        }
+    }
 }
 
 class TunEngineManager(private val context: Context) {
@@ -252,8 +383,10 @@ class TunEngineManager(private val context: Context) {
     suspend fun startTun(
         tunInterface: ParcelFileDescriptor,
         socksPort: Int,
+        auth: SessionProxyAuth,
         profile: VpnProfile,
-        preference: TunEnginePreference
+        preference: TunEnginePreference,
+        protectFd: (Int) -> Boolean
     ): Result<TunEngineType> {
         stopTun()
         val fd = tunInterface.fd
@@ -266,12 +399,14 @@ class TunEngineManager(private val context: Context) {
         var lastError: Throwable? = null
         for ((index, engine) in enginesToTry.withIndex()) {
             try {
-                engine.start(fd, "127.0.0.1", socksPort, profile)
+                engine.start(fd, "127.0.0.1", socksPort, auth, profile, protectFd)
                 activeEngine = engine
                 if (index > 0) {
                     LogRepository.w("TunManager", "Default TUN failed (${lastError?.message}); fell back to ${engine.type}")
                 }
                 return Result.success(engine.type)
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
             } catch (e: Throwable) {
                 lastError = e
                 LogRepository.w("TunManager", "TUN engine ${engine.type} failed to start: ${e.message}")
@@ -284,6 +419,13 @@ class TunEngineManager(private val context: Context) {
     suspend fun stopTun() {
         val current = activeEngine
         activeEngine = null
-        runCatching { current?.stop() }
+        if (current != null) {
+            try {
+                current.stop()
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
+            } catch (_: Throwable) {
+            }
+        }
     }
 }

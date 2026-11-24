@@ -13,8 +13,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.novavpn.ServiceLocator
 import app.novavpn.data.log.LogRepository
+import app.novavpn.data.store.PinVerifyResult
 import app.novavpn.data.store.ProfileShareCodec
-import app.novavpn.data.store.SettingsRepository
+import app.novavpn.data.store.SettingsMigrator
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.DataUsageDay
 import app.novavpn.domain.model.DiagnosticReport
@@ -76,8 +77,12 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
     private val _uiMessage = MutableStateFlow<String?>(null)
     val uiMessage: StateFlow<String?> = _uiMessage.asStateFlow()
 
+    private val _pendingDeepLinkProfile = MutableStateFlow<VpnProfile?>(null)
+    val pendingDeepLinkProfile: StateFlow<VpnProfile?> = _pendingDeepLinkProfile.asStateFlow()
+
     init {
         viewModelScope.launch {
+            settingsRepo.ensurePerInstallRandomPorts()
             val initialSettings = settingsRepo.getSettings()
             if (!initialSettings.appLockEnabled) {
                 _isUnlocked.value = true
@@ -98,28 +103,48 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
         _isUnlocked.value = true
     }
 
-    fun unlockWithPin(pin: String): Boolean {
-        val hash = SettingsRepository.hashPin(pin)
-        val ok = hash == settings.value.appLockPinHash
-        if (ok) _isUnlocked.value = true
-        return ok
+    suspend fun verifyPin(pin: String): PinVerifyResult {
+        val result = settingsRepo.verifyPinAndMigrate(pin)
+        if (result is PinVerifyResult.Success) {
+            _isUnlocked.value = true
+        }
+        return result
     }
 
     fun enableAppLock(pin: String?) {
         viewModelScope.launch {
-            settingsRepo.updateSettings { s ->
-                val newHash = if (!pin.isNullOrBlank()) SettingsRepository.hashPin(pin) else s.appLockPinHash
-                s.copy(appLockEnabled = true, appLockPinHash = newHash)
-            }
+            settingsRepo.setAppLockPin(pin)
             _isUnlocked.value = true
         }
     }
 
     fun disableAppLock() {
         viewModelScope.launch {
-            settingsRepo.updateSettings { it.copy(appLockEnabled = false, appLockPinHash = "") }
+            settingsRepo.disableAppLock()
             _isUnlocked.value = true
         }
+    }
+
+    fun handleIncomingProfileUri(rawUri: String) {
+        val res = ProfileShareCodec.decodeFromText(rawUri)
+        res.onSuccess { prof ->
+            _pendingDeepLinkProfile.value = prof
+        }.onFailure { err ->
+            _uiMessage.value = err.message ?: "Could not parse profile link"
+        }
+    }
+
+    fun confirmDeepLinkImport() {
+        val prof = _pendingDeepLinkProfile.value ?: return
+        _pendingDeepLinkProfile.value = null
+        viewModelScope.launch {
+            settingsRepo.saveProfile(prof, setActive = true)
+            _uiMessage.value = "Imported profile: ${prof.name}"
+        }
+    }
+
+    fun dismissDeepLinkImport() {
+        _pendingDeepLinkProfile.value = null
     }
 
     fun completeOnboarding() {
@@ -224,7 +249,8 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
             val status = runtimeStatus.value
             val isConnected = status.state == VpnState.CONNECTED
             val port = if (isConnected) status.socksPort else null
-            val report = diagnosticsEngine.runFullDiagnostics(prof, port, isConnected)
+            val auth = if (isConnected) vpnController.currentProxyAuth() else null
+            val report = diagnosticsEngine.runFullDiagnostics(prof, port, auth, isConnected)
             _diagnosticReport.value = report
         }
     }
@@ -241,11 +267,12 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
 
     fun resetLocalPorts() {
         viewModelScope.launch {
+            val (newSocks, newHttp) = SettingsMigrator.generateRandomPorts()
             settingsRepo.updateSettings {
-                it.copy(localSocksPort = 10828, localHttpPort = 10829)
+                it.copy(localSocksPort = newSocks, localHttpPort = newHttp, portsInitialized = true)
             }
             vpnController.clearError()
-            _uiMessage.value = "Reset local ports to 10828 / 10829"
+            _uiMessage.value = "Reset local ports to $newSocks / $newHttp"
         }
     }
 

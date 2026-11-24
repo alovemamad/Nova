@@ -221,11 +221,12 @@ data class AppSettings(
     val activeProfileId: String = DEFAULT_PROFILE_ID,
     val vpnMode: VpnMode = VpnMode.VPN,
     val tunEnginePreference: TunEnginePreference = TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV,
-    val killSwitchBlocking: Boolean = false,
+    val keepTunOnReconnect: Boolean = true,
     val splitTunnelMode: SplitTunnelMode = SplitTunnelMode.DISABLED,
     val splitTunnelPackages: Set<String> = emptySet(),
-    val localSocksPort: Int = 10808,
-    val localHttpPort: Int = 10809,
+    val localSocksPort: Int = 24808,
+    val localHttpPort: Int = 24809,
+    val portsInitialized: Boolean = false,
     val shareProxyOnLan: Boolean = false,
     val preferLastGoodGateway: Boolean = true,
     val autoConnect: AutoConnectSettings = AutoConnectSettings(),
@@ -235,14 +236,17 @@ data class AppSettings(
     val digitMode: DigitMode = DigitMode.LOCALE,
     val glass: GlassPrefs = GlassPrefs(),
     val appLockEnabled: Boolean = false,
-    val appLockPinHash: String = "",
+    val appLockPinHash: String = "", // Legacy SHA-256 field retained only for transparent migration
+    val appLockVaultBlob: String = "", // Android Keystore AES-GCM encrypted PBKDF2 salt+hash
+    val appLockFailedAttempts: Int = 0,
+    val appLockLockoutUntilMs: Long = 0L,
     val hideFromRecents: Boolean = false,
     val bestRoutePerNetwork: Map<String, RouteChain> = emptyMap(),
     val lastKnownGoodEndpoint: String = "",
     val wasVpnActiveBeforeKill: Boolean = false
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 3
+        const val CURRENT_SCHEMA_VERSION = 4
         const val DEFAULT_PROFILE_ID = "default-smart-auto"
     }
 }
@@ -267,9 +271,11 @@ data class VpnRuntimeStatus(
     val suggestedFix: SuggestedFixAction = SuggestedFixAction.NONE,
     val reconnectAttempt: Int = 0,
     val smartProbeStatus: String? = null,
-    val socksPort: Int = 10808,
+    val socksPort: Int = 24808,
     val httpPort: Int? = null,
-    val lanShareActive: Boolean = false
+    val lanShareActive: Boolean = false,
+    val sessionProxyUser: String? = null,
+    val sessionProxyPass: String? = null
 )
 
 @Serializable

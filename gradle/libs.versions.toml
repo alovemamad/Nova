@@ -30,14 +30,12 @@ cameraLifecycle = "1.5.0"
 cameraView = "1.5.0"
 cameraCore = "1.5.0"
 loggingInterceptor = "4.10.0"
-okhttp = "4.10.0"
+okhttp = "4.12.0"
 moshiKotlin = "1.15.2"
 moshiKotlinCodegen = "1.15.2"
 datastorePreferences = "1.1.7"
 robolectric = "4.16.1"
 firebaseBom = "35.1.0"
-secretsGradlePlugin = "2.0.1"
-googleServices = "4.5.0"
 credentials = "1.5.0"
 googleid = "1.1.1"
 kotlinxSerializationJson = "1.8.0"
@@ -109,5 +107,4 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 google-devtools-ksp = { id = "com.google.devtools.ksp", version.ref = "googleDevtoolsKsp" }
-secrets = { id = "com.google.android.libraries.mapsplatform.secrets-gradle-plugin", version.ref = "secretsGradlePlugin" }
-google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }
+

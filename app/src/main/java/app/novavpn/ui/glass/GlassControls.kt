@@ -12,7 +12,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -49,7 +48,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -60,6 +58,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -67,7 +66,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import app.novavpn.domain.model.GlassConnectControl
 import app.novavpn.domain.model.VpnState
-import app.novavpn.ui.theme.tr
+import com.example.R
 import kotlin.math.roundToInt
 
 @Composable
@@ -142,7 +141,7 @@ private fun NovaOrbControl(
         label = "scale"
     )
 
-    val desc = if (isConnected) tr("Disconnect Nova VPN", "قطع اتصال نوا وی‌پی‌ان") else tr("Connect Nova VPN", "اتصال نوا وی‌پی‌ان")
+    val desc = stringResource(if (isConnected) R.string.ctrl_disconnect_desc else R.string.ctrl_connect_desc)
 
     Box(
         modifier = modifier
@@ -210,13 +209,15 @@ private fun NovaOrbControl(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = when {
-                        isConnected -> tr("ACTIVE", "متصل")
-                        isBusy -> tr("LINKING", "در حال اتصال")
-                        isPaused -> tr("PAUSED", "موقت")
-                        isError -> tr("RETRY", "تلاش مجدد")
-                        else -> tr("CONNECT", "اتصال")
-                    },
+                    text = stringResource(
+                        when {
+                            isConnected -> R.string.ctrl_active
+                            isBusy -> R.string.ctrl_linking
+                            isPaused -> R.string.ctrl_paused
+                            isError -> R.string.ctrl_retry
+                            else -> R.string.ctrl_connect
+                        }
+                    ),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                     color = look.textPrimary
@@ -246,13 +247,13 @@ private fun NovaZedGlassControl(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(
                 imageVector = Icons.Rounded.AutoAwesome,
-                contentDescription = tr("Toggle VPN", "تغییر وضعیت وی‌پی‌ان"),
+                contentDescription = stringResource(R.string.ctrl_toggle_vpn),
                 tint = tint,
                 modifier = Modifier.size(48.dp)
             )
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = if (isConnected) tr("Protected", "محافظت‌شده") else tr("Tap to Shield", "لمس برای اتصال"),
+                text = stringResource(if (isConnected) R.string.ctrl_protected else R.string.ctrl_tap_shield),
                 style = MaterialTheme.typography.titleMedium,
                 color = look.textPrimary
             )
@@ -285,7 +286,7 @@ private fun NovaPillButtonControl(
                 tint = if (isConnected) look.accent else look.textPrimary
             )
             Text(
-                text = if (isConnected) tr("Disconnect Nova VPN", "قطع اتصال نوا وی‌پی‌ان") else tr("Connect Nova VPN", "اتصال نوا وی‌پی‌ان"),
+                text = stringResource(if (isConnected) R.string.ctrl_disconnect_desc else R.string.ctrl_connect_desc),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = look.textPrimary
@@ -330,7 +331,7 @@ private fun NovaSwitchControl(
         ) {
             Icon(
                 imageVector = Icons.Rounded.PowerSettingsNew,
-                contentDescription = tr("Toggle VPN", "روشن/خاموش"),
+                contentDescription = stringResource(R.string.ctrl_toggle_vpn),
                 tint = Color(0xFF041412)
             )
         }
@@ -360,7 +361,7 @@ private fun NovaSlideControl(
         val currentOffset = (baseOffset + dragX).coerceIn(0f, maxOffsetPx)
 
         Text(
-            text = if (isConnected) tr("Slide to disconnect", "برای قطع اتصال بکشید") else tr("Slide to connect", "برای اتصال بکشید"),
+            text = stringResource(if (isConnected) R.string.slide_to_disconnect else R.string.slide_to_connect),
             style = MaterialTheme.typography.titleMedium,
             color = look.textSecondary,
             modifier = Modifier.align(Alignment.Center)
@@ -390,7 +391,7 @@ private fun NovaSlideControl(
         ) {
             Icon(
                 imageVector = Icons.Rounded.PowerSettingsNew,
-                contentDescription = tr("Slide control", "کنترل کشویی"),
+                contentDescription = stringResource(R.string.ctrl_slide_desc),
                 tint = Color(0xFF041412)
             )
         }

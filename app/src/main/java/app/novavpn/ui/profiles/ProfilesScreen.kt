@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.novavpn.domain.model.VpnProfile
 import app.novavpn.ui.components.ProfileQrDialog
@@ -55,7 +56,7 @@ import app.novavpn.ui.glass.GlassBadge
 import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassCircleButton
 import app.novavpn.ui.glass.LocalGlassLook
-import app.novavpn.ui.theme.tr
+import com.example.R
 
 @Composable
 fun ProfilesScreen(
@@ -106,12 +107,12 @@ fun ProfilesScreen(
             ) {
                 Column {
                     Text(
-                        text = tr("Profiles", "پروفایل‌ها"),
+                        text = stringResource(R.string.profiles_title),
                         style = MaterialTheme.typography.headlineMedium,
                         color = look.textPrimary
                     )
                     Text(
-                        text = tr("Import, share QR, or customize routing", "وارد کردن، اشتراک QR یا شخصی‌سازی مسیر"),
+                        text = stringResource(R.string.profiles_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = look.textSecondary
                     )
@@ -119,7 +120,7 @@ fun ProfilesScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GlassCircleButton(
                         icon = Icons.Rounded.PhotoLibrary,
-                        contentDescription = tr("Import QR from Gallery", "خواندن QR از گالری"),
+                        contentDescription = stringResource(R.string.profiles_import),
                         onClick = {
                             qrImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         },
@@ -127,13 +128,13 @@ fun ProfilesScreen(
                     )
                     GlassCircleButton(
                         icon = Icons.Rounded.ContentPaste,
-                        contentDescription = tr("Import Link / JSON", "وارد کردن لینک یا جیسون"),
+                        contentDescription = stringResource(R.string.profiles_import_title),
                         onClick = { showImportTextDialog = true },
                         modifier = Modifier.testTag("import_text_button")
                     )
                     GlassCircleButton(
                         icon = Icons.Rounded.Add,
-                        contentDescription = tr("Create Profile", "ساخت پروفایل"),
+                        contentDescription = stringResource(R.string.profiles_title),
                         onClick = { showCreateDialog = true },
                         tint = look.accent,
                         modifier = Modifier.testTag("add_profile_button")
@@ -168,7 +169,7 @@ fun ProfilesScreen(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Icon(
                                         imageVector = Icons.Rounded.CheckCircle,
-                                        contentDescription = tr("Active", "فعال"),
+                                        contentDescription = stringResource(R.string.profiles_active),
                                         tint = look.accent
                                     )
                                 }
@@ -182,10 +183,10 @@ fun ProfilesScreen(
                         }
                         if (!isActive) {
                             OutlinedButton(onClick = { onSelectProfile(profile.id) }) {
-                                Text(tr("Select", "انتخاب"))
+                                Text(stringResource(R.string.profiles_select))
                             }
                         } else {
-                            GlassBadge(text = tr("Active", "فعال"), color = look.accent)
+                            GlassBadge(text = stringResource(R.string.profiles_active), color = look.accent)
                         }
                     }
 
@@ -198,17 +199,17 @@ fun ProfilesScreen(
                             val (uri, bmp) = onGenerateQr(profile)
                             qrPreview = Triple(profile.name, uri, bmp)
                         }) {
-                            Icon(Icons.Rounded.QrCode2, contentDescription = tr("Share QR", "کد QR"), tint = look.textSecondary)
+                            Icon(Icons.Rounded.QrCode2, contentDescription = stringResource(R.string.profiles_copy_link), tint = look.textSecondary)
                         }
                         IconButton(onClick = { onDuplicateProfile(profile.id) }) {
-                            Icon(Icons.Rounded.ContentCopy, contentDescription = tr("Duplicate", "کپی"), tint = look.textSecondary)
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = stringResource(R.string.common_copy), tint = look.textSecondary)
                         }
                         IconButton(onClick = { editingProfile = profile }) {
-                            Icon(Icons.Rounded.Edit, contentDescription = tr("Edit", "ویرایش"), tint = look.accent)
+                            Icon(Icons.Rounded.Edit, contentDescription = stringResource(R.string.profiles_title), tint = look.accent)
                         }
                         if (profiles.size > 1) {
                             IconButton(onClick = { onDeleteProfile(profile.id) }) {
-                                Icon(Icons.Rounded.Delete, contentDescription = tr("Delete", "حذف"), tint = look.danger)
+                                Icon(Icons.Rounded.Delete, contentDescription = stringResource(R.string.common_clear), tint = look.danger)
                             }
                         }
                     }
@@ -235,7 +236,7 @@ fun ProfilesScreen(
     if (showImportTextDialog) {
         AlertDialog(
             onDismissRequest = { showImportTextDialog = false },
-            title = { Text(tr("Import Profile URI or JSON", "وارد کردن لینک یا JSON پروفایل")) },
+            title = { Text(stringResource(R.string.profiles_import_title)) },
             text = {
                 Column {
                     OutlinedTextField(
@@ -252,7 +253,7 @@ fun ProfilesScreen(
                         val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
                         if (clip.isNotBlank()) importInputText = clip
                     }) {
-                        Text(tr("Paste from Clipboard", "چسباندن از کلیپ‌بورد"))
+                        Text(stringResource(R.string.profiles_paste_clipboard))
                     }
                 }
             },
@@ -262,12 +263,12 @@ fun ProfilesScreen(
                     importInputText = ""
                     showImportTextDialog = false
                 }) {
-                    Text(tr("Import", "وارد کردن"))
+                    Text(stringResource(R.string.profiles_import))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showImportTextDialog = false }) {
-                    Text(tr("Cancel", "لغو"))
+                    Text(stringResource(R.string.common_cancel))
                 }
             }
         )

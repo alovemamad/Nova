@@ -21,13 +21,11 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Set up Go & NDK (optional native build)
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
 
-      - name: Run unit & Robolectric tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+      - name: Run Nova VPN unit tests
+        run: ./gradlew :app:testDebugUnitTest --tests "app.novavpn.*" --stacktrace
 
       - name: Build Debug APK (no secrets required)
         run: ./gradlew :app:assembleDebug --stacktrace
@@ -42,6 +40,10 @@ jobs:
     needs: test-and-build-debug
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -53,23 +55,25 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
       - name: Build Signed Release APK (when keystore secrets are present)
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        id: build_release
         run: |
           if [[ -n "${KEYSTORE_BASE64}" && -n "${STORE_PASSWORD}" && -n "${KEY_PASSWORD}" ]]; then
             echo "${KEYSTORE_BASE64}" | base64 --decode > my-upload-key.jks
             export KEYSTORE_PATH="${PWD}/my-upload-key.jks"
             ./gradlew :app:assembleRelease --stacktrace
             rm -f my-upload-key.jks
+            echo "signed=true" >> "$GITHUB_OUTPUT"
           else
             echo "Keystore secrets not configured; skipping signed release build."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload Signed Release APK
-        if: env.KEYSTORE_BASE64 != ''
+        if: steps.build_release.outputs.signed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: nova-vpn-release-apk

@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import app.novavpn.domain.model.AppSettings
@@ -52,6 +53,7 @@ import app.novavpn.domain.model.UpdateInfo
 import app.novavpn.ui.glass.GlassSegmented
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.tr
+import com.example.R
 
 @Composable
 fun SplitTunnelPickerDialog(
@@ -67,6 +69,7 @@ fun SplitTunnelPickerDialog(
     var localSelected by remember { mutableStateOf(selectedPackages) }
     var query by remember { mutableStateOf("") }
     var showSystem by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { onLoadApps() }
 
@@ -77,25 +80,30 @@ fun SplitTunnelPickerDialog(
         }
     }
 
+    val includeEmptyErr = stringResource(R.string.split_include_empty_error)
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(tr("Split Tunneling", "تونل‌زنی انتخابی برنامه‌ها")) },
+        title = { Text(stringResource(R.string.settings_split_tunnel)) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 GlassSegmented(
                     options = listOf(
-                        SplitTunnelMode.DISABLED to tr("All", "همه"),
-                        SplitTunnelMode.EXCLUDE to tr("Bypass", "مستثنی"),
-                        SplitTunnelMode.INCLUDE to tr("Only", "فقط اینها")
+                        SplitTunnelMode.DISABLED to stringResource(R.string.split_all),
+                        SplitTunnelMode.EXCLUDE to stringResource(R.string.split_exclude),
+                        SplitTunnelMode.INCLUDE to stringResource(R.string.split_include)
                     ),
                     selected = localMode,
-                    onSelect = { localMode = it }
+                    onSelect = {
+                        localMode = it
+                        errorMsg = null
+                    }
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text(tr("Search apps", "جستجوی برنامه")) },
+                    label = { Text(stringResource(R.string.split_search)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -104,8 +112,12 @@ fun SplitTunnelPickerDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(tr("Show system apps", "نمایش برنامه‌های سیستمی"), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.split_show_system), style = MaterialTheme.typography.bodySmall)
                     Switch(checked = showSystem, onCheckedChange = { showSystem = it })
+                }
+                errorMsg?.let { err ->
+                    Text(err, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Spacer(modifier = Modifier.height(4.dp))
                 }
                 LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                     items(filtered, key = { it.packageName }) { app ->
@@ -119,6 +131,7 @@ fun SplitTunnelPickerDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
+                                    errorMsg = null
                                     localSelected = if (checked) localSelected - app.packageName else localSelected + app.packageName
                                 }
                                 .padding(vertical = 6.dp),
@@ -139,6 +152,7 @@ fun SplitTunnelPickerDialog(
                             Checkbox(
                                 checked = checked,
                                 onCheckedChange = { c ->
+                                    errorMsg = null
                                     localSelected = if (c) localSelected + app.packageName else localSelected - app.packageName
                                 }
                             )
@@ -148,12 +162,18 @@ fun SplitTunnelPickerDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(localMode, localSelected) }) {
-                Text(tr("Apply", "اعمال"))
+            Button(onClick = {
+                if (localMode == SplitTunnelMode.INCLUDE && localSelected.isEmpty()) {
+                    errorMsg = includeEmptyErr
+                } else {
+                    onSave(localMode, localSelected)
+                }
+            }) {
+                Text(stringResource(R.string.common_apply))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(tr("Cancel", "لغو")) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         }
     )
 }
@@ -172,7 +192,7 @@ fun AutoConnectDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(tr("Auto-Connect Rules", "قوانین اتصال خودکار")) },
+        title = { Text(stringResource(R.string.settings_auto_connect)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -220,10 +240,10 @@ fun AutoConnectDialog(
                         triggerPackages = triggerPkgsText.lines().map { it.trim() }.filter { it.isNotEmpty() }
                     )
                 )
-            }) { Text(tr("Save", "ذخیره")) }
+            }) { Text(stringResource(R.string.common_save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(tr("Cancel", "لغو")) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         }
     )
 }
@@ -260,20 +280,20 @@ fun LogsViewerDialog(
                     OutlinedButton(onClick = {
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                         cm?.setPrimaryClip(ClipData.newPlainText("Nova VPN Logs", formatted))
-                    }) { Text(tr("Copy", "کپی")) }
+                    }) { Text(stringResource(R.string.common_copy)) }
                     OutlinedButton(onClick = {
                         val share = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_TEXT, formatted)
                         }
                         context.startActivity(Intent.createChooser(share, "Share Nova VPN Logs"))
-                    }) { Text(tr("Share", "اشتراک")) }
-                    TextButton(onClick = onClear) { Text(tr("Clear", "پاک")) }
+                    }) { Text(stringResource(R.string.common_share)) }
+                    TextButton(onClick = onClear) { Text(stringResource(R.string.common_clear)) }
                 }
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) { Text(tr("Close", "بستن")) }
+            Button(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
         }
     )
 }
@@ -285,14 +305,19 @@ fun PinSetupDialog(
 ) {
     var pin by remember { mutableStateOf("") }
     var err by remember { mutableStateOf<String?>(null) }
+    val minPinErr = stringResource(R.string.lock_pin_min_error)
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(tr("Set App Lock PIN (4–6 digits)", "تنظیم رمز ۴ تا ۶ رقمی")) },
+        title = { Text(stringResource(R.string.lock_pin_setup_title)) },
         text = {
             Column {
                 OutlinedTextField(
                     value = pin,
-                    onValueChange = { pin = it.filter(Char::isDigit).take(6) },
+                    onValueChange = {
+                        pin = it.filter(Char::isDigit).take(8)
+                        err = null
+                    },
                     label = { Text("PIN") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -302,11 +327,11 @@ fun PinSetupDialog(
         },
         confirmButton = {
             Button(onClick = {
-                if (pin.length < 4) err = "Enter at least 4 digits" else onConfirmPin(pin)
-            }) { Text(tr("Enable Lock", "فعال‌سازی قفل")) }
+                if (pin.length < 6) err = minPinErr else onConfirmPin(pin)
+            }) { Text(stringResource(R.string.lock_enable)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(tr("Cancel", "لغو")) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         }
     )
 }
@@ -321,7 +346,7 @@ fun BackupRestoreDialog(
     var inputText by remember(exportedJson) { mutableStateOf(exportedJson.orEmpty()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(tr("Backup & Restore (JSON)", "پشتیبان‌گیری و بازیابی")) },
+        title = { Text(stringResource(R.string.settings_backup_restore)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
@@ -336,12 +361,12 @@ fun BackupRestoreDialog(
                     OutlinedButton(onClick = {
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                         cm?.setPrimaryClip(ClipData.newPlainText("Nova VPN Backup", inputText))
-                    }) { Text(tr("Copy", "کپی")) }
+                    }) { Text(stringResource(R.string.common_copy)) }
                     OutlinedButton(onClick = {
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                         val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
                         if (clip.isNotBlank()) inputText = clip
-                    }) { Text(tr("Paste", "چسباندن")) }
+                    }) { Text(stringResource(R.string.common_paste)) }
                 }
             }
         },
@@ -351,7 +376,7 @@ fun BackupRestoreDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(tr("Close", "بستن")) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
         }
     )
 }
@@ -368,7 +393,7 @@ fun PortsEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(tr("Local Proxy Ports", "پورت‌های محلی")) },
+        title = { Text(stringResource(R.string.settings_local_ports)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
@@ -397,10 +422,10 @@ fun PortsEditorDialog(
                 } else {
                     onSave(s, h)
                 }
-            }) { Text(tr("Save", "ذخیره")) }
+            }) { Text(stringResource(R.string.common_save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(tr("Cancel", "لغو")) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         }
     )
 }
@@ -414,7 +439,7 @@ fun UpdateCheckerDialog(
     val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(tr("App Updates", "به‌روزرسانی برنامه")) },
+        title = { Text(stringResource(R.string.settings_check_updates)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("${tr("Installed version", "نسخه فعلی")}: $currentVersion")
@@ -451,12 +476,12 @@ fun UpdateCheckerDialog(
                     context.startActivity(intent)
                 }) { Text(tr("Open Release", "باز کردن صفحه")) }
             } else {
-                Button(onClick = onDismiss) { Text("OK") }
+                Button(onClick = onDismiss) { Text(stringResource(R.string.common_ok)) }
             }
         },
         dismissButton = {
             if (info.updateAvailable) {
-                TextButton(onClick = onDismiss) { Text(tr("Close", "بستن")) }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
             }
         }
     )

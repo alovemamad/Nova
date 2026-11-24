@@ -17,10 +17,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
-import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 sealed class CoreStartResult {
     data class Ready(val socksPort: Int, val httpPort: Int?, val detectedEndpoint: String?) : CoreStartResult()
@@ -50,37 +50,34 @@ class CoreProcessManager(
         stopInternal()
         killOrphanedHelpers()
 
-        // Pre-check required native binaries
-        val requiredBins = mutableListOf<Pair<String, List<String>>>()
-        plan.aetherArgs?.let { requiredBins.add("libaether.so" to it) }
-        plan.psiphonArgs?.let { requiredBins.add("libpsiphon.so" to it) }
-        plan.lyrebirdArgs?.let { requiredBins.add("liblyrebird.so" to it) }
-
-        for ((name, args) in requiredBins) {
-            val file = File(args.first())
-            if (!file.exists() || !file.canExecute()) {
-                LogRepository.e("CoreProcess", "Missing or non-executable binary: $name at ${file.absolutePath}")
-                return@withLock CoreStartResult.MissingBinary(name, file.absolutePath)
+        // Pre-check all required native binaries for every stage
+        for (stage in plan.stages) {
+            for (binFile in stage.preflightBinaries) {
+                if (!binFile.exists() || !binFile.canExecute()) {
+                    LogRepository.e("CoreProcess", "Missing or non-executable binary: ${binFile.name} at ${binFile.absolutePath}")
+                    return@withLock CoreStartResult.MissingBinary(binFile.name, binFile.absolutePath)
+                }
             }
         }
 
-        // Pre-check port conflicts before launching
-        if (!isPortAvailable(bindHost, plan.finalSocksPort)) {
-            LogRepository.e("CoreProcess", "Port conflict on SOCKS5 port ${plan.finalSocksPort}")
+        // Pre-check TCP port conflicts before launching
+        if (!isTcpPortAvailable(bindHost, plan.finalSocksPort)) {
+            LogRepository.e("CoreProcess", "TCP port conflict on SOCKS5 port ${plan.finalSocksPort}")
             return@withLock CoreStartResult.PortConflict(plan.finalSocksPort)
         }
         plan.finalHttpPort?.let { hp ->
-            if (!isPortAvailable(bindHost, hp)) {
-                LogRepository.e("CoreProcess", "Port conflict on HTTP port $hp")
+            if (!isTcpPortAvailable(bindHost, hp)) {
+                LogRepository.e("CoreProcess", "TCP port conflict on HTTP port $hp")
                 return@withLock CoreStartResult.PortConflict(hp)
             }
         }
 
-        var lastDetectedEndpoint: String? = null
+        val lastDetectedEndpoint = AtomicReference<String?>(null)
 
-        for ((name, args) in requiredBins) {
+        for (stage in plan.stages) {
+            val stageName = stage.adapter.id
             val readyDeferred = CompletableDeferred<Result<String?>>()
-            val pb = ProcessBuilder(args)
+            val pb = ProcessBuilder(stage.args)
                 .directory(workDir())
                 .redirectErrorStream(true)
             pb.environment()["HOME"] = workDir().absolutePath
@@ -90,7 +87,7 @@ class CoreProcessManager(
                 withContext(Dispatchers.IO) { pb.start() }
             } catch (e: Exception) {
                 stopInternal()
-                return@withLock CoreStartResult.Failed("Failed to launch $name: ${e.message}")
+                return@withLock CoreStartResult.Failed("Failed to launch $stageName: ${e.message}")
             }
 
             activeProcesses.add(proc)
@@ -102,17 +99,15 @@ class CoreProcessManager(
                         var line: String?
                         while (isActive) {
                             line = reader.readLine() ?: break
-                            LogRepository.i(name.removeSuffix(".so"), line)
+                            LogRepository.i(stageName, line)
 
-                            // Extract discovered endpoint if present
-                            if (line.contains("endpoint=", ignoreCase = true) || line.contains("connected to ", ignoreCase = true)) {
-                                val candidate = Regex("""(\d{1,3}(?:\.\d{1,3}){3}:\d{2,5})""").find(line)?.groupValues?.get(1)
-                                if (candidate != null) lastDetectedEndpoint = candidate
+                            stage.adapter.extractEndpoint(line)?.let { ep ->
+                                lastDetectedEndpoint.set(ep)
                             }
 
-                            if (!readySignaled && isReadinessLine(name, line)) {
+                            if (!readySignaled && stage.adapter.isReadinessLine(line)) {
                                 readySignaled = true
-                                readyDeferred.complete(Result.success(lastDetectedEndpoint))
+                                readyDeferred.complete(Result.success(lastDetectedEndpoint.get()))
                             }
                         }
                     }
@@ -124,11 +119,11 @@ class CoreProcessManager(
 
                 val code = runCatching { proc.waitFor() }.getOrDefault(-1)
                 if (!readySignaled) {
-                    readyDeferred.complete(Result.failure(IllegalStateException("$name exited before ready (code=$code)")))
+                    readyDeferred.complete(Result.failure(IllegalStateException("$stageName exited before ready (code=$code)")))
                 }
                 if (!shuttingDown) {
-                    LogRepository.w("CoreProcess", "$name exited unexpectedly with code $code")
-                    onUnexpectedExit(code, name)
+                    LogRepository.w("CoreProcess", "$stageName exited unexpectedly with code $code")
+                    onUnexpectedExit(code, stageName)
                 }
             }
             readerJobs.add(job)
@@ -136,16 +131,16 @@ class CoreProcessManager(
             val readyResult = withTimeoutOrNull(18_000L) { readyDeferred.await() }
             if (readyResult == null) {
                 stopInternal()
-                return@withLock CoreStartResult.Failed("$name timed out waiting for readiness log")
+                return@withLock CoreStartResult.Failed("$stageName timed out waiting for readiness log")
             }
             if (readyResult.isFailure) {
-                val msg = readyResult.exceptionOrNull()?.message ?: "$name failed to start"
+                val msg = readyResult.exceptionOrNull()?.message ?: "$stageName failed to start"
                 stopInternal()
                 return@withLock CoreStartResult.Failed(msg)
             }
         }
 
-        CoreStartResult.Ready(plan.finalSocksPort, plan.finalHttpPort, lastDetectedEndpoint)
+        CoreStartResult.Ready(plan.finalSocksPort, plan.finalHttpPort, lastDetectedEndpoint.get())
     }
 
     suspend fun stopAll() = mutex.withLock {
@@ -160,11 +155,9 @@ class CoreProcessManager(
         procs.forEach { proc ->
             runCatching {
                 if (proc.isAlive) {
-                    // Graceful SIGTERM first
                     proc.destroy()
                     val exited = proc.waitFor(1500, TimeUnit.MILLISECONDS)
                     if (!exited && proc.isAlive) {
-                        // Forceful SIGKILL
                         proc.destroyForcibly()
                         proc.waitFor(500, TimeUnit.MILLISECONDS)
                     }
@@ -181,7 +174,7 @@ class CoreProcessManager(
     private suspend fun killOrphanedHelpers() = withContext(Dispatchers.IO) {
         val myUid = AndroidProcess.myUid()
         val myPid = AndroidProcess.myPid()
-        val targets = setOf("libaether.so", "libpsiphon.so", "liblyrebird.so", "libhev-socks5-tunnel.so")
+        val targets = setOf("libaether.so", "libpsiphon.so", "libtor.so", "liblyrebird.so")
         val procDir = File("/proc")
         val entries = procDir.listFiles() ?: return@withContext
 
@@ -197,44 +190,23 @@ class CoreProcessManager(
                 val cmdline = File(entry, "cmdline").takeIf { it.canRead() }?.readText()?.replace('\u0000', ' ') ?: ""
                 if (targets.any { cmdline.contains(it) }) {
                     LogRepository.w("CoreProcess", "Killing orphaned helper PID $pid")
-                    AndroidProcess.sendSignal(pid, 15) // SIGTERM
+                    AndroidProcess.sendSignal(pid, 15)
                     delay(120)
                     if (entry.exists()) {
-                        AndroidProcess.sendSignal(pid, 9) // SIGKILL
+                        AndroidProcess.sendSignal(pid, 9)
                     }
                 }
             }
         }
     }
 
-    private fun isPortAvailable(host: String, port: Int): Boolean {
+    private fun isTcpPortAvailable(host: String, port: Int): Boolean {
         return try {
             val addr = InetAddress.getByName(host)
             ServerSocket(port, 1, addr).use { }
-            DatagramSocket(port, addr).use { }
             true
         } catch (_: Exception) {
             false
-        }
-    }
-
-    private fun isReadinessLine(binaryName: String, line: String): Boolean {
-        val lower = line.lowercase()
-        return when {
-            binaryName.contains("aether") ->
-                lower.contains("socks5 listening") ||
-                    lower.contains("proxy listening") ||
-                    lower.contains("tunnel ready") ||
-                    lower.contains("listening on")
-            binaryName.contains("psiphon") ->
-                lower.contains("socks proxy listening") ||
-                    lower.contains("tunnels") && lower.contains("1") ||
-                    lower.contains("listening on")
-            binaryName.contains("lyrebird") ->
-                lower.contains("bootstrapped 100%") ||
-                    lower.contains("cmethod") && lower.contains("done") ||
-                    lower.contains("socks listener ready")
-            else -> lower.contains("listening") || lower.contains("ready")
         }
     }
 }

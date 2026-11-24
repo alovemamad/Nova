@@ -1,7 +1,11 @@
 package app.novavpn.ui.theme
 
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.res.Configuration
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -11,7 +15,10 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextStyle
@@ -21,13 +28,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.fragment.app.FragmentActivity
 import app.novavpn.domain.model.AppLanguage
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.AppThemeMode
 import app.novavpn.ui.glass.GlassThemeProvider
 import com.example.R
 import java.util.Locale
+
+val LocalHostActivity = compositionLocalOf<FragmentActivity?> { null }
 
 val NovaTeal = Color(0xFF00E5CC)
 val NovaViolet = Color(0xFF7C5CFF)
@@ -122,6 +131,12 @@ private fun buildTypography(isFa: Boolean): Typography {
     )
 }
 
+private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {
+    is FragmentActivity -> this
+    is ContextWrapper -> baseContext.findFragmentActivity()
+    else -> null
+}
+
 @Composable
 fun NovaVpnTheme(
     settings: AppSettings,
@@ -132,23 +147,37 @@ fun NovaVpnTheme(
         AppThemeMode.LIGHT -> false
         AppThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
-    val context = LocalContext.current
+    val baseContext = LocalContext.current
+    val hostActivity = remember(baseContext) { baseContext.findFragmentActivity() }
+
     val colorScheme = when {
         settings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            if (isDark) dynamicDarkColorScheme(baseContext) else dynamicLightColorScheme(baseContext)
         }
         isDark -> NovaDarkColorScheme
         else -> NovaLightColorScheme
     }
 
-    val isFa = when (settings.language) {
-        AppLanguage.FA -> true
-        AppLanguage.EN -> false
-        AppLanguage.SYSTEM -> Locale.getDefault().language.startsWith("fa", ignoreCase = true)
+    val targetLocale = when (settings.language) {
+        AppLanguage.FA -> Locale("fa")
+        AppLanguage.EN -> Locale.ENGLISH
+        AppLanguage.SYSTEM -> Locale.getDefault()
     }
+    val isFa = targetLocale.language.startsWith("fa", ignoreCase = true)
     val direction = if (isFa) LayoutDirection.Rtl else LayoutDirection.Ltr
 
+    val localizedContext = remember(baseContext, targetLocale) {
+        val config = Configuration(baseContext.resources.configuration).apply {
+            setLocale(targetLocale)
+            setLayoutDirection(targetLocale)
+        }
+        baseContext.createConfigurationContext(config)
+    }
+
     CompositionLocalProvider(
+        LocalHostActivity provides hostActivity,
+        LocalContext provides localizedContext,
+        LocalConfiguration provides localizedContext.resources.configuration,
         LocalAppLanguage provides settings.language,
         LocalDigitMode provides settings.digitMode,
         LocalLayoutDirection provides direction

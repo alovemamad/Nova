@@ -4,26 +4,23 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.net.VpnService
-import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Process
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
+import app.novavpn.core.SessionProxyAuth
+import app.novavpn.core.net.ConnectivityHelper
 import app.novavpn.core.net.DiagnosticsEngine
-import app.novavpn.core.process.AetherCommandBuilder
 import app.novavpn.core.process.CoreProcessManager
-import app.novavpn.core.process.CoreStartResult
-import app.novavpn.core.reconnect.ReconnectStateMachine
+import app.novavpn.core.tun.CoreProbeOutcome
+import app.novavpn.core.tun.TunnelStartOrchestrator
 import app.novavpn.data.log.LogRepository
 import app.novavpn.data.store.SettingsRepository
 import app.novavpn.data.store.StatsRepository
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.DropReason
-import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.SessionRecord
 import app.novavpn.domain.model.SuggestedFixAction
 import app.novavpn.domain.model.TunEngineType
@@ -34,6 +31,7 @@ import app.novavpn.domain.model.VpnState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,13 +42,20 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
+/**
+ * Thin command/state facade between the UI/QuickSettings/Widgets and the underlying tunnel owner:
+ * - In [VpnMode.VPN]: delegates tunnel lifecycle directly to [NovaVpnService].
+ * - In [VpnMode.PROXY_ONLY]: delegates route probing/core startup to [TunnelStartOrchestrator].
+ */
 class VpnController(
     private val context: Context,
     private val settingsRepo: SettingsRepository,
     private val statsRepo: StatsRepository,
-    private val diagnostics: DiagnosticsEngine
+    private val diagnostics: DiagnosticsEngine,
+    private val orchestrator: TunnelStartOrchestrator
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stateMutex = Mutex()
@@ -62,12 +67,16 @@ class VpnController(
     private val _speedHistory = MutableStateFlow<List<Pair<Long, Long>>>(emptyList())
     val speedHistory: StateFlow<List<Pair<Long, Long>>> = _speedHistory.asStateFlow()
 
-    // Proxy-Only mode process manager (when VpnMode.PROXY_ONLY is active without TUN)
-    private val proxyProcessManager = CoreProcessManager(context, scope) { code, bin ->
+    @Volatile
+    private var currentSessionAuth: SessionProxyAuth? = null
+
+    private val proxyProcessManager: CoreProcessManager = CoreProcessManager(context, scope) { code, bin ->
         scope.launch {
             if (_status.value.state == VpnState.CONNECTED) {
                 LogRepository.w("ProxyMode", "$bin exited ($code), disconnecting proxy mode")
-                handleStopInternal(DropReason.CORE_EXITED, "Core exited (code $code)", SuggestedFixAction.RUN_DIAGNOSTICS)
+                stateMutex.withLock {
+                    handleProxyStopLocked(DropReason.CORE_EXITED, "Core exited (code $code)", SuggestedFixAction.RUN_DIAGNOSTICS)
+                }
             }
         }
     }
@@ -75,17 +84,28 @@ class VpnController(
     private var proxyMonitorJob: Job? = null
     private var proxySessionStartMs: Long = 0L
 
+    fun currentProxyAuth(): SessionProxyAuth? = currentSessionAuth
+
+    internal fun updateSessionProxyAuth(auth: SessionProxyAuth?) {
+        currentSessionAuth = auth
+    }
+
     fun toggleConnect(useFreshScan: Boolean = false) {
         scope.launch {
             when (_status.value.state) {
                 VpnState.DISCONNECTED, VpnState.ERROR -> connectInternal(useFreshScan)
-                VpnState.CONNECTING, VpnState.CONNECTED, VpnState.PAUSED, VpnState.RECONNECTING -> disconnectInternal(DropReason.USER_DISCONNECTED)
+                VpnState.CONNECTING, VpnState.CONNECTED, VpnState.PAUSED, VpnState.RECONNECTING ->
+                    disconnectInternal(DropReason.USER_DISCONNECTED)
             }
         }
     }
 
     fun connect(useFreshScan: Boolean = false) {
         scope.launch { connectInternal(useFreshScan) }
+    }
+
+    suspend fun connectSyncOrThrow(useFreshScan: Boolean = false) {
+        connectInternal(useFreshScan)
     }
 
     fun disconnect(reason: DropReason = DropReason.USER_DISCONNECTED) {
@@ -98,7 +118,6 @@ class VpnController(
             if (settings.vpnMode == VpnMode.VPN) {
                 sendServiceAction(NovaVpnService.ACTION_PAUSE)
             } else {
-                // In proxy-only mode pausing toggles disconnect
                 disconnectInternal(DropReason.USER_DISCONNECTED)
             }
         }
@@ -117,12 +136,21 @@ class VpnController(
 
     fun reconnectFreshScan() {
         scope.launch {
-            val state = _status.value.state
-            if (state != VpnState.DISCONNECTED) {
-                disconnectInternal(DropReason.USER_DISCONNECTED)
-                delay(350)
+            val settings = settingsRepo.getSettings()
+            if (settings.vpnMode == VpnMode.VPN) {
+                if (needsVpnPermission(settings)) {
+                    connectInternal(useFreshScan = true)
+                } else {
+                    // NovaVpnService handles reconnecting directly while honoring keepTunOnReconnect
+                    sendServiceAction(NovaVpnService.ACTION_START, useFreshScan = true)
+                }
+            } else {
+                if (_status.value.state != VpnState.DISCONNECTED) {
+                    disconnectInternal(DropReason.USER_DISCONNECTED)
+                    delay(250)
+                }
+                connectInternal(useFreshScan = true)
             }
-            connectInternal(useFreshScan = true)
         }
     }
 
@@ -137,8 +165,9 @@ class VpnController(
         notifySystemSurfaces()
     }
 
-    fun needsVpnPermission(settings: AppSettings): Boolean {
-        return settings.vpnMode == VpnMode.VPN && VpnService.prepare(context) != null
+    fun needsVpnPermission(settings: AppSettings? = null): Boolean {
+        val effective = settings ?: return VpnService.prepare(context) != null
+        return effective.vpnMode == VpnMode.VPN && VpnService.prepare(context) != null
     }
 
     private suspend fun connectInternal(useFreshScan: Boolean) = stateMutex.withLock {
@@ -187,7 +216,7 @@ class VpnController(
         if (settings.vpnMode == VpnMode.VPN) {
             sendServiceAction(NovaVpnService.ACTION_START, useFreshScan)
         } else {
-            startProxyOnlyMode(settings, profile, useFreshScan)
+            startProxyOnlyLocked(settings, profile, useFreshScan)
         }
     }
 
@@ -195,107 +224,58 @@ class VpnController(
         val settings = settingsRepo.getSettings()
         if (settings.vpnMode == VpnMode.VPN) {
             sendServiceAction(NovaVpnService.ACTION_STOP)
-            // Also ensure proxy-only process manager is stopped if mode switched
+            // Ensure any leftover proxy-only manager is cleaned up if user switched modes
             proxyMonitorJob?.cancel()
             proxyMonitorJob = null
             proxyProcessManager.stopAll()
         } else {
-            handleStopInternal(reason, null, SuggestedFixAction.NONE)
+            handleProxyStopLocked(reason, null, SuggestedFixAction.NONE)
         }
     }
 
-    private suspend fun startProxyOnlyMode(settings: AppSettings, profile: VpnProfile, useFreshScan: Boolean) {
-        val networkKey = currentNetworkKey()
-        val candidates = if (profile.routeChain == RouteChain.SMART_AUTO) {
-            val cached = settings.bestRoutePerNetwork[networkKey]
-            buildList {
-                if (cached != null) add(cached)
-                ReconnectStateMachine.SMART_AUTO_FALLBACK_ORDER.forEach { if (it !in this) add(it) }
-            }
-        } else {
-            listOf(profile.routeChain)
-        }
+    private suspend fun startProxyOnlyLocked(settings: AppSettings, profile: VpnProfile, useFreshScan: Boolean) {
+        val networkKey = ConnectivityHelper.currentNetworkKey(context)
+        val outcome = orchestrator.startCoreAndProbe(
+            coreManager = proxyProcessManager,
+            settings = settings,
+            profile = profile,
+            networkKey = networkKey,
+            useFreshScan = useFreshScan,
+            isCancelled = { false },
+            onProbeProgress = { label -> updateSmartProbeStatus(label) },
+            verifyHttpsAfterCoreStart = true
+        )
 
-        val bindHost = if (settings.shareProxyOnLan) "0.0.0.0" else "127.0.0.1"
-        var lastErrorMsg = "Unable to start local proxy core"
-        var suggested = SuggestedFixAction.RUN_DIAGNOSTICS
-        var drop = DropReason.CORE_EXITED
-
-        for (route in candidates) {
-            if (profile.routeChain == RouteChain.SMART_AUTO) {
-                updateSmartProbeStatus("Probing ${route.name}…")
+        when (outcome) {
+            is CoreProbeOutcome.Ready -> {
+                currentSessionAuth = outcome.auth
+                proxySessionStartMs = System.currentTimeMillis()
+                _status.update {
+                    it.copy(
+                        state = VpnState.CONNECTED,
+                        activeProfileName = profile.name,
+                        activeRoute = outcome.route,
+                        activeProtocol = profile.aetherProtocol,
+                        activeTunEngine = TunEngineType.NONE,
+                        pingMs = outcome.initialPingMs,
+                        smartProbeStatus = null,
+                        socksPort = outcome.socksPort,
+                        httpPort = outcome.httpPort,
+                        lanShareActive = settings.shareProxyOnLan,
+                        sessionProxyUser = outcome.auth.username,
+                        sessionProxyPass = outcome.auth.password
+                    )
+                }
+                notifySystemSurfaces()
+                startProxyOnlyTelemetry(outcome.socksPort, outcome.auth, profile)
             }
-            val planResult = AetherCommandBuilder.build(
-                nativeDir = proxyProcessManager.nativeDir(),
-                workDir = proxyProcessManager.workDir(),
-                profile = profile,
-                settings = settings,
-                resolvedRoute = route,
-                useFreshScan = useFreshScan
-            )
-            if (planResult.isFailure) {
-                lastErrorMsg = planResult.exceptionOrNull()?.message ?: "Invalid configuration"
-                drop = DropReason.INVALID_CONFIG
-                suggested = SuggestedFixAction.APPLY_SAFE_FIX
-                continue
-            }
-            val plan = planResult.getOrThrow()
-            when (val res = proxyProcessManager.startPlan(plan, bindHost)) {
-                is CoreStartResult.Ready -> {
-                    val verify = diagnostics.verifyRealHttpsConnectivity(res.socksPort)
-                    if (verify.isSuccess || candidates.size == 1) {
-                        val ping = verify.getOrNull()
-                        if (profile.routeChain == RouteChain.SMART_AUTO && verify.isSuccess) {
-                            settingsRepo.updateSettings { s ->
-                                s.copy(bestRoutePerNetwork = s.bestRoutePerNetwork + (networkKey to route))
-                            }
-                        }
-                        proxySessionStartMs = System.currentTimeMillis()
-                        _status.update {
-                            it.copy(
-                                state = VpnState.CONNECTED,
-                                activeProfileName = profile.name,
-                                activeRoute = route,
-                                activeProtocol = profile.aetherProtocol,
-                                activeTunEngine = TunEngineType.NONE,
-                                pingMs = ping,
-                                smartProbeStatus = null,
-                                socksPort = res.socksPort,
-                                httpPort = res.httpPort,
-                                lanShareActive = settings.shareProxyOnLan
-                            )
-                        }
-                        notifySystemSurfaces()
-                        startProxyOnlyTelemetry(res.socksPort, profile)
-                        return
-                    } else {
-                        lastErrorMsg = verify.exceptionOrNull()?.message ?: "HTTPS check failed over $route"
-                        proxyProcessManager.stopAll()
-                    }
-                }
-                is CoreStartResult.MissingBinary -> {
-                    lastErrorMsg = "Native binary missing: ${res.binaryName}. Run scripts/build-native.sh or download release binaries."
-                    drop = DropReason.MISSING_BINARY
-                    suggested = SuggestedFixAction.NONE
-                    break
-                }
-                is CoreStartResult.PortConflict -> {
-                    lastErrorMsg = "Port ${res.port} is already in use."
-                    drop = DropReason.PORT_CONFLICT
-                    suggested = SuggestedFixAction.RESET_PORTS
-                    break
-                }
-                is CoreStartResult.Failed -> {
-                    lastErrorMsg = res.reason
-                    drop = DropReason.CORE_EXITED
-                }
+            is CoreProbeOutcome.Failure -> {
+                handleProxyStopLocked(outcome.dropReason, outcome.errorMessage, outcome.suggestedFix)
             }
         }
-
-        handleStopInternal(drop, lastErrorMsg, suggested)
     }
 
-    private fun startProxyOnlyTelemetry(socksPort: Int, profile: VpnProfile) {
+    private fun startProxyOnlyTelemetry(socksPort: Int, auth: SessionProxyAuth, profile: VpnProfile) {
         proxyMonitorJob?.cancel()
         proxyMonitorJob = scope.launch {
             var lastRx = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)
@@ -304,9 +284,8 @@ class VpnController(
             val startRx = lastRx
             val startTx = lastTx
 
-            // Fetch geo info once in background
             launch {
-                val geo = diagnostics.fetchExitIpInfo(socksPort)
+                val geo = diagnostics.fetchExitIpInfo(socksPort, auth)
                 if (geo != null) {
                     _status.update {
                         it.copy(exitIp = geo.ip, exitCountryCode = geo.countryCode, exitCity = geo.city)
@@ -339,21 +318,22 @@ class VpnController(
                 }
 
                 if (tick % profile.pingIntervalSec.coerceIn(5, 120) == 0) {
-                    val ping = diagnostics.verifyRealHttpsConnectivity(socksPort).getOrNull()
+                    val ping = diagnostics.verifyRealHttpsConnectivity(socksPort, auth).getOrNull()
                     _status.update { it.copy(pingMs = ping) }
                 }
             }
         }
     }
 
-    private suspend fun handleStopInternal(
+    private suspend fun handleProxyStopLocked(
         reason: DropReason,
         errorMsg: String?,
         suggestedFix: SuggestedFixAction
-    ) {
+    ): Unit = withContext(NonCancellable) {
         proxyMonitorJob?.cancel()
         proxyMonitorJob = null
         proxyProcessManager.stopAll()
+        currentSessionAuth = null
 
         val prev = _status.value
         if (proxySessionStartMs > 0L && prev.uptimeSeconds >= 2L) {
@@ -383,7 +363,9 @@ class VpnController(
                 smartProbeStatus = null,
                 lastDropReason = reason,
                 errorMessage = errorMsg,
-                suggestedFix = suggestedFix
+                suggestedFix = suggestedFix,
+                sessionProxyUser = null,
+                sessionProxyPass = null
             )
         }
         notifySystemSurfaces()
@@ -404,40 +386,11 @@ class VpnController(
         }
     }
 
-    internal fun currentNetworkKey(): String {
-        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return "unknown"
-        val active = cm.activeNetwork ?: return "offline"
-        val caps = cm.getNetworkCapabilities(active) ?: return "unknown"
-        return when {
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> {
-                val wm = context.applicationContext.getSystemService(WifiManager::class.java)
-                @Suppress("DEPRECATION")
-                val ssid = wm?.connectionInfo?.ssid?.trim('"')
-                if (!ssid.isNullOrBlank() && ssid != "<unknown ssid>") "wifi:$ssid" else "wifi"
-            }
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
-            else -> "other"
-        }
-    }
-
-    internal fun isUntrustedWifi(settings: AppSettings): Boolean {
-        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
-        val active = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(active) ?: return false
-        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return false
-        val wm = context.applicationContext.getSystemService(WifiManager::class.java)
-        @Suppress("DEPRECATION")
-        val ssid = wm?.connectionInfo?.ssid?.trim('"') ?: return true
-        if (ssid == "<unknown ssid>" || ssid.isBlank()) return true
-        return settings.autoConnect.trustedWifiSsids.none { it.equals(ssid, ignoreCase = true) }
-    }
-
     fun checkAutoConnectRules() {
         scope.launch {
             if (_status.value.state != VpnState.DISCONNECTED) return@launch
             val settings = settingsRepo.getSettings()
-            if (settings.autoConnect.onUntrustedWifi && isUntrustedWifi(settings)) {
+            if (settings.autoConnect.onUntrustedWifi && ConnectivityHelper.isUntrustedWifi(context, settings)) {
                 if (!needsVpnPermission(settings)) {
                     LogRepository.i("AutoConnect", "Untrusted Wi-Fi detected; auto-connecting VPN")
                     connectInternal(false)

@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">نوا وی‌پی‌ان</string>
     <string name="nav_home">خانه</string>
@@ -8,17 +9,206 @@
     <string name="widget_description">اتصال یا توقف سریع نوا وی‌پی‌ان از صفحه اصلی</string>
     <string name="notif_channel_vpn">وضعیت اتصال VPN</string>
     <string name="notif_channel_vpn_desc">نمایش وضعیت اتصال، سرعت لحظه‌ای و دکمه‌های کنترل سریع</string>
+    <string name="notif_channel_alerts">هشدارهای سیستمی VPN</string>
+    <string name="notif_channel_alerts_desc">اعلان‌های مهم مانند محدودیت شروع پس‌زمینه پس از راه‌اندازی</string>
+    <string name="boot_fgs_blocked_title">نوا وی‌پی‌ان برای اتصال به لمس نیاز دارد</string>
+    <string name="boot_fgs_blocked_body">اندروید اجرای خودکار VPN در پس‌زمینه پس از بوت را محدود کرده است. برای اتصال برنامه را باز کنید.</string>
     <string name="notif_action_disconnect">قطع اتصال</string>
     <string name="notif_action_pause">توقف موقت</string>
     <string name="notif_action_resume">ادامه</string>
-    <string name="status_disconnected">متصل نیست</string>
+    <string name="status_disconnected">قطع‌شده</string>
     <string name="status_connecting">در حال اتصال…</string>
     <string name="status_connected">متصل</string>
     <string name="status_paused">متوقف موقت</string>
+    <string name="status_paused_direct_warning">متوقف موقت — ترافیک بدون حفاظت VPN مستقیماً عبور می‌کند</string>
     <string name="status_reconnecting">اتصال مجدد…</string>
+    <string name="status_reconnecting_attempt">اتصال مجدد #%1$d</string>
+    <string name="status_waiting_network">در انتظار شبکه…</string>
     <string name="status_error">خطای اتصال</string>
     <string name="tap_to_connect">برای اتصال لمس کنید</string>
     <string name="tap_to_disconnect">متصل · برای قطع لمس کنید</string>
     <string name="slide_to_connect">برای اتصال بکشید</string>
-    <string name="slide_to_disconnect">برای قطع بکشید</string>
+    <string name="slide_to_disconnect">برای قطع اتصال بکشید</string>
+
+    <!-- Home -->
+    <string name="home_full_device_tunnel">تونل کامل دستگاه</string>
+    <string name="home_local_proxy_only">پروکسی محلی (%1$d)</string>
+    <string name="home_fresh_scan">اسکن دروازه جدید</string>
+    <string name="home_connection_failure">خطای اتصال</string>
+    <string name="home_dismiss">بستن</string>
+    <string name="home_download_tunnel">دریافت تونل</string>
+    <string name="home_upload_tunnel">ارسال تونل</string>
+    <string name="home_ping">پینگ</string>
+    <string name="home_switch">تغییر</string>
+    <string name="home_exit_ip_unknown">آی‌پی خروجی: نامشخص</string>
+    <string name="home_last_drop">آخرین قطع: %1$s</string>
+    <string name="home_proxy_creds_title">اطلاعات ورود پروکسی محلی (نشست فعلی)</string>
+    <string name="home_proxy_creds_body">SOCKS5 :%1$d%2$s · کاربر: %3$s · رمز: %4$s</string>
+    <string name="home_proxy_creds_copy">کپی اطلاعات</string>
+    <string name="home_proxy_creds_copied">اطلاعات پروکسی کپی شد</string>
+    <string name="home_paused_banner_title">تونل VPN موقتاً متوقف است</string>
+    <string name="home_paused_banner_body">رابط TUN بسته شده است. ترافیک برنامه‌ها هم‌اکنون بدون پوشش VPN مستقیماً از شبکه عبور می‌کند.</string>
+
+    <!-- Controls -->
+    <string name="ctrl_connect_desc">اتصال نوا وی‌پی‌ان</string>
+    <string name="ctrl_disconnect_desc">قطع اتصال نوا وی‌پی‌ان</string>
+    <string name="ctrl_active">متصل</string>
+    <string name="ctrl_linking">در حال اتصال</string>
+    <string name="ctrl_paused">موقت</string>
+    <string name="ctrl_retry">تلاش مجدد</string>
+    <string name="ctrl_connect">اتصال</string>
+    <string name="ctrl_toggle_vpn">تغییر وضعیت وی‌پی‌ان</string>
+    <string name="ctrl_protected">محافظت‌شده</string>
+    <string name="ctrl_tap_shield">لمس برای اتصال</string>
+    <string name="ctrl_slide_desc">کنترل کشویی</string>
+
+    <!-- Suggested Fixes -->
+    <string name="fix_grant_vpn">تایید مجوز</string>
+    <string name="fix_allow_alerts">اجازه اعلان</string>
+    <string name="fix_battery">تنظیمات باتری</string>
+    <string name="fix_vpn_settings">تنظیمات وی‌پی‌ان</string>
+    <string name="fix_diagnostics">اجرای عیب‌یابی</string>
+    <string name="fix_apply_safe">اعمال تنظیمات امن</string>
+    <string name="fix_hev_tun">تغییر موتور TUN</string>
+    <string name="fix_reset_ports">تغییر پورت‌ها</string>
+    <string name="fix_fresh_scan">اسکن مجدد</string>
+
+    <!-- Onboarding -->
+    <string name="onb_skip">رد شدن</string>
+    <string name="onb_welcome_title">به نوا وی‌پی‌ان خوش آمدید</string>
+    <string name="onb_welcome_body">تونل رمزنگاری‌شده چندموتوره با پشتیبانی از Aether، Psiphon و Tor در یک رابط کاربری مدرن.</string>
+    <string name="onb_routing_title">مسیریابی هوشمند و پایدار</string>
+    <string name="onb_routing_body">حالت هوشمند مسیرهای مختلف را با تست واقعی HTTPS بررسی کرده و سریع‌ترین مسیر را برای هر شبکه ذخیره می‌کند.</string>
+    <string name="onb_perms_title">دسترسی‌ها و پایداری</string>
+    <string name="onb_vpn_perm">مجوز تونل وی‌پی‌ان</string>
+    <string name="onb_vpn_granted">تایید شده</string>
+    <string name="onb_vpn_required">برای هدایت ترافیک نیاز است</string>
+    <string name="onb_grant">تایید</string>
+    <string name="onb_notif_perm">اعلان وضعیت اتصال</string>
+    <string name="onb_notif_allowed">فعال</string>
+    <string name="onb_notif_desc">نمایش سرعت و دکمه توقف</string>
+    <string name="onb_allow">اجازه</string>
+    <string name="onb_battery">بهینه‌سازی باتری</string>
+    <string name="onb_always_on">اتصال همیشگی</string>
+    <string name="onb_back">قبلی</string>
+    <string name="onb_continue">ادامه</string>
+    <string name="onb_finish">شروع استفاده</string>
+
+    <!-- App Lock & Deep Link -->
+    <string name="lock_title">نوا وی‌پی‌ان قفل است</string>
+    <string name="lock_subtitle">پین خود را وارد کنید یا از بیومتریک استفاده کنید</string>
+    <string name="lock_unlock">باز کردن قفل</string>
+    <string name="lock_authenticate">احراز هویت</string>
+    <string name="lock_incorrect_pin">پین اشتباه است (%1$d تلاش باقی‌مانده)</string>
+    <string name="lock_locked_out">تلاش ناموفق بیش از حد. %1$d ثانیه دیگر امتحان کنید.</string>
+    <string name="lock_pin_setup_title">تنظیم پین قفل برنامه (حداقل ۶ رقم)</string>
+    <string name="lock_pin_min_error">حداقل ۶ رقم وارد کنید</string>
+    <string name="lock_enable">فعال‌سازی قفل</string>
+    <string name="deeplink_import_title">وارد کردن پروفایل اشتراک‌گذاری‌شده؟</string>
+    <string name="deeplink_import_body">پروفایل «%1$s» (%2$s · %3$s) از لینک وارد و انتخاب شود؟</string>
+    <string name="deeplink_import_confirm">وارد کردن و انتخاب</string>
+
+    <!-- Settings -->
+    <string name="settings_title">تنظیمات</string>
+    <string name="settings_section_tunnel">تونل و شبکه</string>
+    <string name="settings_operation_mode">حالت اجرا</string>
+    <string name="settings_mode_vpn">تونل کامل</string>
+    <string name="settings_mode_proxy">فقط پروکسی</string>
+    <string name="settings_tun_engine">موتور TUN</string>
+    <string name="settings_split_tunnel">تونل‌زنی انتخابی برنامه‌ها</string>
+    <string name="settings_apps_count">%1$s · %2$d برنامه</string>
+    <string name="settings_local_ports">پورت‌های محلی</string>
+    <string name="settings_lan_share">اشتراک پروکسی در شبکه محلی</string>
+    <string name="settings_lan_share_desc">روی 0.0.0.0 با نام کاربری و رمز نشست اجرا می‌شود؛ فقط در وای‌فای مطمئن فعال کنید</string>
+    <string name="settings_prefer_last">اولویت با آخرین سرور سالم</string>
+    <string name="settings_prefer_last_desc">اتصال سریع‌تر؛ با غیرفعال کردن هر بار اسکن تازه انجام می‌شود</string>
+    <string name="settings_section_reliability">پایداری و اتوماسیون</string>
+    <string name="settings_keep_tun_reconnect">محافظت از ترافیک حین اتصال مجدد</string>
+    <string name="settings_keep_tun_reconnect_desc">رابط TUN را حین راه‌اندازی مجدد هسته باز نگه می‌دارد تا ترافیک نشت نکند</string>
+    <string name="settings_always_on">کیل‌سوئیچ سیستمی (Always-on VPN)</string>
+    <string name="settings_always_on_desc">فعال‌سازی VPN همیشگی و مسدودسازی بدون VPN در تنظیمات اندروید</string>
+    <string name="settings_always_on_dialog_title">کیل‌سوئیچ واقعی در سطح سیستم</string>
+    <string name="settings_always_on_dialog_body">کیل‌سوئیچ واقعی کل دستگاه در تنظیمات VPN سیستم اندروید قرار دارد:\n\n۱. روی «باز کردن تنظیمات VPN» بزنید.\n۲. Nova VPN (آیکون چرخ‌دنده) را انتخاب کنید.\n۳. گزینه‌های Always-on VPN و Block connections without VPN را فعال کنید.\n\nهمچنین گزینه «محافظت از ترافیک حین اتصال مجدد» را روشن نگه دارید.</string>
+    <string name="settings_open_vpn_settings">باز کردن تنظیمات VPN</string>
+    <string name="settings_auto_connect">قوانین اتصال خودکار</string>
+    <string name="settings_disabled">غیرفعال</string>
+    <string name="settings_battery_opt">استثنای بهینه‌سازی باتری</string>
+    <string name="settings_battery_opt_desc">جلوگیری از بسته شدن تونل در پس‌زمینه</string>
+    <string name="settings_section_security">امنیت و حریم خصوصی</string>
+    <string name="settings_app_lock">قفل برنامه (اثرانگشت / رمز)</string>
+    <string name="settings_enabled">فعال</string>
+    <string name="settings_app_lock_desc">محافظت از دسترسی به برنامه</string>
+    <string name="settings_hide_recents">مخفی کردن از برنامه‌های اخیر</string>
+    <string name="settings_hide_recents_desc">محافظت از پیش‌نمایش صفحه در بخش برنامه‌های اخیر</string>
+    <string name="settings_section_glass">ظاهر شیشه‌ای و زبان</string>
+    <string name="settings_theme">تم</string>
+    <string name="settings_dark">تیره</string>
+    <string name="settings_light">روشن</string>
+    <string name="settings_system">سیستم</string>
+    <string name="settings_language">زبان</string>
+    <string name="settings_digits">ارقام</string>
+    <string name="settings_auto">خودکار</string>
+    <string name="settings_glass_material">جنس شیشه</string>
+    <string name="settings_clear">شفاف</string>
+    <string name="settings_tinted">رنگی</string>
+    <string name="settings_wallpaper">پس‌زمینه</string>
+    <string name="settings_connect_control">دکمه اتصال</string>
+    <string name="settings_accent_tint">رنگ تاکیدی</string>
+    <string name="settings_dynamic_color">رنگ پویا از تصویر زمینه</string>
+    <string name="settings_motion_tilt">بازتاب نور با حرکت گوشی</string>
+    <string name="settings_reduce_transparency">کاهش شفافیت (عملکرد بالاتر)</string>
+    <string name="settings_section_maintenance">نگهداری و ابزارها</string>
+    <string name="settings_view_logs">مشاهده لاگ‌های سیستم</string>
+    <string name="settings_logs_count">%1$d خط ثبت شده</string>
+    <string name="settings_backup_restore">پشتیبان‌گیری و بازیابی</string>
+    <string name="settings_backup_desc">خروجی یا بازیابی تمام پروفایل‌ها و تنظیمات</string>
+    <string name="settings_check_updates">بررسی نسخه جدید</string>
+
+    <!-- Common & Dialogs -->
+    <string name="common_apply">اعمال</string>
+    <string name="common_save">ذخیره</string>
+    <string name="common_cancel">لغو</string>
+    <string name="common_close">بستن</string>
+    <string name="common_copy">کپی</string>
+    <string name="common_paste">چسباندن</string>
+    <string name="common_share">اشتراک</string>
+    <string name="common_clear">پاک</string>
+    <string name="common_ok">باشه</string>
+    <string name="split_all">همه</string>
+    <string name="split_exclude">مستثنی</string>
+    <string name="split_include">فقط اینها</string>
+    <string name="split_search">جستجوی برنامه</string>
+    <string name="split_show_system">نمایش برنامه‌های سیستمی</string>
+    <string name="split_include_empty_error">در حالت «فقط اینها» حداقل یک برنامه انتخاب کنید</string>
+
+    <!-- Profiles & Stats -->
+    <string name="profiles_title">پروفایل‌ها</string>
+    <string name="profiles_subtitle">وارد کردن، اشتراک QR یا شخصی‌سازی مسیر</string>
+    <string name="profiles_active">فعال</string>
+    <string name="profiles_select">انتخاب</string>
+    <string name="profiles_import_title">وارد کردن لینک یا JSON پروفایل</string>
+    <string name="profiles_paste_clipboard">چسباندن از کلیپ‌بورد</string>
+    <string name="profiles_import">وارد کردن</string>
+    <string name="profiles_copy_link">کپی لینک</string>
+    <string name="stats_title">آمار و عیب‌یابی</string>
+    <string name="stats_tab_usage">مصرف و تاریخچه</string>
+    <string name="stats_tab_diag">عیب‌یابی</string>
+    <string name="stats_daily">روزانه</string>
+    <string name="stats_weekly">۷ روز</string>
+    <string name="stats_monthly">۳۰ روز</string>
+    <string name="stats_total_down">کل دریافت تونل</string>
+    <string name="stats_total_up">کل ارسال تونل</string>
+    <string name="stats_recent_sessions">نشست‌های اخیر</string>
+    <string name="stats_no_sessions">هنوز نشستی ثبت نشده است</string>
+    <string name="stats_no_sessions_sub">برای ثبت ترافیک تونل متصل شوید</string>
+    <string name="stats_diag_title">تست سلامت شبکه</string>
+    <string name="stats_diag_sub">بررسی نشت DNS/IPv6، تاخیر و MTU</string>
+    <string name="stats_run_test">اجرای تست</string>
+    <string name="stats_exit_ip">آی‌پی خروجی</string>
+    <string name="stats_unreachable">در دسترس نیست</string>
+    <string name="stats_dns_check">تست نشت DNS</string>
+    <string name="stats_ipv6_check">تست نشت IPv6</string>
+    <string name="stats_latency">تاخیر سرورها</string>
+    <string name="stats_timeout">تایم‌اوت</string>
+    <string name="stats_fix_conn">اصلاح خودکار اتصال (تنظیمات امن)</string>
 </resources>

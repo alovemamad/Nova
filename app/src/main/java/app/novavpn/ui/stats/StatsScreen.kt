@@ -45,7 +45,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.novavpn.domain.model.DataUsageDay
 import app.novavpn.domain.model.DiagnosticReport
@@ -61,7 +61,7 @@ import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
 import app.novavpn.ui.theme.formatBytes
 import app.novavpn.ui.theme.formatDurationHms
-import app.novavpn.ui.theme.tr
+import com.example.R
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -99,13 +99,13 @@ fun StatsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = tr("Stats & Diagnostics", "آمار و عیب‌یابی"),
+                    text = stringResource(R.string.stats_title),
                     style = MaterialTheme.typography.headlineMedium,
                     color = look.textPrimary
                 )
                 if (subTab == StatsSubTab.USAGE && (dailyUsage.isNotEmpty() || sessions.isNotEmpty())) {
                     IconButton(onClick = onClearStats) {
-                        Icon(Icons.Rounded.DeleteSweep, contentDescription = tr("Clear Stats", "پاک کردن آمار"), tint = look.textSecondary)
+                        Icon(Icons.Rounded.DeleteSweep, contentDescription = stringResource(R.string.common_clear), tint = look.textSecondary)
                     }
                 }
             }
@@ -114,8 +114,8 @@ fun StatsScreen(
         item {
             GlassSegmented(
                 options = listOf(
-                    StatsSubTab.USAGE to tr("Traffic & History", "مصرف و تاریخچه"),
-                    StatsSubTab.DIAGNOSTICS to tr("Diagnostics", "عیب‌یابی")
+                    StatsSubTab.USAGE to stringResource(R.string.stats_tab_usage),
+                    StatsSubTab.DIAGNOSTICS to stringResource(R.string.stats_tab_diag)
                 ),
                 selected = subTab,
                 onSelect = { subTab = it },
@@ -131,9 +131,9 @@ fun StatsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         GlassSegmented(
                             options = listOf(
-                                UsagePeriod.DAILY to tr("Daily", "روزانه"),
-                                UsagePeriod.WEEKLY to tr("7 Days", "۷ روز"),
-                                UsagePeriod.MONTHLY to tr("30 Days", "۳۰ روز")
+                                UsagePeriod.DAILY to stringResource(R.string.stats_daily),
+                                UsagePeriod.WEEKLY to stringResource(R.string.stats_weekly),
+                                UsagePeriod.MONTHLY to stringResource(R.string.stats_monthly)
                             ),
                             selected = period,
                             onSelect = { period = it }
@@ -150,7 +150,7 @@ fun StatsScreen(
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Column {
-                                Text(tr("Total Download", "کل دریافت"), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
+                                Text(stringResource(R.string.stats_total_down), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
                                 Text(
                                     text = fmtDigits(formatBytes(totalDown)),
                                     style = MaterialTheme.typography.titleLarge,
@@ -158,7 +158,7 @@ fun StatsScreen(
                                 )
                             }
                             Column(horizontalAlignment = Alignment.End) {
-                                Text(tr("Total Upload", "کل ارسال"), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
+                                Text(stringResource(R.string.stats_total_up), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
                                 Text(
                                     text = fmtDigits(formatBytes(totalUp)),
                                     style = MaterialTheme.typography.titleLarge,
@@ -175,7 +175,7 @@ fun StatsScreen(
 
             item {
                 Text(
-                    text = tr("Recent Sessions", "نشست‌های اخیر"),
+                    text = stringResource(R.string.stats_recent_sessions),
                     style = MaterialTheme.typography.titleMedium,
                     color = look.textPrimary,
                     modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth().padding(top = 4.dp)
@@ -186,8 +186,8 @@ fun StatsScreen(
                 item {
                     GlassCard(modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth()) {
                         GlassRow(
-                            title = tr("No completed sessions yet", "هنوز نشستی ثبت نشده است"),
-                            subtitle = tr("Connect Nova VPN to track bandwidth and history", "برای ثبت ترافیک متصل شوید"),
+                            title = stringResource(R.string.stats_no_sessions),
+                            subtitle = stringResource(R.string.stats_no_sessions_sub),
                             icon = Icons.Rounded.History
                         )
                     }
@@ -221,9 +221,9 @@ fun StatsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(tr("Network Health Check", "تست سلامت شبکه"), style = MaterialTheme.typography.titleMedium, color = look.textPrimary)
+                                Text(stringResource(R.string.stats_diag_title), style = MaterialTheme.typography.titleMedium, color = look.textPrimary)
                                 Text(
-                                    tr("DNS leak, IPv6 leak, 3-endpoint latency & MTU probe", "بررسی نشت DNS/IPv6، تاخیر و MTU"),
+                                    stringResource(R.string.stats_diag_sub),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = look.textSecondary
                                 )
@@ -240,7 +240,7 @@ fun StatsScreen(
                                     Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                 }
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(tr("Run Test", "اجرای تست"))
+                                Text(stringResource(R.string.stats_run_test))
                             }
                         }
 
@@ -249,27 +249,28 @@ fun StatsScreen(
                             val exitLabel = if (diagnosticReport.exitIp != null) {
                                 "${countryCodeToFlag(diagnosticReport.exitCountry)} ${diagnosticReport.exitIp} ${diagnosticReport.exitCity?.let { "($it)" } ?: ""}"
                             } else {
-                                tr("Unreachable", "در دسترس نیست")
+                                stringResource(R.string.stats_unreachable)
                             }
                             GlassRow(
-                                title = tr("Exit IP & Location", "آی‌پی خروجی"),
+                                title = stringResource(R.string.stats_exit_ip),
                                 subtitle = exitLabel,
                                 icon = Icons.Rounded.NetworkCheck
                             )
                             GlassDivider()
                             DiagnosticStatusRow(
-                                title = tr("DNS Leak Check", "تست نشت DNS"),
+                                title = stringResource(R.string.stats_dns_check),
                                 summary = diagnosticReport.dnsSummary,
                                 safe = diagnosticReport.dnsLeakSafe
                             )
                             GlassDivider()
                             DiagnosticStatusRow(
-                                title = tr("IPv6 Leak Check", "تست نشت IPv6"),
+                                title = stringResource(R.string.stats_ipv6_check),
                                 summary = diagnosticReport.ipv6Summary,
                                 safe = diagnosticReport.ipv6LeakSafe
                             )
                             GlassDivider()
-                            Text(tr("Endpoint Latency", "تاخیر سرورها"), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                            Text(stringResource(R.string.stats_latency), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
+                            val timeoutStr = stringResource(R.string.stats_timeout)
                             diagnosticReport.latencies.forEach { ep ->
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -277,7 +278,7 @@ fun StatsScreen(
                                 ) {
                                     Text("${ep.label} (${ep.host})", style = MaterialTheme.typography.bodyMedium, color = look.textPrimary)
                                     Text(
-                                        text = if (ep.reachable && ep.latencyMs != null) fmtDigits("${ep.latencyMs} ms") else tr("Timeout", "تایم‌اوت"),
+                                        text = if (ep.reachable && ep.latencyMs != null) fmtDigits("${ep.latencyMs} ms") else timeoutStr,
                                         style = MaterialTheme.typography.bodyMedium.copy(fontFamily = JetBrainsMonoFamily),
                                         color = if (ep.reachable) look.success else look.danger
                                     )
@@ -296,7 +297,7 @@ fun StatsScreen(
                             ) {
                                 Icon(Icons.Rounded.Build, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(tr("Fix Connection (Apply Safe Profile)", "اصلاح خودکار اتصال (تنظیمات امن)"))
+                                Text(stringResource(R.string.stats_fix_conn))
                             }
                             diagnosticReport.safeFixAppliedNote?.let { note ->
                                 Text(note, style = MaterialTheme.typography.bodySmall, color = look.success)

@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Nova VPN</string>
     <string name="nav_home">Home</string>
@@ -8,6 +9,10 @@
     <string name="widget_description">Quickly connect or pause Nova VPN from your home screen</string>
     <string name="notif_channel_vpn">VPN Connection</string>
     <string name="notif_channel_vpn_desc">Persistent status, live speed, and quick controls while Nova VPN is active</string>
+    <string name="notif_channel_alerts">VPN System Alerts</string>
+    <string name="notif_channel_alerts_desc">Important notices such as boot start requirements</string>
+    <string name="boot_fgs_blocked_title">Nova VPN needs a tap to connect</string>
+    <string name="boot_fgs_blocked_body">Android restricted automatic background VPN startup after boot. Tap to open Nova VPN and connect.</string>
     <string name="notif_action_disconnect">Disconnect</string>
     <string name="notif_action_pause">Pause</string>
     <string name="notif_action_resume">Resume</string>
@@ -15,10 +20,195 @@
     <string name="status_connecting">Connecting…</string>
     <string name="status_connected">Connected</string>
     <string name="status_paused">Paused</string>
+    <string name="status_paused_direct_warning">Paused — traffic goes direct without VPN protection</string>
     <string name="status_reconnecting">Reconnecting…</string>
-    <string name="status_error">Connection Error</string>
+    <string name="status_reconnecting_attempt">Reconnecting #%1$d</string>
+    <string name="status_waiting_network">Waiting for network…</string>
+    <string name="status_error">Connection Issue</string>
     <string name="tap_to_connect">Tap to connect</string>
     <string name="tap_to_disconnect">Connected · Tap to disconnect</string>
-    <string name="slide_to_connect">slide to connect</string>
-    <string name="slide_to_disconnect">slide to disconnect</string>
+    <string name="slide_to_connect">Slide to connect</string>
+    <string name="slide_to_disconnect">Slide to disconnect</string>
+
+    <!-- Home -->
+    <string name="home_full_device_tunnel">Full Device Tunnel</string>
+    <string name="home_local_proxy_only">Local Proxy Only (%1$d)</string>
+    <string name="home_fresh_scan">Fresh Gateway Scan</string>
+    <string name="home_connection_failure">Connection Failure</string>
+    <string name="home_dismiss">Dismiss</string>
+    <string name="home_download_tunnel">Tunnel Download</string>
+    <string name="home_upload_tunnel">Tunnel Upload</string>
+    <string name="home_ping">Ping</string>
+    <string name="home_switch">Switch</string>
+    <string name="home_exit_ip_unknown">Exit IP: Not probed yet</string>
+    <string name="home_last_drop">Last drop: %1$s</string>
+    <string name="home_proxy_creds_title">Local Proxy Credentials (Session)</string>
+    <string name="home_proxy_creds_body">SOCKS5 :%1$d%2$s · User: %3$s · Pass: %4$s</string>
+    <string name="home_proxy_creds_copy">Copy Creds</string>
+    <string name="home_proxy_creds_copied">Proxy credentials copied</string>
+    <string name="home_paused_banner_title">VPN Tunnel Paused</string>
+    <string name="home_paused_banner_body">TUN is closed. App traffic currently goes direct over your regular network without VPN protection.</string>
+
+    <!-- Controls -->
+    <string name="ctrl_connect_desc">Connect Nova VPN</string>
+    <string name="ctrl_disconnect_desc">Disconnect Nova VPN</string>
+    <string name="ctrl_active">ACTIVE</string>
+    <string name="ctrl_linking">LINKING</string>
+    <string name="ctrl_paused">PAUSED</string>
+    <string name="ctrl_retry">RETRY</string>
+    <string name="ctrl_connect">CONNECT</string>
+    <string name="ctrl_toggle_vpn">Toggle VPN</string>
+    <string name="ctrl_protected">Protected</string>
+    <string name="ctrl_tap_shield">Tap to Shield</string>
+    <string name="ctrl_slide_desc">Slide control</string>
+
+    <!-- Suggested Fixes -->
+    <string name="fix_grant_vpn">Grant Permission</string>
+    <string name="fix_allow_alerts">Allow Alerts</string>
+    <string name="fix_battery">Battery Settings</string>
+    <string name="fix_vpn_settings">VPN Settings</string>
+    <string name="fix_diagnostics">Run Diagnostics</string>
+    <string name="fix_apply_safe">Apply Safe Fix</string>
+    <string name="fix_hev_tun">Use Fallback TUN</string>
+    <string name="fix_reset_ports">Reset Ports</string>
+    <string name="fix_fresh_scan">Fresh Scan</string>
+
+    <!-- Onboarding -->
+    <string name="onb_skip">Skip</string>
+    <string name="onb_welcome_title">Welcome to Nova VPN</string>
+    <string name="onb_welcome_body">Multi-engine encrypted tunneling powered by Aether (MASQUE / WireGuard), Psiphon, and Tor — wrapped in adaptive Liquid Glass.</string>
+    <string name="onb_routing_title">Smart Adaptive Routing</string>
+    <string name="onb_routing_body">Smart Auto probes your network with real HTTPS checks and remembers the fastest route per Wi-Fi or mobile carrier, with sing-box gVisor TUN and automatic fallback.</string>
+    <string name="onb_perms_title">Permissions &amp; Reliability</string>
+    <string name="onb_vpn_perm">VPN Tunnel Permission</string>
+    <string name="onb_vpn_granted">Granted</string>
+    <string name="onb_vpn_required">Required to route device traffic</string>
+    <string name="onb_grant">Grant</string>
+    <string name="onb_notif_perm">Live Status Notification</string>
+    <string name="onb_notif_allowed">Allowed</string>
+    <string name="onb_notif_desc">Shows speed &amp; pause controls</string>
+    <string name="onb_allow">Allow</string>
+    <string name="onb_battery">Battery Opt.</string>
+    <string name="onb_always_on">Always-on VPN</string>
+    <string name="onb_back">Back</string>
+    <string name="onb_continue">Continue</string>
+    <string name="onb_finish">Start Using Nova</string>
+
+    <!-- App Lock & Deep Link -->
+    <string name="lock_title">Nova VPN Locked</string>
+    <string name="lock_subtitle">Enter your PIN or use biometrics</string>
+    <string name="lock_unlock">Unlock</string>
+    <string name="lock_authenticate">Authenticate</string>
+    <string name="lock_incorrect_pin">Incorrect PIN (%1$d tries remaining)</string>
+    <string name="lock_locked_out">Too many failed attempts. Try again in %1$ds.</string>
+    <string name="lock_pin_setup_title">Set App Lock PIN (6+ digits)</string>
+    <string name="lock_pin_min_error">Enter at least 6 digits</string>
+    <string name="lock_enable">Enable Lock</string>
+    <string name="deeplink_import_title">Import Shared Profile?</string>
+    <string name="deeplink_import_body">Import \"%1$s\" (%2$s · %3$s) from link?</string>
+    <string name="deeplink_import_confirm">Import &amp; Select</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_tunnel">Tunnel &amp; Network</string>
+    <string name="settings_operation_mode">Operation Mode</string>
+    <string name="settings_mode_vpn">VPN Tunnel</string>
+    <string name="settings_mode_proxy">Proxy Only</string>
+    <string name="settings_tun_engine">TUN Engine</string>
+    <string name="settings_split_tunnel">Split Tunneling</string>
+    <string name="settings_apps_count">%1$s · %2$d apps</string>
+    <string name="settings_local_ports">Local Proxy Ports</string>
+    <string name="settings_lan_share">Share Proxy to LAN</string>
+    <string name="settings_lan_share_desc">Binds 0.0.0.0 with per-session credentials shown on Home; use only on trusted Wi-Fi</string>
+    <string name="settings_prefer_last">Prefer Last Good Gateway</string>
+    <string name="settings_prefer_last_desc">Faster connect; disable to run a fresh endpoint scan each time</string>
+    <string name="settings_section_reliability">Reliability &amp; Automation</string>
+    <string name="settings_keep_tun_reconnect">Protect Traffic During Reconnect</string>
+    <string name="settings_keep_tun_reconnect_desc">Keeps TUN open (drops packets instead of leaking) while restarting the core</string>
+    <string name="settings_always_on">System Kill Switch (Always-on VPN)</string>
+    <string name="settings_always_on_desc">Enable Always-on VPN &amp; Block connections without VPN in Android settings</string>
+    <string name="settings_always_on_dialog_title">System-Level Kill Switch</string>
+    <string name="settings_always_on_dialog_body">Android provides the real device-wide kill switch in system VPN settings:\n\n1. Tap Open VPN Settings below.\n2. Select Nova VPN (gear icon).\n3. Turn on \"Always-on VPN\" and \"Block connections without VPN\".\n\nAlso keep \"Protect Traffic During Reconnect\" enabled so Nova VPN holds the TUN interface during core restarts.</string>
+    <string name="settings_open_vpn_settings">Open VPN Settings</string>
+    <string name="settings_auto_connect">Auto-Connect Rules</string>
+    <string name="settings_disabled">Disabled</string>
+    <string name="settings_battery_opt">Battery Optimization Exemption</string>
+    <string name="settings_battery_opt_desc">Prevent OS from killing background VPN service</string>
+    <string name="settings_section_security">Security &amp; Privacy</string>
+    <string name="settings_app_lock">App Lock (Biometric / PIN)</string>
+    <string name="settings_enabled">Enabled</string>
+    <string name="settings_app_lock_desc">Protect access to Nova VPN</string>
+    <string name="settings_hide_recents">Hide from Recents</string>
+    <string name="settings_hide_recents_desc">Applies FLAG_SECURE screenshot &amp; recents blur protection</string>
+    <string name="settings_section_glass">Liquid Glass &amp; Language</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_dark">Dark</string>
+    <string name="settings_light">Light</string>
+    <string name="settings_system">System</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_digits">Digits</string>
+    <string name="settings_auto">Auto</string>
+    <string name="settings_glass_material">Glass Material</string>
+    <string name="settings_clear">Clear</string>
+    <string name="settings_tinted">Tinted</string>
+    <string name="settings_wallpaper">Wallpaper Aura</string>
+    <string name="settings_connect_control">Connect Control</string>
+    <string name="settings_accent_tint">Accent Tint</string>
+    <string name="settings_dynamic_color">Dynamic System Colors</string>
+    <string name="settings_motion_tilt">Motion Tilt Highlights</string>
+    <string name="settings_reduce_transparency">Reduce Transparency</string>
+    <string name="settings_section_maintenance">Maintenance</string>
+    <string name="settings_view_logs">View Diagnostic Logs</string>
+    <string name="settings_logs_count">%1$d entries recorded</string>
+    <string name="settings_backup_restore">Backup &amp; Restore (JSON)</string>
+    <string name="settings_backup_desc">Export or import all profiles and preferences</string>
+    <string name="settings_check_updates">Check for Updates</string>
+
+    <!-- Common & Dialogs -->
+    <string name="common_apply">Apply</string>
+    <string name="common_save">Save</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="common_close">Close</string>
+    <string name="common_copy">Copy</string>
+    <string name="common_paste">Paste</string>
+    <string name="common_share">Share</string>
+    <string name="common_clear">Clear</string>
+    <string name="common_ok">OK</string>
+    <string name="split_all">All</string>
+    <string name="split_exclude">Bypass</string>
+    <string name="split_include">Only</string>
+    <string name="split_search">Search apps</string>
+    <string name="split_show_system">Show system apps</string>
+    <string name="split_include_empty_error">Select at least one app for Only (Include) mode</string>
+
+    <!-- Profiles & Stats -->
+    <string name="profiles_title">Profiles</string>
+    <string name="profiles_subtitle">Import, share QR, or customize routing</string>
+    <string name="profiles_active">Active</string>
+    <string name="profiles_select">Select</string>
+    <string name="profiles_import_title">Import Profile URI or JSON</string>
+    <string name="profiles_paste_clipboard">Paste from Clipboard</string>
+    <string name="profiles_import">Import</string>
+    <string name="profiles_copy_link">Copy Link</string>
+    <string name="stats_title">Stats &amp; Diagnostics</string>
+    <string name="stats_tab_usage">Traffic &amp; History</string>
+    <string name="stats_tab_diag">Diagnostics</string>
+    <string name="stats_daily">Daily</string>
+    <string name="stats_weekly">7 Days</string>
+    <string name="stats_monthly">30 Days</string>
+    <string name="stats_total_down">Total Tunnel Download</string>
+    <string name="stats_total_up">Total Tunnel Upload</string>
+    <string name="stats_recent_sessions">Recent Sessions</string>
+    <string name="stats_no_sessions">No completed sessions yet</string>
+    <string name="stats_no_sessions_sub">Connect Nova VPN to track tunnel bandwidth and history</string>
+    <string name="stats_diag_title">Network Health Check</string>
+    <string name="stats_diag_sub">DNS leak, IPv6 leak, 3-endpoint latency &amp; MTU probe</string>
+    <string name="stats_run_test">Run Test</string>
+    <string name="stats_exit_ip">Exit IP &amp; Location</string>
+    <string name="stats_unreachable">Unreachable</string>
+    <string name="stats_dns_check">DNS Leak Check</string>
+    <string name="stats_ipv6_check">IPv6 Leak Check</string>
+    <string name="stats_latency">Endpoint Latency</string>
+    <string name="stats_timeout">Timeout</string>
+    <string name="stats_fix_conn">Fix Connection (Apply Safe Profile)</string>
 </resources>

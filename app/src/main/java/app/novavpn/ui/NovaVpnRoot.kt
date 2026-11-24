@@ -8,9 +8,13 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -44,6 +49,7 @@ import app.novavpn.ui.profiles.ProfilesScreen
 import app.novavpn.ui.settings.SettingsScreen
 import app.novavpn.ui.stats.StatsScreen
 import app.novavpn.ui.theme.NovaVpnTheme
+import com.example.R
 
 @Composable
 fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
@@ -60,6 +66,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val isUnlocked by viewModel.isUnlocked.collectAsStateWithLifecycle()
     val uiMessage by viewModel.uiMessage.collectAsStateWithLifecycle()
+    val pendingDeepLinkProfile by viewModel.pendingDeepLinkProfile.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(uiMessage) {
@@ -101,9 +108,10 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                 when {
                     settings.appLockEnabled && !isUnlocked -> {
                         AppLockGate(
-                            hasPin = settings.appLockPinHash.isNotBlank(),
+                            hasPin = settings.appLockVaultBlob.isNotBlank() || settings.appLockPinHash.isNotBlank(),
+                            lockoutUntilMs = settings.appLockLockoutUntilMs,
                             onBiometricUnlocked = { viewModel.unlockWithBiometric() },
-                            onVerifyPin = { pin -> viewModel.unlockWithPin(pin) }
+                            onVerifyPin = { pin -> viewModel.verifyPin(pin) }
                         )
                     }
 
@@ -185,7 +193,8 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                             else -> Unit
                                                         }
                                                     },
-                                                    onDismissError = { viewModel.clearVpnError() }
+                                                    onDismissError = { viewModel.clearVpnError() },
+                                                    onPostMessage = { msg -> viewModel.postMessage(msg) }
                                                 )
                                             }
                                             composable<NovaDestination.Profiles> {
@@ -244,6 +253,33 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                     }
                                 }
                             }
+                        }
+
+                        pendingDeepLinkProfile?.let { incoming ->
+                            AlertDialog(
+                                onDismissRequest = { viewModel.dismissDeepLinkImport() },
+                                title = { Text(stringResource(R.string.deeplink_import_title)) },
+                                text = {
+                                    Text(
+                                        stringResource(
+                                            R.string.deeplink_import_body,
+                                            incoming.name,
+                                            incoming.routeChain.name,
+                                            incoming.aetherProtocol.name
+                                        )
+                                    )
+                                },
+                                confirmButton = {
+                                    Button(onClick = { viewModel.confirmDeepLinkImport() }) {
+                                        Text(stringResource(R.string.deeplink_import_confirm))
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { viewModel.dismissDeepLinkImport() }) {
+                                        Text(stringResource(R.string.common_cancel))
+                                    }
+                                }
+                            )
                         }
                     }
                 }

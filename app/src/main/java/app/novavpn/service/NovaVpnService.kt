@@ -4,11 +4,11 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.TrafficStats
 import android.net.VpnService
 import android.os.Build
@@ -17,19 +17,21 @@ import android.os.Process
 import androidx.core.app.NotificationCompat
 import app.novavpn.NovaVpnApplication
 import app.novavpn.ServiceLocator
-import app.novavpn.core.process.AetherCommandBuilder
+import app.novavpn.core.SessionProxyAuth
+import app.novavpn.core.net.ConnectivityHelper
 import app.novavpn.core.process.CoreProcessManager
-import app.novavpn.core.process.CoreStartResult
 import app.novavpn.core.reconnect.ReconnectActionType
+import app.novavpn.core.reconnect.ReconnectDecision
 import app.novavpn.core.reconnect.ReconnectStateMachine
+import app.novavpn.core.runCatchingCancellable
+import app.novavpn.core.tun.CoreProbeOutcome
+import app.novavpn.core.tun.SplitTunnelPlanner
 import app.novavpn.core.tun.TunEngineManager
 import app.novavpn.data.log.LogRepository
 import app.novavpn.domain.model.AppSettings
-import app.novavpn.domain.model.DnsMode
 import app.novavpn.domain.model.DropReason
 import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.SessionRecord
-import app.novavpn.domain.model.SplitTunnelMode
 import app.novavpn.domain.model.SuggestedFixAction
 import app.novavpn.domain.model.TunEngineType
 import app.novavpn.domain.model.VpnProfile
@@ -39,41 +41,33 @@ import com.example.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class NovaVpnService : VpnService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lifecycleMutex = Mutex()
 
     private lateinit var coreManager: CoreProcessManager
     private lateinit var tunManager: TunEngineManager
+    private lateinit var coordinator: TunnelLifecycleCoordinator
     private val reconnectMachine = ReconnectStateMachine()
 
     @Volatile
     private var tunInterface: ParcelFileDescriptor? = null
 
     @Volatile
-    private var isUserStopping = false
-
-    @Volatile
-    private var isPaused = false
-
-    @Volatile
-    private var activeSocksPort: Int = 10808
-
-    @Volatile
     private var sessionStartMs: Long = 0L
 
     private var telemetryJob: Job? = null
     private var reconnectJob: Job? = null
+    private var networkDebounceJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onCreate() {
@@ -82,13 +76,14 @@ class NovaVpnService : VpnService() {
         NovaVpnApplication.createNotificationChannels(this)
         tunManager = TunEngineManager(applicationContext)
         coreManager = CoreProcessManager(applicationContext, serviceScope) { exitCode, binaryName ->
-            if (!isUserStopping && !isPaused) {
+            if (!coordinator.isUserStopping && !coordinator.isPaused) {
                 LogRepository.w("NovaVpnService", "Unexpected exit of $binaryName ($exitCode)")
                 val decision = reconnectMachine.onCoreDied()
-                serviceScope.launch { handleReconnectDecision(decision, null) }
+                serviceScope.launch { handleReconnectDecision(decision) }
             }
         }
-        registerNetworkCallback()
+        coordinator = TunnelLifecycleCoordinator(createLifecycleOps())
+        registerDefaultPhysicalNetworkCallback()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -97,16 +92,32 @@ class NovaVpnService : VpnService() {
         when (intent?.action) {
             ACTION_START -> {
                 val fresh = intent.getBooleanExtra(EXTRA_FRESH_SCAN, false)
-                serviceScope.launch { startTunnel(useFreshScan = fresh) }
+                serviceScope.launch {
+                    val settings = ServiceLocator.settingsRepository.getSettings()
+                    if (coordinator.state == VpnState.CONNECTED || coordinator.state == VpnState.RECONNECTING) {
+                        coordinator.reconnect(useFreshScan = fresh, keepTunOpen = settings.keepTunOnReconnect)
+                    } else {
+                        coordinator.start(useFreshScan = fresh)
+                    }
+                }
             }
             ACTION_STOP -> {
-                serviceScope.launch { stopTunnel(DropReason.USER_DISCONNECTED, errorMessage = null, stopService = true) }
+                serviceScope.launch {
+                    cancelBackgroundJobs()
+                    coordinator.stop(DropReason.USER_DISCONNECTED, errorMessage = null, stopService = true)
+                }
             }
             ACTION_PAUSE -> {
-                serviceScope.launch { pauseTunnel() }
+                serviceScope.launch {
+                    telemetryJob?.cancel()
+                    telemetryJob = null
+                    coordinator.pause()
+                }
             }
             ACTION_RESUME -> {
-                serviceScope.launch { resumeTunnel() }
+                serviceScope.launch {
+                    coordinator.resume()
+                }
             }
             null -> {
                 // Service restarted by OS (START_STICKY)
@@ -114,7 +125,7 @@ class NovaVpnService : VpnService() {
                     val settings = ServiceLocator.settingsRepository.getSettings()
                     if (settings.wasVpnActiveBeforeKill) {
                         LogRepository.i("NovaVpnService", "Restoring tunnel after process kill")
-                        startTunnel(useFreshScan = false)
+                        coordinator.start(useFreshScan = false)
                     } else {
                         stopForegroundAndSelf()
                     }
@@ -128,7 +139,8 @@ class NovaVpnService : VpnService() {
         super.onRevoke()
         LogRepository.w("NovaVpnService", "VPN permission revoked by system")
         serviceScope.launch {
-            stopTunnel(
+            cancelBackgroundJobs()
+            coordinator.stop(
                 reason = DropReason.VPN_REVOKED,
                 errorMessage = "VPN permission was revoked or replaced by another VPN app.",
                 suggestedFix = SuggestedFixAction.GRANT_VPN_PERMISSION,
@@ -139,285 +151,264 @@ class NovaVpnService : VpnService() {
 
     override fun onDestroy() {
         unregisterNetworkCallback()
-        telemetryJob?.cancel()
-        reconnectJob?.cancel()
+        cancelBackgroundJobs()
         val fdToClose = tunInterface
         tunInterface = null
-        // Never block main thread in onDestroy: dispatch async cleanup then cancel scope once done
         serviceScope.launch(Dispatchers.IO) {
-            runCatching { tunManager.stopTun() }
-            runCatching { fdToClose?.close() }
-            runCatching { coreManager.stopAll() }
+            withContext(NonCancellable) {
+                runCatchingCancellable { tunManager.stopTun() }
+                runCatchingCancellable { fdToClose?.close() }
+                runCatchingCancellable { coreManager.stopAll() }
+            }
             serviceScope.cancel()
         }
         super.onDestroy()
     }
 
-    private suspend fun startTunnel(useFreshScan: Boolean) = lifecycleMutex.withLock {
-        isUserStopping = false
-        isPaused = false
-
-        val controller = ServiceLocator.vpnController
-        val settingsRepo = ServiceLocator.settingsRepository
-        val diagnostics = ServiceLocator.diagnosticsEngine
-
-        val settings = settingsRepo.getSettings()
-        val profile = settingsRepo.getActiveProfile()
-        val networkKey = controller.currentNetworkKey()
-        reconnectMachine.updateConfig(settings.preferLastGoodGateway, profile.pingFailureLimit)
-
-        controller.updateRuntimeStatus {
-            it.copy(
-                state = VpnState.CONNECTING,
-                activeProfileName = profile.name,
-                activeRoute = profile.routeChain,
-                activeProtocol = profile.aetherProtocol,
-                errorMessage = null,
-                suggestedFix = SuggestedFixAction.NONE
-            )
-        }
-        updateNotification(getString(R.string.status_connecting), false)
-
-        val candidates = if (profile.routeChain == RouteChain.SMART_AUTO) {
-            val cached = settings.bestRoutePerNetwork[networkKey]
-            buildList {
-                if (cached != null) add(cached)
-                ReconnectStateMachine.SMART_AUTO_FALLBACK_ORDER.forEach { if (it !in this) add(it) }
-            }
-        } else {
-            listOf(profile.routeChain)
-        }
-
-        val bindHost = if (settings.shareProxyOnLan) "0.0.0.0" else "127.0.0.1"
-        var lastError = "Failed to establish VPN tunnel"
-        var dropReason = DropReason.CORE_EXITED
-        var suggestedFix = SuggestedFixAction.RUN_DIAGNOSTICS
-
-        for (route in candidates) {
-            if (isUserStopping) return@withLock
-            if (profile.routeChain == RouteChain.SMART_AUTO) {
-                controller.updateSmartProbeStatus("Testing route: ${route.name}…")
-            }
-
-            val planResult = AetherCommandBuilder.build(
-                nativeDir = coreManager.nativeDir(),
-                workDir = coreManager.workDir(),
-                profile = profile,
-                settings = settings,
-                resolvedRoute = route,
-                useFreshScan = useFreshScan
-            )
-            if (planResult.isFailure) {
-                lastError = planResult.exceptionOrNull()?.message ?: "Invalid configuration"
-                dropReason = DropReason.INVALID_CONFIG
-                suggestedFix = SuggestedFixAction.APPLY_SAFE_FIX
-                continue
-            }
-
-            val plan = planResult.getOrThrow()
-            when (val coreRes = coreManager.startPlan(plan, bindHost)) {
-                is CoreStartResult.Ready -> {
-                    activeSocksPort = coreRes.socksPort
-                    if (coreRes.detectedEndpoint != null) {
-                        settingsRepo.updateSettings { it.copy(lastKnownGoodEndpoint = coreRes.detectedEndpoint) }
-                    }
-
-                    // Establish TUN interface first so traffic or diagnostics work cleanly
-                    val tunPfd = buildVpnInterface(settings, profile)
-                    if (tunPfd == null) {
-                        lastError = "Android VpnService.Builder.establish() returned null. Check VPN permission or Always-on VPN."
-                        dropReason = DropReason.TUN_START_FAILED
-                        suggestedFix = SuggestedFixAction.GRANT_VPN_PERMISSION
-                        coreManager.stopAll()
-                        continue
-                    }
-                    tunInterface = tunPfd
-
-                    val tunRes = tunManager.startTun(tunPfd, coreRes.socksPort, profile, settings.tunEnginePreference)
-                    if (tunRes.isFailure) {
-                        lastError = tunRes.exceptionOrNull()?.message ?: "TUN engine failed"
-                        dropReason = DropReason.TUN_START_FAILED
-                        suggestedFix = SuggestedFixAction.SWITCH_TO_HEV_TUN
-                        runCatching { tunPfd.close() }
-                        tunInterface = null
-                        coreManager.stopAll()
-                        continue
-                    }
-
-                    val engineUsed = tunRes.getOrThrow()
-                    val httpsCheck = diagnostics.verifyRealHttpsConnectivity(coreRes.socksPort)
-                    if (httpsCheck.isFailure && candidates.size > 1) {
-                        lastError = httpsCheck.exceptionOrNull()?.message ?: "Route $route failed HTTPS verification"
-                        tunManager.stopTun()
-                        runCatching { tunInterface?.close() }
-                        tunInterface = null
-                        coreManager.stopAll()
-                        continue
-                    }
-
-                    if (profile.routeChain == RouteChain.SMART_AUTO && httpsCheck.isSuccess) {
-                        settingsRepo.updateSettings { s ->
-                            s.copy(bestRoutePerNetwork = s.bestRoutePerNetwork + (networkKey to route))
-                        }
-                    }
-
-                    settingsRepo.setVpnActiveState(true)
-                    reconnectMachine.reset()
-                    sessionStartMs = System.currentTimeMillis()
-
-                    controller.updateRuntimeStatus {
-                        it.copy(
-                            state = VpnState.CONNECTED,
-                            activeProfileName = profile.name,
-                            activeRoute = route,
-                            activeProtocol = profile.aetherProtocol,
-                            activeTunEngine = engineUsed,
-                            pingMs = httpsCheck.getOrNull(),
-                            smartProbeStatus = null,
-                            reconnectAttempt = 0,
-                            socksPort = coreRes.socksPort,
-                            httpPort = coreRes.httpPort,
-                            lanShareActive = settings.shareProxyOnLan,
-                            errorMessage = null,
-                            suggestedFix = SuggestedFixAction.NONE
-                        )
-                    }
-                    updateNotification(getString(R.string.status_connected) + " · ${route.name}", false)
-                    startTelemetryLoop(profile)
-                    return@withLock
-                }
-                is CoreStartResult.MissingBinary -> {
-                    lastError = "Native binary missing: ${coreRes.binaryName} (${coreRes.expectedPath}). Build native libs with scripts/build-native.sh."
-                    dropReason = DropReason.MISSING_BINARY
-                    suggestedFix = SuggestedFixAction.NONE
-                    break
-                }
-                is CoreStartResult.PortConflict -> {
-                    lastError = "Local port ${coreRes.port} is already bound by another app."
-                    dropReason = DropReason.PORT_CONFLICT
-                    suggestedFix = SuggestedFixAction.RESET_PORTS
-                    break
-                }
-                is CoreStartResult.Failed -> {
-                    lastError = coreRes.reason
-                    dropReason = DropReason.CORE_EXITED
-                    suggestedFix = SuggestedFixAction.RUN_DIAGNOSTICS
-                }
-            }
-        }
-
-        stopTunnel(dropReason, lastError, suggestedFix, stopService = true)
-    }
-
-    private suspend fun pauseTunnel() = lifecycleMutex.withLock {
-        if (isPaused || tunInterface == null) return@withLock
-        isPaused = true
-        telemetryJob?.cancel()
-        telemetryJob = null
-        // Keep core process warm while closing TUN interface so traffic resumes instantly
-        runCatching { tunManager.stopTun() }
-        runCatching { tunInterface?.close() }
-        tunInterface = null
-
-        ServiceLocator.vpnController.updateRuntimeStatus {
-            it.copy(
-                state = VpnState.PAUSED,
-                activeTunEngine = TunEngineType.NONE,
-                downSpeedBps = 0L,
-                upSpeedBps = 0L
-            )
-        }
-        updateNotification(getString(R.string.status_paused), isPaused = true)
-        LogRepository.i("NovaVpnService", "TUN interface paused (core kept alive)")
-    }
-
-    private suspend fun resumeTunnel() = lifecycleMutex.withLock {
-        if (!isPaused) return@withLock
-        val settings = ServiceLocator.settingsRepository.getSettings()
-        val profile = ServiceLocator.settingsRepository.getActiveProfile()
-        val tunPfd = buildVpnInterface(settings, profile)
-        if (tunPfd == null) {
-            stopTunnel(DropReason.TUN_START_FAILED, "Could not recreate TUN interface on resume", SuggestedFixAction.GRANT_VPN_PERMISSION, true)
-            return@withLock
-        }
-        tunInterface = tunPfd
-        val res = tunManager.startTun(tunPfd, activeSocksPort, profile, settings.tunEnginePreference)
-        if (res.isFailure) {
-            runCatching { tunPfd.close() }
-            tunInterface = null
-            stopTunnel(DropReason.TUN_START_FAILED, res.exceptionOrNull()?.message, SuggestedFixAction.SWITCH_TO_HEV_TUN, true)
-            return@withLock
-        }
-
-        isPaused = false
-        ServiceLocator.vpnController.updateRuntimeStatus {
-            it.copy(
-                state = VpnState.CONNECTED,
-                activeTunEngine = res.getOrThrow(),
-                errorMessage = null
-            )
-        }
-        updateNotification(getString(R.string.status_connected), isPaused = false)
-        startTelemetryLoop(profile)
-        LogRepository.i("NovaVpnService", "TUN interface resumed")
-    }
-
-    private suspend fun stopTunnel(
-        reason: DropReason,
-        errorMessage: String?,
-        suggestedFix: SuggestedFixAction = SuggestedFixAction.NONE,
-        stopService: Boolean
-    ) = lifecycleMutex.withLock {
-        isUserStopping = true
-        isPaused = false
+    private fun cancelBackgroundJobs() {
         telemetryJob?.cancel()
         telemetryJob = null
         reconnectJob?.cancel()
         reconnectJob = null
+        networkDebounceJob?.cancel()
+        networkDebounceJob = null
+    }
 
-        runCatching { tunManager.stopTun() }
-        runCatching { tunInterface?.close() }
-        tunInterface = null
-        runCatching { coreManager.stopAll() }
+    private fun createLifecycleOps(): TunnelLifecycleCoordinator.Ops {
+        val controller = ServiceLocator.vpnController
+        val settingsRepo = ServiceLocator.settingsRepository
+        val orchestrator = ServiceLocator.tunnelOrchestrator
 
-        ServiceLocator.settingsRepository.setVpnActiveState(false)
+        return object : TunnelLifecycleCoordinator.Ops {
+            override suspend fun onConnecting() {
+                telemetryJob?.cancel()
+                telemetryJob = null
+                val settings = settingsRepo.getSettings()
+                val profile = settingsRepo.getActiveProfile()
+                reconnectMachine.updateConfig(settings.preferLastGoodGateway, profile.pingFailureLimit)
 
-        val prev = ServiceLocator.vpnController.status.value
-        if (sessionStartMs > 0L && prev.uptimeSeconds >= 2L) {
-            ServiceLocator.statsRepository.recordSession(
-                SessionRecord(
-                    id = UUID.randomUUID().toString(),
-                    profileName = prev.activeProfileName,
-                    routeChain = prev.activeRoute,
-                    startedAtMs = sessionStartMs,
-                    durationSec = prev.uptimeSeconds,
-                    downloadBytes = prev.sessionDownBytes,
-                    uploadBytes = prev.sessionUpBytes,
-                    exitCountryCode = prev.exitCountryCode,
-                    dropReason = reason
+                controller.updateSessionProxyAuth(null)
+                controller.updateRuntimeStatus {
+                    it.copy(
+                        state = VpnState.CONNECTING,
+                        activeProfileName = profile.name,
+                        activeRoute = profile.routeChain,
+                        activeProtocol = profile.aetherProtocol,
+                        errorMessage = null,
+                        suggestedFix = SuggestedFixAction.NONE,
+                        sessionProxyUser = null,
+                        sessionProxyPass = null
+                    )
+                }
+                updateNotification(getString(R.string.status_connecting), isPaused = false)
+            }
+
+            override suspend fun startCoreAndProbe(
+                useFreshScan: Boolean,
+                isUserStopping: () -> Boolean
+            ): TunnelLifecycleCoordinator.CoreStepResult {
+                val settings = settingsRepo.getSettings()
+                val profile = settingsRepo.getActiveProfile()
+                val networkKey = ConnectivityHelper.currentNetworkKey(applicationContext)
+
+                val outcome = orchestrator.startCoreAndProbe(
+                    coreManager = coreManager,
+                    settings = settings,
+                    profile = profile,
+                    networkKey = networkKey,
+                    useFreshScan = useFreshScan,
+                    isCancelled = isUserStopping,
+                    onProbeProgress = { label -> controller.updateSmartProbeStatus(label) },
+                    verifyHttpsAfterCoreStart = true
                 )
-            )
-        }
-        sessionStartMs = 0L
 
-        ServiceLocator.vpnController.updateRuntimeStatus {
-            it.copy(
-                state = if (errorMessage != null) VpnState.ERROR else VpnState.DISCONNECTED,
-                activeTunEngine = TunEngineType.NONE,
-                downSpeedBps = 0L,
-                upSpeedBps = 0L,
-                smartProbeStatus = null,
-                lastDropReason = reason,
-                errorMessage = errorMessage,
-                suggestedFix = suggestedFix
-            )
-        }
-        if (stopService) {
-            stopForegroundAndSelf()
+                return when (outcome) {
+                    is CoreProbeOutcome.Ready -> TunnelLifecycleCoordinator.CoreStepResult.Ready(
+                        route = outcome.route,
+                        socksPort = outcome.socksPort,
+                        httpPort = outcome.httpPort,
+                        auth = outcome.auth,
+                        pingMs = outcome.initialPingMs
+                    )
+                    is CoreProbeOutcome.Failure -> TunnelLifecycleCoordinator.CoreStepResult.Failed(
+                        reason = outcome.dropReason,
+                        errorMessage = outcome.errorMessage,
+                        suggestedFix = outcome.suggestedFix
+                    )
+                }
+            }
+
+            override suspend fun hasTunOpen(): Boolean = tunInterface != null
+
+            override suspend fun openAndStartTun(
+                socksPort: Int,
+                auth: SessionProxyAuth
+            ): TunnelLifecycleCoordinator.TunStepResult {
+                val settings = settingsRepo.getSettings()
+                val profile = settingsRepo.getActiveProfile()
+
+                var pfd = tunInterface
+                var createdHere = false
+                if (pfd == null) {
+                    val builtResult = buildVpnInterface(settings, profile)
+                    if (builtResult.isFailure) {
+                        val err = builtResult.exceptionOrNull()
+                        val reason = if (err is IllegalArgumentException) DropReason.INVALID_CONFIG else DropReason.TUN_START_FAILED
+                        val fix = if (err is IllegalArgumentException) SuggestedFixAction.NONE else SuggestedFixAction.GRANT_VPN_PERMISSION
+                        return TunnelLifecycleCoordinator.TunStepResult.Failed(
+                            reason = reason,
+                            errorMessage = err?.message ?: "Failed to establish VpnService interface",
+                            suggestedFix = fix
+                        )
+                    }
+                    pfd = builtResult.getOrThrow()
+                    tunInterface = pfd
+                    createdHere = true
+                }
+
+                val tunRes = tunManager.startTun(
+                    tunInterface = pfd,
+                    socksPort = socksPort,
+                    auth = auth,
+                    profile = profile,
+                    preference = settings.tunEnginePreference,
+                    protectFd = ::protect
+                )
+                if (tunRes.isFailure) {
+                    if (createdHere) {
+                        runCatching { pfd.close() }
+                        tunInterface = null
+                    }
+                    return TunnelLifecycleCoordinator.TunStepResult.Failed(
+                        reason = DropReason.TUN_START_FAILED,
+                        errorMessage = tunRes.exceptionOrNull()?.message ?: "TUN engine failed",
+                        suggestedFix = SuggestedFixAction.SWITCH_TO_HEV_TUN
+                    )
+                }
+
+                return TunnelLifecycleCoordinator.TunStepResult.Ready(tunRes.getOrThrow())
+            }
+
+            override suspend fun stopTunOnly(closeTunFd: Boolean) {
+                runCatchingCancellable { tunManager.stopTun() }
+                if (closeTunFd) {
+                    val fd = tunInterface
+                    tunInterface = null
+                    runCatching { fd?.close() }
+                }
+            }
+
+            override suspend fun stopAllCoreAndTun() {
+                runCatchingCancellable { tunManager.stopTun() }
+                val fd = tunInterface
+                tunInterface = null
+                runCatching { fd?.close() }
+                runCatchingCancellable { coreManager.stopAll() }
+            }
+
+            override suspend fun onConnected(
+                route: RouteChain,
+                tunEngine: TunEngineType,
+                socksPort: Int,
+                httpPort: Int?,
+                auth: SessionProxyAuth,
+                pingMs: Int?,
+                resumed: Boolean
+            ) {
+                val settings = settingsRepo.getSettings()
+                val profile = settingsRepo.getActiveProfile()
+                settingsRepo.setVpnActiveState(true)
+                reconnectMachine.reset()
+                if (!resumed || sessionStartMs == 0L) {
+                    sessionStartMs = System.currentTimeMillis()
+                }
+                controller.updateSessionProxyAuth(auth)
+                controller.updateRuntimeStatus {
+                    it.copy(
+                        state = VpnState.CONNECTED,
+                        activeProfileName = profile.name,
+                        activeRoute = route,
+                        activeProtocol = profile.aetherProtocol,
+                        activeTunEngine = tunEngine,
+                        pingMs = pingMs ?: it.pingMs,
+                        smartProbeStatus = null,
+                        reconnectAttempt = 0,
+                        socksPort = socksPort,
+                        httpPort = httpPort,
+                        lanShareActive = settings.shareProxyOnLan,
+                        sessionProxyUser = auth.username,
+                        sessionProxyPass = auth.password,
+                        errorMessage = null,
+                        suggestedFix = SuggestedFixAction.NONE
+                    )
+                }
+                updateNotification(getString(R.string.status_connected) + " · ${route.name}", isPaused = false)
+                startTelemetryLoop(profile, socksPort, auth)
+                LogRepository.i("NovaVpnService", if (resumed) "TUN interface resumed" else "VPN connected via $route ($tunEngine)")
+            }
+
+            override suspend fun onPaused() {
+                controller.updateRuntimeStatus {
+                    it.copy(
+                        state = VpnState.PAUSED,
+                        activeTunEngine = TunEngineType.NONE,
+                        downSpeedBps = 0L,
+                        upSpeedBps = 0L
+                    )
+                }
+                updateNotification(getString(R.string.status_paused_direct_warning), isPaused = true)
+                LogRepository.i("NovaVpnService", "TUN interface paused (direct traffic bypass active; core kept alive)")
+            }
+
+            override suspend fun onStopped(
+                reason: DropReason,
+                errorMessage: String?,
+                suggestedFix: SuggestedFixAction,
+                stopService: Boolean
+            ) {
+                settingsRepo.setVpnActiveState(false)
+                controller.updateSessionProxyAuth(null)
+
+                val prev = controller.status.value
+                if (sessionStartMs > 0L && prev.uptimeSeconds >= 2L) {
+                    ServiceLocator.statsRepository.recordSession(
+                        SessionRecord(
+                            id = UUID.randomUUID().toString(),
+                            profileName = prev.activeProfileName,
+                            routeChain = prev.activeRoute,
+                            startedAtMs = sessionStartMs,
+                            durationSec = prev.uptimeSeconds,
+                            downloadBytes = prev.sessionDownBytes,
+                            uploadBytes = prev.sessionUpBytes,
+                            exitCountryCode = prev.exitCountryCode,
+                            dropReason = reason
+                        )
+                    )
+                }
+                sessionStartMs = 0L
+
+                controller.updateRuntimeStatus {
+                    it.copy(
+                        state = if (errorMessage != null) VpnState.ERROR else VpnState.DISCONNECTED,
+                        activeTunEngine = TunEngineType.NONE,
+                        downSpeedBps = 0L,
+                        upSpeedBps = 0L,
+                        smartProbeStatus = null,
+                        lastDropReason = reason,
+                        errorMessage = errorMessage,
+                        suggestedFix = suggestedFix,
+                        sessionProxyUser = null,
+                        sessionProxyPass = null
+                    )
+                }
+                if (stopService) {
+                    stopForegroundAndSelf()
+                }
+            }
         }
     }
 
-    private fun startTelemetryLoop(profile: VpnProfile) {
+    private fun startTelemetryLoop(profile: VpnProfile, socksPort: Int, auth: SessionProxyAuth) {
         telemetryJob?.cancel()
         val controller = ServiceLocator.vpnController
         val diagnostics = ServiceLocator.diagnosticsEngine
@@ -431,7 +422,7 @@ class NovaVpnService : VpnService() {
 
             // Fetch exit IP asynchronously
             launch {
-                val geo = diagnostics.fetchExitIpInfo(activeSocksPort)
+                val geo = diagnostics.fetchExitIpInfo(socksPort, auth)
                 if (geo != null) {
                     controller.updateRuntimeStatus {
                         it.copy(exitIp = geo.ip, exitCountryCode = geo.countryCode, exitCity = geo.city)
@@ -439,7 +430,7 @@ class NovaVpnService : VpnService() {
                 }
             }
 
-            while (isActive && !isPaused && !isUserStopping) {
+            while (isActive && !coordinator.isPaused && !coordinator.isUserStopping) {
                 delay(1000)
                 tick++
                 val nowRx = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)
@@ -470,14 +461,16 @@ class NovaVpnService : VpnService() {
                 }
 
                 if (tick % profile.pingIntervalSec.coerceIn(5, 120) == 0) {
-                    val result = diagnostics.verifyRealHttpsConnectivity(activeSocksPort)
+                    val result = diagnostics.verifyRealHttpsConnectivity(socksPort, auth)
                     if (result.isSuccess) {
                         reconnectMachine.onPingSucceeded()
                         controller.updateRuntimeStatus { it.copy(pingMs = result.getOrNull()) }
                     } else {
                         val decision = reconnectMachine.onPingFailed()
                         if (decision.action != ReconnectActionType.NONE) {
-                            handleReconnectDecision(decision, null)
+                            // Never run stop/reconnect inside telemetryJob (it cancels telemetryJob).
+                            // Dispatch to a sibling job on serviceScope and exit this loop cleanly.
+                            serviceScope.launch { handleReconnectDecision(decision) }
                             break
                         }
                     }
@@ -486,11 +479,8 @@ class NovaVpnService : VpnService() {
         }
     }
 
-    private suspend fun handleReconnectDecision(
-        decision: app.novavpn.core.reconnect.ReconnectDecision,
-        @Suppress("UNUSED_PARAMETER") hint: String?
-    ) {
-        if (isUserStopping || isPaused) return
+    private suspend fun handleReconnectDecision(decision: ReconnectDecision) {
+        if (coordinator.isUserStopping || coordinator.isPaused) return
         val controller = ServiceLocator.vpnController
         when (decision.action) {
             ReconnectActionType.NONE -> Unit
@@ -498,11 +488,12 @@ class NovaVpnService : VpnService() {
                 controller.updateRuntimeStatus {
                     it.copy(state = VpnState.RECONNECTING, lastDropReason = decision.dropReason)
                 }
-                updateNotification("Waiting for network…", isPaused = false)
+                updateNotification(getString(R.string.status_waiting_network), isPaused = false)
             }
             ReconnectActionType.RECONNECT_WITH_DELAY, ReconnectActionType.SWITCH_ROUTE_AND_RECONNECT -> {
                 reconnectJob?.cancel()
                 reconnectJob = serviceScope.launch {
+                    val settings = ServiceLocator.settingsRepository.getSettings()
                     controller.updateRuntimeStatus {
                         it.copy(
                             state = VpnState.RECONNECTING,
@@ -510,19 +501,23 @@ class NovaVpnService : VpnService() {
                             lastDropReason = decision.dropReason
                         )
                     }
-                    updateNotification(getString(R.string.status_reconnecting) + " (#${decision.nextAttemptCount})", false)
+                    updateNotification(getString(R.string.status_reconnecting) + " (#${decision.nextAttemptCount})", isPaused = false)
                     delay(decision.delayMs)
-                    if (!isUserStopping && !isPaused) {
-                        runCatching { tunManager.stopTun() }
-                        runCatching { tunInterface?.close() }
-                        tunInterface = null
+                    if (!coordinator.isUserStopping && !coordinator.isPaused) {
                         coreManager.stopAll()
-                        startTunnel(useFreshScan = decision.useFreshScan)
+                        coordinator.reconnect(
+                            useFreshScan = decision.useFreshScan,
+                            keepTunOpen = settings.keepTunOnReconnect
+                        )
                     }
                 }
             }
             ReconnectActionType.STOP_FAILED -> {
-                stopTunnel(
+                reconnectJob?.cancel()
+                reconnectJob = null
+                telemetryJob?.cancel()
+                telemetryJob = null
+                coordinator.stop(
                     reason = decision.dropReason,
                     errorMessage = "Auto-reconnect exhausted after ${decision.nextAttemptCount} attempts.",
                     suggestedFix = SuggestedFixAction.FRESH_SCAN,
@@ -532,48 +527,53 @@ class NovaVpnService : VpnService() {
         }
     }
 
-    private fun buildVpnInterface(settings: AppSettings, profile: VpnProfile): ParcelFileDescriptor? {
+    private fun buildVpnInterface(settings: AppSettings, profile: VpnProfile): Result<ParcelFileDescriptor> {
+        val planResult = SplitTunnelPlanner.plan(
+            selfPackage = packageName,
+            mode = settings.splitTunnelMode,
+            selectedPackages = settings.splitTunnelPackages,
+            profile = profile,
+            tunPreference = settings.tunEnginePreference
+        )
+        if (planResult.isFailure) {
+            return Result.failure(planResult.exceptionOrNull()!!)
+        }
+        val plan = planResult.getOrThrow()
+
         return runCatching {
             val builder = Builder()
                 .setSession("Nova VPN · ${profile.name}")
                 .setMtu(profile.mtu.coerceIn(576, 1500))
                 .addAddress("10.10.0.1", 24)
                 .addRoute("0.0.0.0", 0)
-                .setBlocking(settings.killSwitchBlocking)
 
             if (profile.ipv6Enabled) {
                 builder.addAddress("fd00::1", 64)
                 builder.addRoute("::", 0)
             }
 
-            // DNS inside TUN
-            val primaryDnsIp = when (profile.dnsMode) {
-                DnsMode.PLAIN -> profile.customDnsPrimary.takeIf { it.count { c -> c == '.' } == 3 } ?: "1.1.1.1"
-                else -> "10.10.0.2" // Intercepted by sing-box DNS outbound
-            }
-            builder.addDnsServer(primaryDnsIp)
-            if (profile.customDnsSecondary.isNotBlank() && profile.customDnsSecondary.count { c -> c == '.' } == 3) {
-                builder.addDnsServer(profile.customDnsSecondary.trim())
-            }
+            builder.addDnsServer(plan.primaryDnsServer)
+            plan.secondaryDnsServer?.let { builder.addDnsServer(it) }
 
-            // Prevent routing loops by always disallowing our own app package
-            runCatching { builder.addDisallowedApplication(packageName) }
-
-            when (settings.splitTunnelMode) {
-                SplitTunnelMode.DISABLED -> Unit
-                SplitTunnelMode.EXCLUDE -> {
-                    settings.splitTunnelPackages.forEach { pkg ->
-                        if (pkg != packageName) {
-                            runCatching { builder.addDisallowedApplication(pkg) }
-                        }
+            if (plan.allowedPackages.isNotEmpty()) {
+                var addedCount = 0
+                for (pkg in plan.allowedPackages) {
+                    try {
+                        builder.addAllowedApplication(pkg)
+                        addedCount++
+                    } catch (e: PackageManager.NameNotFoundException) {
+                        LogRepository.w("NovaVpnService", "Split-tunnel allowed app not installed ($pkg): ${e.message}")
                     }
                 }
-                SplitTunnelMode.INCLUDE -> {
-                    // Only allow selected packages; self remains excluded so core sockets stay outside VPN
-                    settings.splitTunnelPackages.forEach { pkg ->
-                        if (pkg != packageName) {
-                            runCatching { builder.addAllowedApplication(pkg) }
-                        }
+                if (addedCount == 0) {
+                    throw IllegalArgumentException("No selected split-tunnel apps are currently installed.")
+                }
+            } else {
+                for (pkg in plan.disallowedPackages) {
+                    try {
+                        builder.addDisallowedApplication(pkg)
+                    } catch (e: PackageManager.NameNotFoundException) {
+                        LogRepository.w("NovaVpnService", "Split-tunnel excluded app not installed ($pkg): ${e.message}")
                     }
                 }
             }
@@ -581,36 +581,67 @@ class NovaVpnService : VpnService() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 builder.setMetered(false)
             }
+
             builder.establish()
-        }.getOrElse { err ->
+                ?: error("Android VpnService.Builder.establish() returned null. Check VPN permission or Always-on VPN.")
+        }.onFailure { err ->
             LogRepository.e("NovaVpnService", "Failed to establish VpnService interface: ${err.message}")
-            null
         }
     }
 
-    private fun registerNetworkCallback() {
+    private fun registerDefaultPhysicalNetworkCallback() {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
-        val req = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                if (isUserStopping) return
-                val key = ServiceLocator.vpnController.currentNetworkKey()
-                val decision = reconnectMachine.onNetworkAvailable(key)
-                if (decision.action != ReconnectActionType.NONE) {
-                    serviceScope.launch { handleReconnectDecision(decision, null) }
-                }
+                if (coordinator.isUserStopping) return
+                if (ConnectivityHelper.isVpnNetwork(cm, network)) return
+                scheduleDebouncedNetworkAvailable(cm, network)
+            }
+
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                if (coordinator.isUserStopping) return
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
+                if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return
+                scheduleDebouncedNetworkAvailable(cm, network, caps)
             }
 
             override fun onLost(network: Network) {
-                if (isUserStopping) return
-                val decision = reconnectMachine.onNetworkLost()
-                serviceScope.launch { handleReconnectDecision(decision, null) }
+                if (coordinator.isUserStopping) return
+                if (ConnectivityHelper.isVpnNetwork(cm, network)) return
+                // Only mark offline if no non-VPN underlying network remains
+                val remaining = ConnectivityHelper.underlyingNetworkCapabilities(cm)
+                if (remaining != null) return
+                networkDebounceJob?.cancel()
+                networkDebounceJob = serviceScope.launch {
+                    delay(1_000L)
+                    if (!coordinator.isUserStopping && ConnectivityHelper.underlyingNetworkCapabilities(cm) == null) {
+                        val decision = reconnectMachine.onNetworkLost()
+                        handleReconnectDecision(decision)
+                    }
+                }
             }
         }
         networkCallback = cb
-        runCatching { cm.registerNetworkCallback(req, cb) }
+        runCatching { cm.registerDefaultNetworkCallback(cb) }
+    }
+
+    private fun scheduleDebouncedNetworkAvailable(
+        cm: ConnectivityManager,
+        network: Network,
+        knownCaps: NetworkCapabilities? = null
+    ) {
+        networkDebounceJob?.cancel()
+        networkDebounceJob = serviceScope.launch {
+            delay(1_000L)
+            if (coordinator.isUserStopping) return@launch
+            val caps = knownCaps ?: cm.getNetworkCapabilities(network) ?: ConnectivityHelper.underlyingNetworkCapabilities(cm)
+            if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@launch
+            val key = ConnectivityHelper.keyForCapabilities(applicationContext, caps)
+            val decision = reconnectMachine.onNetworkAvailable(key)
+            if (decision.action != ReconnectActionType.NONE) {
+                handleReconnectDecision(decision)
+            }
+        }
     }
 
     private fun unregisterNetworkCallback() {
@@ -645,6 +676,7 @@ class NovaVpnService : VpnService() {
             .setSmallIcon(R.drawable.ic_vpn_key)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openIntent)
@@ -677,7 +709,7 @@ class NovaVpnService : VpnService() {
 
     private fun formatCompactRate(bps: Long): String {
         return when {
-            bps < 1024L -> "${bps} B/s"
+            bps < 1024L -> "$bps B/s"
             bps < 1024L * 1024L -> "${bps / 1024L} KB/s"
             else -> String.format("%.1f MB/s", bps / (1024.0 * 1024.0))
         }

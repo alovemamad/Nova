@@ -24,11 +24,13 @@ class AetherCommandBuilderTest {
     fun `builds Aether MASQUE command list with real v2_4_0 flags and MTU env var`() {
         val nativeDir = tempFolder.newFolder("jni")
         val workDir = tempFolder.newFolder("work")
+        assertTrue(VpnProfile(id = "def", name = "Default").masqueOverH2)
         val profile = VpnProfile(
             id = "p1",
             name = "Test",
             routeChain = RouteChain.AETHER,
             aetherProtocol = AetherProtocol.MASQUE,
+            masqueOverH2 = false,
             obfuscation = ObfuscationProfile.QUIC_TLS_CAMO,
             customEndpoint = "162.159.192.1:2408",
             mtu = 1320,

@@ -374,47 +374,6 @@ class DiagnosticsEngine {
         return fixed to "Applied safe fixes: MTU=1280, IPv6 off, DoH=Cloudflare, Obfuscation=Auto"
     }
 
-    suspend fun checkForUpdates(currentVersion: String): UpdateInfo = withContext(Dispatchers.IO) {
-        app.novavpn.core.runCatchingCancellable {
-            val client = createClient(null, null)
-            val req = Request.Builder()
-                .url("https://api.github.com/repos/nova-vpn/nova-vpn-android/releases/latest")
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "NovaVPN/$currentVersion")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    return@withContext UpdateInfo(error = "GitHub returned HTTP ${resp.code}")
-                }
-                val body = resp.body?.string() ?: error("Empty response")
-                val obj = json.parseToJsonElement(body).jsonObject
-                val tag = obj["tag_name"]?.jsonPrimitive?.content ?: ""
-                val url = obj["html_url"]?.jsonPrimitive?.content ?: ""
-                val notes = obj["body"]?.jsonPrimitive?.content ?: ""
-                val cleanTag = tag.removePrefix("v")
-                val available = cleanTag.isNotBlank() && compareSemVer(cleanTag, currentVersion.removePrefix("v")) > 0
-                UpdateInfo(
-                    checking = false,
-                    latestTag = tag,
-                    releaseUrl = url,
-                    releaseNotes = notes.take(400),
-                    updateAvailable = available
-                )
-            }
-        }.getOrElse { err ->
-            UpdateInfo(checking = false, error = err.message ?: "Update check failed")
-        }
-    }
-
-    private fun compareSemVer(a: String, b: String): Int {
-        val pa = a.split('.').map { it.toIntOrNull() ?: 0 }
-        val pb = b.split('.').map { it.toIntOrNull() ?: 0 }
-        val max = maxOf(pa.size, pb.size)
-        for (i in 0 until max) {
-            val va = pa.getOrElse(i) { 0 }
-            val vb = pb.getOrElse(i) { 0 }
-            if (va != vb) return va.compareTo(vb)
-        }
-        return 0
-    }
+    suspend fun checkForUpdates(currentVersion: String): UpdateInfo =
+        GitHubUpdater.checkLatestRelease(currentVersion)
 }

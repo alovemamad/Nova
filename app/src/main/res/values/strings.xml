@@ -98,23 +98,24 @@
     <string name="onb_continue">Continue</string>
     <string name="onb_finish">Start Using Nova</string>
 
-    <!-- App Lock & Deep Link -->
-    <string name="lock_title">Nova VPN Locked</string>
-    <string name="lock_subtitle">Enter your PIN or use biometrics</string>
-    <string name="lock_unlock">Unlock</string>
-    <string name="lock_authenticate">Authenticate</string>
-    <string name="lock_incorrect_pin">Incorrect PIN (%1$d tries remaining)</string>
-    <string name="lock_locked_out">Too many failed attempts. Try again in %1$ds.</string>
-    <string name="lock_pin_setup_title">Set App Lock PIN (6+ digits)</string>
-    <string name="lock_pin_min_error">Enter at least 6 digits</string>
-    <string name="lock_enable">Enable Lock</string>
+    <!-- Deep Link & Country Picker -->
     <string name="deeplink_import_title">Import Shared Profile?</string>
     <string name="deeplink_import_body">Import \"%1$s\" (%2$s · %3$s) from link?</string>
     <string name="deeplink_import_confirm">Import &amp; Select</string>
+    <string name="home_country_picker_title">Exit Country</string>
+    <string name="home_country_picker_sub">Tap a flag to connect directly</string>
+    <string name="home_country_all">All</string>
+    <string name="home_country_search">Search country or code</string>
+    <string name="home_country_active_route_hint">Switches route to Aether → Psiphon</string>
 
-    <!-- Settings -->
+    <!-- Settings (6 Categories) -->
     <string name="settings_title">Settings</string>
-    <string name="settings_section_tunnel">Tunnel &amp; Network</string>
+    <string name="settings_cat_connection">Connection</string>
+    <string name="settings_cat_network">Network</string>
+    <string name="settings_cat_appearance">Appearance</string>
+    <string name="settings_cat_privacy">Privacy</string>
+    <string name="settings_cat_updates">Updates</string>
+    <string name="settings_cat_about">About</string>
     <string name="settings_operation_mode">Operation Mode</string>
     <string name="settings_mode_vpn">VPN Tunnel</string>
     <string name="settings_mode_proxy">Proxy Only</string>
@@ -126,7 +127,6 @@
     <string name="settings_lan_share_desc">Binds 0.0.0.0 with per-session credentials shown on Home; use only on trusted Wi-Fi</string>
     <string name="settings_prefer_last">Prefer Last Good Gateway</string>
     <string name="settings_prefer_last_desc">Faster connect; disable to run a fresh endpoint scan each time</string>
-    <string name="settings_section_reliability">Reliability &amp; Automation</string>
     <string name="settings_keep_tun_reconnect">Protect Traffic During Reconnect</string>
     <string name="settings_keep_tun_reconnect_desc">Keeps TUN open (drops packets instead of leaking) while restarting the core</string>
     <string name="settings_always_on">System Kill Switch (Always-on VPN)</string>
@@ -137,14 +137,8 @@
     <string name="settings_auto_connect">Auto-Connect Rules</string>
     <string name="settings_disabled">Disabled</string>
     <string name="settings_battery_opt">Battery Optimization Exemption</string>
-    <string name="settings_battery_opt_desc">Prevent OS from killing background VPN service</string>
-    <string name="settings_section_security">Security &amp; Privacy</string>
-    <string name="settings_app_lock">App Lock (Biometric / PIN)</string>
-    <string name="settings_enabled">Enabled</string>
-    <string name="settings_app_lock_desc">Protect access to Nova VPN</string>
-    <string name="settings_hide_recents">Hide from Recents</string>
-    <string name="settings_hide_recents_desc">Applies FLAG_SECURE screenshot &amp; recents blur protection</string>
-    <string name="settings_section_glass">Liquid Glass &amp; Language</string>
+    <string name="settings_battery_exempted">Exempted · Background VPN protected</string>
+    <string name="settings_battery_not_exempted">Restricted · Tap to exempt Nova VPN directly</string>
     <string name="settings_theme">Theme</string>
     <string name="settings_dark">Dark</string>
     <string name="settings_light">Light</string>
@@ -161,12 +155,31 @@
     <string name="settings_dynamic_color">Dynamic System Colors</string>
     <string name="settings_motion_tilt">Motion Tilt Highlights</string>
     <string name="settings_reduce_transparency">Reduce Transparency</string>
-    <string name="settings_section_maintenance">Maintenance</string>
+    <string name="settings_home_speed">Live Speed Card on Home</string>
+    <string name="settings_home_timer">Connection Timer on Home</string>
+    <string name="settings_home_card">Route &amp; Exit Card on Home</string>
     <string name="settings_view_logs">View Diagnostic Logs</string>
     <string name="settings_logs_count">%1$d entries recorded</string>
     <string name="settings_backup_restore">Backup &amp; Restore (JSON)</string>
     <string name="settings_backup_desc">Export or import all profiles and preferences</string>
     <string name="settings_check_updates">Check for Updates</string>
+    <string name="updates_repo_title">GitHub Releases</string>
+    <string name="updates_repo_sub">github.com/alovemamad/Nova</string>
+    <string name="updates_installed_version">Installed: v%1$s</string>
+    <string name="updates_checking">Checking GitHub for updates…</string>
+    <string name="updates_available">New version %1$s available</string>
+    <string name="updates_up_to_date">You are on the latest release</string>
+    <string name="updates_downloading">Downloading APK… %1$d%%</string>
+    <string name="updates_download_install">Download &amp; Install (%1$s)</string>
+    <string name="updates_install_now">Install Downloaded APK</string>
+    <string name="updates_grant_install_perm">Allow App Installs &amp; Retry</string>
+    <string name="updates_open_github">Open Release on GitHub</string>
+    <string name="updates_check_now">Check Now</string>
+    <string name="about_version">App Version</string>
+    <string name="about_engines">Core Engines</string>
+    <string name="about_engines_list">Aether v2.4.0 · sing-box · Psiphon · Tor / lyrebird · hev-socks5-tunnel</string>
+    <string name="about_github">GitHub Repository</string>
+    <string name="about_github_url">https://github.com/alovemamad/Nova</string>
 
     <!-- Common & Dialogs -->
     <string name="common_apply">Apply</string>
@@ -226,4 +239,11 @@
     <string name="profile_masque_h2">HTTP/2 (TCP)</string>
     <string name="profile_tls_fragment">TLS Fragmentation (--fragment)</string>
     <string name="profile_tls_fragment_desc">Splits TLS ClientHello SNI packets on HTTP/2 and WARP API calls</string>
+    <string name="profiles_new">New Profile</string>
+    <string name="profiles_edit">Edit Profile</string>
+    <string name="profiles_section_identity">Identity &amp; Route</string>
+    <string name="profiles_section_transport">Transport &amp; Carrier</string>
+    <string name="profiles_section_tuning">Tunnel Tuning</string>
+    <string name="profiles_section_dns">DNS &amp; Upstream</string>
+    <string name="profiles_section_rules">Split Rules</string>
 </resources>

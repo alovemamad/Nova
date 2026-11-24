@@ -1,3 +1,27 @@
+import java.util.Properties
+
+val versionPropsFile = file("version.properties")
+val versionProps = Properties().apply {
+  if (versionPropsFile.exists()) {
+    versionPropsFile.inputStream().use { load(it) }
+  }
+}
+val autoBump = providers.gradleProperty("autoBump").orNull == "true"
+var appVersionCode = versionProps.getProperty("VERSION_CODE", "2").toIntOrNull() ?: 2
+var appVersionName = versionProps.getProperty("VERSION_NAME", "1.0.1")
+if (autoBump) {
+  appVersionCode += 1
+  val parts = appVersionName.split(".").toMutableList()
+  if (parts.size >= 3) {
+    val patch = parts[2].toIntOrNull() ?: 0
+    parts[2] = (patch + 1).toString()
+    appVersionName = parts.joinToString(".")
+  }
+  versionProps.setProperty("VERSION_CODE", appVersionCode.toString())
+  versionProps.setProperty("VERSION_NAME", appVersionName)
+  versionPropsFile.outputStream().use { versionProps.store(it, "Auto-managed Nova VPN version") }
+}
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -12,8 +36,8 @@ android {
     applicationId = "com.aistudio.novavpn.kxmvpr"
     minSdk = 26
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0.0"
+    versionCode = appVersionCode
+    versionName = appVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -88,8 +112,8 @@ dependencies {
   // implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
-  implementation(libs.androidx.biometric)
-  implementation(libs.androidx.fragment.ktx)
+  // implementation(libs.androidx.biometric)
+  // implementation(libs.androidx.fragment.ktx)
   // implementation(libs.androidx.camera.camera2)
   // implementation(libs.androidx.camera.core)
   // implementation(libs.androidx.camera.lifecycle)
@@ -135,4 +159,24 @@ dependencies {
   androidTestImplementation(libs.androidx.runner)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
+}
+
+tasks.register("bumpAppVersion") {
+  doLast {
+    val props = Properties()
+    if (versionPropsFile.exists()) {
+      versionPropsFile.inputStream().use { props.load(it) }
+    }
+    val nextCode = (props.getProperty("VERSION_CODE", "1").toIntOrNull() ?: 1) + 1
+    val curName = props.getProperty("VERSION_NAME", "1.0.0")
+    val parts = curName.split(".").toMutableList()
+    val nextName = if (parts.size >= 3) {
+      parts[2] = ((parts[2].toIntOrNull() ?: 0) + 1).toString()
+      parts.joinToString(".")
+    } else curName
+    props.setProperty("VERSION_CODE", nextCode.toString())
+    props.setProperty("VERSION_NAME", nextName)
+    versionPropsFile.outputStream().use { props.store(it, "Auto-managed Nova VPN version") }
+    println("Bumped Nova VPN version to $nextName ($nextCode)")
+  }
 }

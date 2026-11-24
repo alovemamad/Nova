@@ -183,7 +183,7 @@ data class VpnProfile(
     val name: String,
     val routeChain: RouteChain = RouteChain.SMART_AUTO,
     val aetherProtocol: AetherProtocol = AetherProtocol.MASQUE,
-    val masqueOverH2: Boolean = false,
+    val masqueOverH2: Boolean = true,
     val tlsFragment: Boolean = false,
     val customEndpoint: String = "",
     val scanLevel: Int = 2, // 1 = Fast, 2 = Balanced, 3 = Deep
@@ -237,18 +237,12 @@ data class AppSettings(
     val language: AppLanguage = AppLanguage.SYSTEM,
     val digitMode: DigitMode = DigitMode.LOCALE,
     val glass: GlassPrefs = GlassPrefs(),
-    val appLockEnabled: Boolean = false,
-    val appLockPinHash: String = "", // Legacy SHA-256 field retained only for transparent migration
-    val appLockVaultBlob: String = "", // Android Keystore AES-GCM encrypted PBKDF2 salt+hash
-    val appLockFailedAttempts: Int = 0,
-    val appLockLockoutUntilMs: Long = 0L,
-    val hideFromRecents: Boolean = false,
     val bestRoutePerNetwork: Map<String, RouteChain> = emptyMap(),
     val lastKnownGoodEndpoint: String = "",
     val wasVpnActiveBeforeKill: Boolean = false
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 4
+        const val CURRENT_SCHEMA_VERSION = 5
         const val DEFAULT_PROFILE_ID = "default-smart-auto"
     }
 }
@@ -329,7 +323,15 @@ data class UpdateInfo(
     val releaseUrl: String? = null,
     val releaseNotes: String? = null,
     val updateAvailable: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val apkDownloadUrl: String? = null,
+    val apkAssetName: String? = null,
+    val apkSizeBytes: Long? = null,
+    val downloading: Boolean = false,
+    val downloadProgress: Float = 0f,
+    val downloadedApkPath: String? = null,
+    val downloadError: String? = null,
+    val needsInstallPermission: Boolean = false
 )
 
 data class InstalledAppInfo(

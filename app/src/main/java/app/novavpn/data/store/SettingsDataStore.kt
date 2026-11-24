@@ -8,7 +8,6 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import app.novavpn.data.security.AppLockCrypto
 import app.novavpn.domain.model.AetherProtocol
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.NovaBackupPayload
@@ -30,12 +29,6 @@ import java.security.SecureRandom
 import java.util.UUID
 
 private val Context.novaDataStore: DataStore<Preferences> by preferencesDataStore(name = "nova_vpn_settings")
-
-sealed class PinVerifyResult {
-    data object Success : PinVerifyResult()
-    data class WrongPin(val remainingBeforeLockout: Int) : PinVerifyResult()
-    data class LockedOut(val remainingSeconds: Long) : PinVerifyResult()
-}
 
 object SettingsMigrator {
     private val json = Json {
@@ -105,6 +98,7 @@ object SettingsMigrator {
             name = "Nova Smart (Auto)",
             routeChain = RouteChain.SMART_AUTO,
             aetherProtocol = AetherProtocol.MASQUE,
+            masqueOverH2 = true,
             obfuscation = ObfuscationProfile.AUTO,
             mtu = 1280
         ),
@@ -113,6 +107,7 @@ object SettingsMigrator {
             name = "Aether · MASQUE",
             routeChain = RouteChain.AETHER,
             aetherProtocol = AetherProtocol.MASQUE,
+            masqueOverH2 = true,
             obfuscation = ObfuscationProfile.QUIC_TLS_CAMO,
             mtu = 1280
         ),
@@ -129,6 +124,7 @@ object SettingsMigrator {
             name = "Aether → Psiphon",
             routeChain = RouteChain.AETHER_PSIPHON,
             aetherProtocol = AetherProtocol.WARP_IN_MASQUE,
+            masqueOverH2 = true,
             psiphonRegion = "AUTO",
             mtu = 1280
         ),
@@ -137,6 +133,7 @@ object SettingsMigrator {
             name = "Aether → Tor",
             routeChain = RouteChain.AETHER_TOR,
             aetherProtocol = AetherProtocol.MASQUE,
+            masqueOverH2 = true,
             torUseBridges = false,
             mtu = 1280
         )
@@ -212,67 +209,6 @@ class SettingsRepository(private val context: Context) {
         updateSettings { it.copy(wasVpnActiveBeforeKill = active) }
     }
 
-    suspend fun setAppLockPin(pin: String?) {
-        updateSettings { s ->
-            val blob = if (!pin.isNullOrBlank()) AppLockCrypto.sealWithKeystore(pin) else s.appLockVaultBlob
-            s.copy(
-                appLockEnabled = true,
-                appLockPinHash = "",
-                appLockVaultBlob = blob,
-                appLockFailedAttempts = 0,
-                appLockLockoutUntilMs = 0L
-            )
-        }
-    }
-
-    suspend fun disableAppLock() {
-        updateSettings { s ->
-            s.copy(
-                appLockEnabled = false,
-                appLockPinHash = "",
-                appLockVaultBlob = "",
-                appLockFailedAttempts = 0,
-                appLockLockoutUntilMs = 0L
-            )
-        }
-    }
-
-    suspend fun verifyPinAndMigrate(pin: String, nowMs: Long = System.currentTimeMillis()): PinVerifyResult {
-        var result: PinVerifyResult = PinVerifyResult.WrongPin(AppLockCrypto.MAX_FREE_ATTEMPTS)
-        updateSettings { s ->
-            if (s.appLockLockoutUntilMs > nowMs) {
-                val remSec = ((s.appLockLockoutUntilMs - nowMs) + 999L) / 1000L
-                result = PinVerifyResult.LockedOut(remSec)
-                return@updateSettings s
-            }
-            val matchedVault = s.appLockVaultBlob.isNotBlank() && AppLockCrypto.verifySealedBlob(pin, s.appLockVaultBlob)
-            val matchedLegacy = !matchedVault && AppLockCrypto.verifyLegacySha256(pin, s.appLockPinHash)
-
-            if (matchedVault || matchedLegacy) {
-                result = PinVerifyResult.Success
-                val migratedBlob = if (matchedLegacy) AppLockCrypto.sealWithKeystore(pin) else s.appLockVaultBlob
-                s.copy(
-                    appLockPinHash = "",
-                    appLockVaultBlob = migratedBlob,
-                    appLockFailedAttempts = 0,
-                    appLockLockoutUntilMs = 0L
-                )
-            } else {
-                val (nextAttempts, nextLockoutMs) = AppLockCrypto.computeNextLockout(s.appLockFailedAttempts, nowMs)
-                result = if (nextLockoutMs > nowMs) {
-                    PinVerifyResult.LockedOut(((nextLockoutMs - nowMs) + 999L) / 1000L)
-                } else {
-                    PinVerifyResult.WrongPin((AppLockCrypto.MAX_FREE_ATTEMPTS - nextAttempts).coerceAtLeast(0))
-                }
-                s.copy(
-                    appLockFailedAttempts = nextAttempts,
-                    appLockLockoutUntilMs = nextLockoutMs
-                )
-            }
-        }
-        return result
-    }
-
     suspend fun saveProfile(profile: VpnProfile, setActive: Boolean = false) {
         mutex.withLock {
             context.novaDataStore.edit { prefs ->
@@ -329,13 +265,7 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun exportBackupJson(): String {
         val payload = NovaBackupPayload(
-            settings = getSettings().copy(
-                appLockEnabled = false,
-                appLockPinHash = "",
-                appLockVaultBlob = "",
-                appLockFailedAttempts = 0,
-                appLockLockoutUntilMs = 0L
-            ),
+            settings = getSettings(),
             profiles = getProfiles()
         )
         return json.encodeToString(payload)
@@ -354,11 +284,6 @@ class SettingsRepository(private val context: Context) {
                 val cleanSettings = payload.settings.copy(
                     schemaVersion = AppSettings.CURRENT_SCHEMA_VERSION,
                     activeProfileId = activeId,
-                    appLockEnabled = false,
-                    appLockPinHash = "",
-                    appLockVaultBlob = "",
-                    appLockFailedAttempts = 0,
-                    appLockLockoutUntilMs = 0L,
                     wasVpnActiveBeforeKill = false
                 )
                 prefs[Keys.SCHEMA_VERSION] = AppSettings.CURRENT_SCHEMA_VERSION

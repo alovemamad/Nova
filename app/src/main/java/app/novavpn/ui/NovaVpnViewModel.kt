@@ -8,12 +8,13 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.net.VpnService
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.novavpn.ServiceLocator
+import app.novavpn.core.net.GitHubUpdater
 import app.novavpn.data.log.LogRepository
-import app.novavpn.data.store.PinVerifyResult
 import app.novavpn.data.store.ProfileShareCodec
 import app.novavpn.data.store.SettingsMigrator
 import app.novavpn.domain.model.AppSettings
@@ -21,10 +22,12 @@ import app.novavpn.domain.model.DataUsageDay
 import app.novavpn.domain.model.DiagnosticReport
 import app.novavpn.domain.model.InstalledAppInfo
 import app.novavpn.domain.model.LogEntry
+import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.SessionRecord
 import app.novavpn.domain.model.UpdateInfo
 import app.novavpn.domain.model.VpnMode
 import app.novavpn.domain.model.VpnProfile
+import java.io.File
 import app.novavpn.domain.model.VpnRuntimeStatus
 import app.novavpn.domain.model.VpnState
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -72,9 +75,6 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
     private val _installedApps = MutableStateFlow<List<InstalledAppInfo>>(emptyList())
     val installedApps: StateFlow<List<InstalledAppInfo>> = _installedApps.asStateFlow()
 
-    private val _isUnlocked = MutableStateFlow(false)
-    val isUnlocked: StateFlow<Boolean> = _isUnlocked.asStateFlow()
-
     private val _uiMessage = MutableStateFlow<String?>(null)
     val uiMessage: StateFlow<String?> = _uiMessage.asStateFlow()
 
@@ -96,15 +96,6 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
                 LogRepository.e("NovaVpnViewModel", "ensurePerInstallRandomPorts failed: ${t.message}")
             }
             try {
-                val initialSettings = settingsRepo.getSettings()
-                if (!initialSettings.appLockEnabled) {
-                    _isUnlocked.value = true
-                }
-            } catch (t: Throwable) {
-                LogRepository.e("NovaVpnViewModel", "Failed reading initial settings: ${t.message}")
-                _isUnlocked.value = true
-            }
-            try {
                 vpnController.checkAutoConnectRules()
             } catch (t: Throwable) {
                 LogRepository.e("NovaVpnViewModel", "checkAutoConnectRules failed: ${t.message}")
@@ -118,32 +109,6 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
 
     fun postMessage(msg: String) {
         _uiMessage.value = msg
-    }
-
-    fun unlockWithBiometric() {
-        _isUnlocked.value = true
-    }
-
-    suspend fun verifyPin(pin: String): PinVerifyResult {
-        val result = settingsRepo.verifyPinAndMigrate(pin)
-        if (result is PinVerifyResult.Success) {
-            _isUnlocked.value = true
-        }
-        return result
-    }
-
-    fun enableAppLock(pin: String?) {
-        viewModelScope.launch {
-            settingsRepo.setAppLockPin(pin)
-            _isUnlocked.value = true
-        }
-    }
-
-    fun disableAppLock() {
-        viewModelScope.launch {
-            settingsRepo.disableAppLock()
-            _isUnlocked.value = true
-        }
     }
 
     fun handleIncomingProfileUri(rawUri: String) {
@@ -205,6 +170,26 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
             settingsRepo.updateSettings { it.copy(activeProfileId = id) }
             if (runtimeStatus.value.state == VpnState.CONNECTED) {
                 vpnController.reconnectFreshScan()
+            }
+        }
+    }
+
+    fun selectCountryAndConnect(regionCode: String) {
+        viewModelScope.launch {
+            val normalized = regionCode.trim().uppercase().ifBlank { "AUTO" }
+            val current = settingsRepo.getActiveProfile()
+            val needsPsiphonSwitch = normalized != "AUTO" &&
+                current.routeChain != RouteChain.AETHER_PSIPHON &&
+                current.routeChain != RouteChain.PSIPHON_ONLY
+            val updated = current.copy(
+                psiphonRegion = normalized,
+                routeChain = if (needsPsiphonSwitch) RouteChain.AETHER_PSIPHON else current.routeChain
+            )
+            settingsRepo.saveProfile(updated, setActive = true)
+            when (runtimeStatus.value.state) {
+                VpnState.CONNECTED, VpnState.CONNECTING, VpnState.RECONNECTING, VpnState.PAUSED ->
+                    vpnController.reconnectFreshScan()
+                else -> vpnController.connect(useFreshScan = true)
             }
         }
     }
@@ -350,6 +335,69 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun downloadAndInstallUpdate() {
+        val current = _updateInfo.value
+        val url = current.apkDownloadUrl ?: return
+        val name = current.apkAssetName ?: "nova-update.apk"
+        if (current.downloading) return
+        viewModelScope.launch {
+            _updateInfo.value = _updateInfo.value.copy(
+                downloading = true,
+                downloadProgress = 0f,
+                downloadError = null,
+                needsInstallPermission = false
+            )
+            val result = GitHubUpdater.downloadApk(
+                context = appCtx,
+                downloadUrl = url,
+                assetName = name,
+                onProgress = { pct ->
+                    _updateInfo.value = _updateInfo.value.copy(downloadProgress = pct)
+                }
+            )
+            result.onSuccess { file ->
+                val launched = runCatching {
+                    GitHubUpdater.launchInstallOrRequestPermission(appCtx, file)
+                }.getOrElse { err ->
+                    _updateInfo.value = _updateInfo.value.copy(
+                        downloading = false,
+                        downloadedApkPath = file.absolutePath,
+                        downloadError = err.message ?: "Failed to launch installer"
+                    )
+                    return@launch
+                }
+                _updateInfo.value = _updateInfo.value.copy(
+                    downloading = false,
+                    downloadProgress = 1f,
+                    downloadedApkPath = file.absolutePath,
+                    needsInstallPermission = !launched,
+                    downloadError = null
+                )
+            }.onFailure { err ->
+                _updateInfo.value = _updateInfo.value.copy(
+                    downloading = false,
+                    downloadError = err.message ?: "Download failed"
+                )
+            }
+        }
+    }
+
+    fun retryInstallDownloadedApk() {
+        val path = _updateInfo.value.downloadedApkPath ?: return
+        val file = File(path)
+        if (!file.exists()) {
+            _updateInfo.value = _updateInfo.value.copy(downloadedApkPath = null)
+            return
+        }
+        val launched = runCatching {
+            GitHubUpdater.launchInstallOrRequestPermission(appCtx, file)
+        }.getOrElse { err ->
+            _updateInfo.value = _updateInfo.value.copy(downloadError = err.message)
+            return
+        }
+        _updateInfo.value = _updateInfo.value.copy(needsInstallPermission = !launched)
+    }
+
     fun clearLogs() {
         LogRepository.clear()
     }
@@ -370,8 +418,22 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
         runCatching { appCtx.startActivity(intent) }
     }
 
+    fun isBatteryOptimizationIgnored(): Boolean {
+        val pm = appCtx.getSystemService(PowerManager::class.java) ?: return false
+        return runCatching { pm.isIgnoringBatteryOptimizations(appCtx.packageName) }.getOrDefault(false)
+    }
+
     fun openBatteryOptimizationSettings() {
-        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { appCtx.startActivity(intent) }
+        val pkgUri = Uri.parse("package:${appCtx.packageName}")
+        val candidates = listOf(
+            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkgUri),
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri),
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        )
+        for (candidate in candidates) {
+            candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val launched = runCatching { appCtx.startActivity(candidate) }.isSuccess
+            if (launched) return
+        }
     }
 }

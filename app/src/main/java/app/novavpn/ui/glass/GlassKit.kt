@@ -1,54 +1,142 @@
 package app.novavpn.ui.glass
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.example.R
+
+/**
+ * Top inner specular bevel highlight clipped to the inside edge of [shape], matching ZedSecure iOS-style Liquid Glass.
+ */
+fun Modifier.glassHighlight(shape: Shape, color: Color, thickness: Dp = 1.dp): Modifier =
+    drawWithCache {
+        val outline = shape.createOutline(size, layoutDirection, this)
+        val inner = Path().apply { addOutline(outline) }
+        val shifted = Path().apply {
+            addOutline(outline)
+            translate(Offset(0f, thickness.toPx()))
+        }
+        onDrawWithContent {
+            clipPath(inner) {
+                clipPath(shifted, ClipOp.Difference) { drawRect(color) }
+            }
+            drawContent()
+        }
+    }
+
+fun glassRimBrush(look: GlassLook): Brush = Brush.linearGradient(
+    0f to look.rimHi,
+    0.28f to look.rimMid,
+    0.48f to Color.Transparent,
+    0.64f to Color.Transparent,
+    1f to look.rimLo
+)
+
+fun Modifier.glassRim(shape: Shape, look: GlassLook, width: Dp = 1.dp): Modifier =
+    border(width, glassRimBrush(look), shape)
+
+@Composable
+fun Modifier.glassPress(source: InteractionSource, scale: Float = 0.965f): Modifier {
+    val pressed by source.collectIsPressedAsState()
+    val s by animateFloatAsState(
+        targetValue = if (pressed) scale else 1f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMedium),
+        label = "glass_press"
+    )
+    return graphicsLayer {
+        scaleX = s
+        scaleY = s
+    }
+}
 
 @Composable
 fun Modifier.liquidGlass(
-    shape: Shape = RoundedCornerShape(24.dp),
+    shape: Shape = RoundedCornerShape(26.dp),
     elevated: Boolean = false,
     tintOverride: Color? = null
 ): Modifier {
@@ -56,55 +144,50 @@ fun Modifier.liquidGlass(
     val tilt = LocalGlassTiltOffset.current
     val surfaceColor = tintOverride ?: if (elevated) look.pillSurface else look.cardSurface
 
-    val base = if (look.prefs.reduceTransparency) {
-        this
+    if (look.prefs.reduceTransparency) {
+        return this
             .clip(shape)
             .background(surfaceColor, shape)
-    } else {
-        val specularAlpha = if (look.isDark) 0.14f else 0.42f
-        val bottomAlpha = if (look.isDark) 0.04f else 0.14f
-        val shadowElevation = if (elevated) 10.dp else 4.dp
-        this
-            .shadow(elevation = shadowElevation, shape = shape, clip = false)
-            .clip(shape)
-            .background(surfaceColor, shape)
-            .drawBehind {
-                val shiftX = tilt.x * size.width * 0.25f
-                val shiftY = tilt.y * size.height * 0.20f
-                // Specular glass sheen mimicking lens refraction across the top-left facet
-                drawRect(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = specularAlpha),
-                            Color.Transparent,
-                            look.accent.copy(alpha = bottomAlpha)
-                        ),
-                        start = Offset(shiftX, shiftY),
-                        end = Offset(size.width + shiftX, size.height + shiftY)
-                    )
-                )
-            }
+            .border(0.75.dp, look.separator, shape)
     }
 
-    return base.border(
-        BorderStroke(
-            width = 1.dp,
-            brush = Brush.linearGradient(
-                colors = listOf(
-                    look.cardBorder,
-                    look.cardBorder.copy(alpha = 0.16f),
-                    look.accent.copy(alpha = if (elevated) 0.35f else 0.18f)
+    val specularAlpha = if (look.isDark) 0.12f else 0.36f
+    val bottomAlpha = if (look.isDark) 0.04f else 0.10f
+    val shadowElevation = if (elevated) 14.dp else 6.dp
+
+    return this
+        .shadow(
+            elevation = shadowElevation,
+            shape = shape,
+            clip = false,
+            ambientColor = look.shadow,
+            spotColor = look.shadow
+        )
+        .clip(shape)
+        .background(surfaceColor, shape)
+        .drawBehind {
+            val shiftX = tilt.x * size.width * 0.25f
+            val shiftY = tilt.y * size.height * 0.20f
+            drawRect(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = specularAlpha),
+                        Color.Transparent,
+                        look.accent.copy(alpha = bottomAlpha)
+                    ),
+                    start = Offset(shiftX, shiftY),
+                    end = Offset(size.width + shiftX, size.height + shiftY)
                 )
             )
-        ),
-        shape = shape
-    )
+        }
+        .glassHighlight(shape, look.highlight)
+        .glassRim(shape, look)
 }
 
 @Composable
 fun GlassCard(
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 24.dp,
+    cornerRadius: Dp = 26.dp,
     elevated: Boolean = false,
     tintOverride: Color? = null,
     content: @Composable BoxScope.() -> Unit
@@ -120,20 +203,47 @@ fun GlassCard(
 }
 
 @Composable
+fun GlassSectionHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    trailing: String? = null
+) {
+    val look = LocalGlassLook.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 0.2.sp),
+            color = look.textSecondary,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (!trailing.isNullOrBlank()) {
+            Text(
+                text = trailing,
+                style = MaterialTheme.typography.labelSmall,
+                color = look.textMuted,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
 fun GlassGroup(
     title: String? = null,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val look = LocalGlassLook.current
     Column(modifier = modifier.fillMaxWidth()) {
         if (!title.isNullOrBlank()) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge,
-                color = look.textSecondary,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
-            )
+            GlassSectionHeader(title = title)
         }
         GlassCard(modifier = Modifier.fillMaxWidth()) {
             Column(
@@ -157,37 +267,52 @@ fun GlassRow(
     trailing: (@Composable () -> Unit)? = null
 ) {
     val look = LocalGlassLook.current
+    val source = remember { MutableInteractionSource() }
     val clickableMod = if (onClick != null) {
-        modifier.clickable(
-            interactionSource = remember { MutableInteractionSource() },
-            indication = ripple(),
-            role = Role.Button,
-            onClick = onClick
-        )
+        modifier
+            .glassPress(source, scale = 0.985f)
+            .clickable(
+                interactionSource = source,
+                indication = ripple(color = look.accent),
+                role = Role.Button,
+                onClick = onClick
+            )
     } else {
         modifier
+    }
+
+    val effectiveTint = iconTint ?: look.accent
+    val iconShape = RoundedCornerShape(10.dp)
+    val iconBrush = remember(effectiveTint) {
+        Brush.verticalGradient(
+            0f to lerp(effectiveTint, Color.White, 0.22f),
+            0.65f to effectiveTint,
+            1f to lerp(effectiveTint, Color.Black, 0.12f)
+        )
     }
 
     Row(
         modifier = clickableMod
             .fillMaxWidth()
             .defaultMinSize(minHeight = 56.dp)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background((iconTint ?: look.accent).copy(alpha = 0.14f)),
+                    .size(34.dp)
+                    .shadow(1.dp, iconShape, clip = false, ambientColor = Color.Black.copy(alpha = 0.25f))
+                    .clip(iconShape)
+                    .background(iconBrush)
+                    .glassHighlight(iconShape, Color.White.copy(alpha = 0.45f), 0.5.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = iconTint ?: look.accent,
-                    modifier = Modifier.size(20.dp)
+                    tint = Color.White,
+                    modifier = Modifier.size(19.dp)
                 )
             }
             Spacer(modifier = Modifier.width(12.dp))
@@ -225,8 +350,73 @@ fun GlassDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(horizontal = 16.dp),
         thickness = 0.6.dp,
-        color = look.cardBorder.copy(alpha = 0.5f)
+        color = look.separator
     )
+}
+
+@Composable
+fun GlassSwitch(
+    checked: Boolean,
+    onCheckedChange: ((Boolean) -> Unit)?,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    interactionSource: MutableInteractionSource? = null
+) {
+    val look = LocalGlassLook.current
+    val source = interactionSource ?: remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val track by animateColorAsState(
+        targetValue = if (checked) look.accent else look.fill,
+        animationSpec = tween(220),
+        label = "glass_switch_track"
+    )
+    val thumbOffset by animateDpAsState(
+        targetValue = if (checked) 24.dp else 2.dp,
+        animationSpec = spring(dampingRatio = 0.62f, stiffness = Spring.StiffnessMediumLow),
+        label = "glass_switch_knob"
+    )
+    val squash by animateFloatAsState(
+        targetValue = if (pressed && enabled) 1f else 0f,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+        label = "glass_switch_press"
+    )
+
+    val capsule = RoundedCornerShape(percent = 50)
+    Box(
+        modifier = modifier
+            .size(width = 58.dp, height = 28.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .clip(capsule)
+            .background(track)
+            .then(
+                if (onCheckedChange != null) {
+                    Modifier.toggleable(
+                        value = checked,
+                        interactionSource = source,
+                        indication = null,
+                        enabled = enabled,
+                        role = Role.Switch,
+                        onValueChange = onCheckedChange
+                    )
+                } else {
+                    Modifier
+                }
+            )
+    ) {
+        Box(
+            modifier = Modifier
+                .offset(x = thumbOffset, y = 2.dp)
+                .size(width = 32.dp, height = 24.dp)
+                .graphicsLayer {
+                    scaleX = 1f + 0.18f * squash
+                    scaleY = 1f + 0.10f * squash
+                }
+                .shadow(3.dp, capsule, clip = false, ambientColor = Color.Black.copy(alpha = 0.22f))
+                .clip(capsule)
+                .background(lerp(Color.White, Color.White.copy(alpha = 0.68f), squash))
+                .glassHighlight(capsule, Color.White, 0.8.dp)
+        )
+    }
 }
 
 @Composable
@@ -238,23 +428,25 @@ fun GlassSwitchRow(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val look = LocalGlassLook.current
+    val haptic = LocalHapticFeedback.current
+    val source = remember { MutableInteractionSource() }
     GlassRow(
         title = title,
         subtitle = subtitle,
         icon = icon,
-        onClick = { onCheckedChange(!checked) },
+        onClick = {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onCheckedChange(!checked)
+        },
         modifier = modifier
     ) {
-        Switch(
+        GlassSwitch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color(0xFF041412),
-                checkedTrackColor = look.accent,
-                uncheckedThumbColor = look.textSecondary,
-                uncheckedTrackColor = look.cardBorder.copy(alpha = 0.35f)
-            )
+            onCheckedChange = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onCheckedChange(it)
+            },
+            interactionSource = source
         )
     }
 }
@@ -266,47 +458,82 @@ fun <T> GlassSegmented(
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    if (options.isEmpty()) return
     val look = LocalGlassLook.current
-    Row(
+    val haptic = LocalHapticFeedback.current
+    val capsule = RoundedCornerShape(16.dp)
+    val selectedIdx = options.indexOfFirst { it.first == selected }.coerceAtLeast(0)
+
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(look.cardSurface.copy(alpha = 0.55f))
-            .border(1.dp, look.cardBorder.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+            .height(42.dp)
+            .clip(capsule)
+            .background(look.fill2)
+            .glassHighlight(capsule, look.highlight, 0.8.dp)
+            .border(0.8.dp, look.separator, capsule)
+            .padding(3.dp)
     ) {
-        options.forEach { (value, label) ->
-            val isSelected = value == selected
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .defaultMinSize(minHeight = 40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        if (isSelected) {
-                            Brush.horizontalGradient(listOf(look.accent.copy(alpha = 0.32f), look.secondaryAccent.copy(alpha = 0.28f)))
-                        } else {
-                            Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
-                        }
+        val slotWidth = maxWidth / options.size
+        val sliderX by animateDpAsState(
+            targetValue = slotWidth * selectedIdx,
+            animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow),
+            label = "glass_segment_x"
+        )
+
+        Box(
+            modifier = Modifier
+                .offset(x = sliderX)
+                .width(slotWidth)
+                .fillMaxHeight()
+                .shadow(3.dp, RoundedCornerShape(13.dp), clip = false, ambientColor = look.shadow)
+                .clip(RoundedCornerShape(13.dp))
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(look.accent.copy(alpha = 0.34f), look.secondaryAccent.copy(alpha = 0.28f))
                     )
-                    .border(
-                        width = if (isSelected) 1.dp else 0.dp,
-                        color = if (isSelected) look.accent.copy(alpha = 0.6f) else Color.Transparent,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    .clickable { onSelect(value) }
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    color = if (isSelected) look.textPrimary else look.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
                 )
+                .glassHighlight(RoundedCornerShape(13.dp), look.highlight, 0.8.dp)
+                .border(0.8.dp, look.accent.copy(alpha = 0.55f), RoundedCornerShape(13.dp))
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .selectableGroup()
+        ) {
+            options.forEach { (value, label) ->
+                val isSelected = value == selected
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(13.dp))
+                        .selectable(
+                            selected = isSelected,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Tab,
+                            onClick = {
+                                if (!isSelected) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onSelect(value)
+                                }
+                            }
+                        )
+                        .padding(horizontal = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isSelected) look.textPrimary else look.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
     }
@@ -322,18 +549,86 @@ fun GlassCircleButton(
     tint: Color? = null
 ) {
     val look = LocalGlassLook.current
+    val source = remember { MutableInteractionSource() }
+    val haptic = LocalHapticFeedback.current
     Box(
         modifier = modifier
+            .glassPress(source, scale = 0.92f)
             .size(size)
             .liquidGlass(shape = CircleShape, elevated = true)
-            .clickable(onClick = onClick),
+            .clickable(
+                interactionSource = source,
+                indication = ripple(bounded = true, color = look.accent),
+                role = Role.Button,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onClick()
+                }
+            ),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = tint ?: look.textPrimary,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(21.dp)
+        )
+    }
+}
+
+@Composable
+fun GlassCapsuleButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    prominent: Boolean = false,
+    enabled: Boolean = true,
+    tint: Color? = null
+) {
+    val look = LocalGlassLook.current
+    val source = remember { MutableInteractionSource() }
+    val haptic = LocalHapticFeedback.current
+    val capsule = RoundedCornerShape(percent = 50)
+    val accent = tint ?: look.accent
+    val bgOverride = if (prominent) accent.copy(alpha = 0.24f) else null
+
+    Row(
+        modifier = modifier
+            .glassPress(source, scale = 0.96f)
+            .defaultMinSize(minHeight = 48.dp)
+            .liquidGlass(shape = capsule, elevated = prominent, tintOverride = bgOverride)
+            .clickable(
+                interactionSource = source,
+                indication = ripple(bounded = true, color = accent),
+                enabled = enabled,
+                role = Role.Button,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onClick()
+                }
+            )
+            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (prominent) accent else look.textPrimary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = if (prominent) look.textPrimary else look.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -344,19 +639,219 @@ fun GlassBadge(
     color: Color,
     modifier: Modifier = Modifier
 ) {
+    val capsule = RoundedCornerShape(50)
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(50),
-        color = color.copy(alpha = 0.16f),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.45f))
+        shape = capsule,
+        color = color.copy(alpha = 0.18f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.48f))
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
             color = color,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+@Composable
+fun GlassModalDialog(
+    onDismissRequest: () -> Unit,
+    title: String,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val look = LocalGlassLook.current
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(200)) + scaleIn(
+                initialScale = 0.93f,
+                animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMedium)
+            ),
+            exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.95f)
+        ) {
+            GlassCard(
+                cornerRadius = 28.dp,
+                elevated = true,
+                tintOverride = look.sheet,
+                modifier = modifier
+                    .padding(horizontal = 20.dp, vertical = 24.dp)
+                    .widthIn(max = 520.dp)
+                    .fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (icon != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(look.accent.copy(alpha = 0.16f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = null,
+                                        tint = look.accent,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                            }
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = look.textPrimary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        GlassCircleButton(
+                            icon = Icons.Rounded.Close,
+                            contentDescription = stringResource(R.string.common_close),
+                            onClick = onDismissRequest,
+                            size = 40.dp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    content()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GlassSheet(
+    onDismissRequest: () -> Unit,
+    title: String,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val look = LocalGlassLook.current
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(look.dim)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismissRequest
+                ),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            AnimatedVisibility(
+                visible = visible,
+                enter = slideInVertically(
+                    initialOffsetY = { it / 2 },
+                    animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                ) + fadeIn(tween(180)),
+                exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(tween(140))
+            ) {
+                val sheetShape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
+                Box(
+                    modifier = modifier
+                        .widthIn(max = 600.dp)
+                        .fillMaxWidth()
+                        .heightIn(max = 680.dp)
+                        .liquidGlass(shape = sheetShape, elevated = true, tintOverride = look.sheet)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {}
+                        )
+                        .navigationBarsPadding()
+                        .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 20.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .size(width = 40.dp, height = 4.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(look.textMuted.copy(alpha = 0.55f))
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                if (icon != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(look.accent.copy(alpha = 0.16f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = null,
+                                            tint = look.accent,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                }
+                                Text(
+                                    text = title,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = look.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            GlassCircleButton(
+                                icon = Icons.Rounded.Close,
+                                contentDescription = stringResource(R.string.common_close),
+                                onClick = onDismissRequest,
+                                size = 40.dp
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        content()
+                    }
+                }
+            }
+        }
     }
 }

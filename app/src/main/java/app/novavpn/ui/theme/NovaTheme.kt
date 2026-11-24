@@ -29,15 +29,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.fragment.app.FragmentActivity
 import app.novavpn.domain.model.AppLanguage
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.AppThemeMode
 import app.novavpn.ui.glass.GlassThemeProvider
 import com.example.R
 import java.util.Locale
-
-val LocalHostActivity = compositionLocalOf<FragmentActivity?> { null }
 
 val NovaTeal = Color(0xFF00E5CC)
 val NovaViolet = Color(0xFF7C5CFF)
@@ -139,12 +136,6 @@ private class LocaleContextWrapper(
     override fun getResources(): Resources = localized.resources
 }
 
-private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {
-    is FragmentActivity -> this
-    is ContextWrapper -> baseContext.findFragmentActivity()
-    else -> null
-}
-
 @Composable
 fun NovaVpnTheme(
     settings: AppSettings,
@@ -156,7 +147,6 @@ fun NovaVpnTheme(
         AppThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
     val baseContext = LocalContext.current
-    val hostActivity = remember(baseContext) { baseContext.findFragmentActivity() }
 
     val colorScheme = when {
         settings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
@@ -183,7 +173,6 @@ fun NovaVpnTheme(
     }
 
     CompositionLocalProvider(
-        LocalHostActivity provides hostActivity,
         LocalContext provides localizedContext,
         LocalConfiguration provides localizedContext.resources.configuration,
         LocalAppLanguage provides settings.language,

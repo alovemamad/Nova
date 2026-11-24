@@ -3,76 +3,110 @@ package app.novavpn.ui.home
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Route
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.WarningAmber
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.foundation.clickable
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.novavpn.core.net.LanShareHelper
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.DropReason
+import app.novavpn.domain.model.PsiphonRegionInfo
+import app.novavpn.domain.model.PsiphonRegions
+import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.SuggestedFixAction
 import app.novavpn.domain.model.VpnMode
 import app.novavpn.domain.model.VpnProfile
 import app.novavpn.domain.model.VpnRuntimeStatus
 import app.novavpn.domain.model.VpnState
 import app.novavpn.ui.glass.GlassBadge
+import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassCircleButton
 import app.novavpn.ui.glass.GlassDivider
 import app.novavpn.ui.glass.GlassRow
+import app.novavpn.ui.glass.GlassSheet
 import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.NovaConnectControl
 import app.novavpn.ui.glass.SpeedSparkline
+import app.novavpn.ui.glass.glassHighlight
+import app.novavpn.ui.glass.glassPress
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
 import app.novavpn.ui.theme.formatBytes
 import app.novavpn.ui.theme.formatDurationHms
 import app.novavpn.ui.theme.formatSpeedRate
+import app.novavpn.ui.theme.isPersianUi
 import com.example.R
 
 @Composable
@@ -85,12 +119,15 @@ fun HomeScreen(
     onFreshScanReconnect: () -> Unit,
     onPauseResume: () -> Unit,
     onSelectProfileClick: () -> Unit,
+    onSelectCountryAndConnect: (String) -> Unit,
     onSuggestedFixClick: (SuggestedFixAction) -> Unit,
     onDismissError: () -> Unit,
     onPostMessage: (String) -> Unit
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
+    val faUi = isPersianUi()
+    var showCountrySheet by remember { mutableStateOf(false) }
 
     val stateColor = when (status.state) {
         VpnState.CONNECTED -> look.accent
@@ -142,21 +179,33 @@ fun HomeScreen(
                         color = look.textSecondary
                     )
                 }
-                GlassBadge(
-                    text = stateLabel,
-                    color = stateColor,
-                    modifier = Modifier.testTag("home_status_badge")
-                )
+                AnimatedContent(
+                    targetState = stateLabel to stateColor,
+                    transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+                    label = "home_status_badge_anim"
+                ) { (label, color) ->
+                    GlassBadge(
+                        text = label,
+                        color = color,
+                        modifier = Modifier.testTag("home_status_badge")
+                    )
+                }
             }
         }
 
         // Smart probe pill if probing
         if (!status.smartProbeStatus.isNullOrBlank()) {
             item {
-                GlassBadge(
-                    text = status.smartProbeStatus,
-                    color = look.secondaryAccent
-                )
+                AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    GlassBadge(
+                        text = status.smartProbeStatus,
+                        color = look.secondaryAccent
+                    )
+                }
             }
         }
 
@@ -175,55 +224,143 @@ fun HomeScreen(
                     onToggle = onToggleConnect
                 )
 
-                if (settings.glass.homeTimer && (status.state == VpnState.CONNECTED || status.state == VpnState.PAUSED)) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.Timer,
-                            contentDescription = null,
-                            tint = look.textSecondary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = fmtDigits(formatDurationHms(status.uptimeSeconds)),
-                            style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFamily),
-                            color = look.textPrimary
-                        )
+                AnimatedVisibility(
+                    visible = settings.glass.homeTimer && (status.state == VpnState.CONNECTED || status.state == VpnState.PAUSED),
+                    enter = fadeIn(tween(240)) + expandVertically(),
+                    exit = fadeOut(tween(180)) + shrinkVertically()
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Rounded.Timer,
+                                contentDescription = null,
+                                tint = look.textSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = fmtDigits(formatDurationHms(status.uptimeSeconds)),
+                                style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFamily),
+                                color = look.textPrimary
+                            )
+                        }
                     }
                 }
 
-                // Pause / Fresh scan action pills when active
-                if (status.state == VpnState.CONNECTED || status.state == VpnState.PAUSED) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (settings.vpnMode == VpnMode.VPN) {
-                            OutlinedButton(
-                                onClick = onPauseResume,
-                                shape = RoundedCornerShape(50),
-                                modifier = Modifier.testTag("pause_resume_button")
-                            ) {
-                                Icon(
-                                    imageVector = if (status.state == VpnState.PAUSED) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    stringResource(
+                AnimatedVisibility(
+                    visible = status.state == VpnState.CONNECTED || status.state == VpnState.PAUSED,
+                    enter = fadeIn(tween(240)) + expandVertically(),
+                    exit = fadeOut(tween(180)) + shrinkVertically()
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (settings.vpnMode == VpnMode.VPN) {
+                                GlassCapsuleButton(
+                                    text = stringResource(
                                         if (status.state == VpnState.PAUSED) R.string.notif_action_resume
                                         else R.string.notif_action_pause
-                                    )
+                                    ),
+                                    icon = if (status.state == VpnState.PAUSED) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                                    prominent = status.state == VpnState.PAUSED,
+                                    onClick = onPauseResume,
+                                    modifier = Modifier.testTag("pause_resume_button")
+                                )
+                            }
+                            GlassCircleButton(
+                                icon = Icons.Rounded.Refresh,
+                                contentDescription = stringResource(R.string.home_fresh_scan),
+                                onClick = onFreshScanReconnect,
+                                tint = look.accent,
+                                modifier = Modifier.testTag("fresh_scan_button")
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quick Country Flag Selector — tap any flag to switch region & connect immediately
+        item {
+            val currentCode = activeProfile?.psiphonRegion?.uppercase()?.ifBlank { "AUTO" } ?: "AUTO"
+            val currentRegion = PsiphonRegions.find(currentCode)
+            val routeUsesPsiphon = activeProfile?.routeChain == RouteChain.AETHER_PSIPHON ||
+                activeProfile?.routeChain == RouteChain.PSIPHON_ONLY
+
+            GlassCard(
+                modifier = Modifier
+                    .widthIn(max = 600.dp)
+                    .fillMaxWidth()
+                    .testTag("home_country_picker_card")
+            ) {
+                Column(modifier = Modifier.padding(vertical = 14.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = countryCodeToFlag(currentRegion.code),
+                                fontSize = 22.sp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = stringResource(R.string.home_country_picker_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = look.textPrimary
+                                )
+                                val regionDisplay = if (faUi) currentRegion.nameFa else currentRegion.nameEn
+                                val sub = if (!routeUsesPsiphon && currentCode == "AUTO") {
+                                    "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
+                                } else if (!routeUsesPsiphon) {
+                                    "$regionDisplay · ${stringResource(R.string.home_country_active_route_hint)}"
+                                } else {
+                                    "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
+                                }
+                                Text(
+                                    text = sub,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = look.textSecondary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
-                        GlassCircleButton(
-                            icon = Icons.Rounded.Refresh,
-                            contentDescription = stringResource(R.string.home_fresh_scan),
-                            onClick = onFreshScanReconnect,
-                            tint = look.accent,
-                            modifier = Modifier.testTag("fresh_scan_button")
+                        Spacer(modifier = Modifier.width(8.dp))
+                        GlassCapsuleButton(
+                            text = stringResource(R.string.home_country_all),
+                            icon = Icons.Rounded.Flag,
+                            onClick = { showCountrySheet = true },
+                            modifier = Modifier.testTag("home_country_all_button")
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(PsiphonRegions.POPULAR, key = { it.code }) { region ->
+                            val isSelected = region.code == currentCode
+                            CountryFlagPill(
+                                region = region,
+                                selected = isSelected,
+                                faUi = faUi,
+                                onClick = { onSelectCountryAndConnect(region.code) }
+                            )
+                        }
                     }
                 }
             }
@@ -263,7 +400,7 @@ fun HomeScreen(
             }
         }
 
-        // Ephemeral Session Proxy Credentials / Active Endpoints banner when in Proxy-Only or LAN Share mode
+        // Ephemeral Session Proxy Credentials / Active Endpoints banner
         val user = status.sessionProxyUser
         val pass = status.sessionProxyPass
         val hasCreds = !user.isNullOrBlank() && !pass.isNullOrBlank()
@@ -433,24 +570,24 @@ fun HomeScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = look.textPrimary
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            TextButton(onClick = onDismissError) {
-                                Text(stringResource(R.string.home_dismiss))
-                            }
+                            GlassCapsuleButton(
+                                text = stringResource(R.string.home_dismiss),
+                                onClick = onDismissError
+                            )
                             if (status.suggestedFix != SuggestedFixAction.NONE) {
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Button(
-                                    onClick = { onSuggestedFixClick(status.suggestedFix) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = look.accent, contentColor = Color(0xFF041412))
-                                ) {
-                                    Icon(Icons.Rounded.Build, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(suggestedFixLabel(status.suggestedFix))
-                                }
+                                GlassCapsuleButton(
+                                    text = suggestedFixLabel(status.suggestedFix),
+                                    icon = Icons.Rounded.Build,
+                                    prominent = true,
+                                    onClick = { onSuggestedFixClick(status.suggestedFix) }
+                                )
                             }
                         }
                     }
@@ -458,7 +595,7 @@ fun HomeScreen(
             }
         }
 
-        // Live Speed & Telemetry Card (clearly labeled as Tunnel Traffic)
+        // Live Speed & Telemetry Card
         if (settings.glass.homeSpeed) {
             item {
                 GlassCard(
@@ -498,7 +635,7 @@ fun HomeScreen(
                                 Text(
                                     text = status.pingMs?.let { fmtDigits("${it} ms") } ?: "—",
                                     style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFamily),
-                                    color = look.accent
+                                    color = look.pingColor(status.pingMs)
                                 )
                                 Text(
                                     text = status.activeTunEngine.name.replace("_", " "),
@@ -584,6 +721,174 @@ fun HomeScreen(
                             subtitle = exitSub,
                             icon = Icons.Rounded.Public,
                             iconTint = look.secondaryAccent
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCountrySheet) {
+        val currentCode = activeProfile?.psiphonRegion?.uppercase()?.ifBlank { "AUTO" } ?: "AUTO"
+        CountryPickerSheet(
+            selectedCode = currentCode,
+            faUi = faUi,
+            onSelectCountry = { code ->
+                showCountrySheet = false
+                onSelectCountryAndConnect(code)
+            },
+            onDismiss = { showCountrySheet = false }
+        )
+    }
+}
+
+@Composable
+private fun CountryFlagPill(
+    region: PsiphonRegionInfo,
+    selected: Boolean,
+    faUi: Boolean,
+    onClick: () -> Unit
+) {
+    val look = LocalGlassLook.current
+    val haptic = LocalHapticFeedback.current
+    val source = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(50)
+    val bg = if (selected) look.accent.copy(alpha = 0.24f) else look.fill2
+    val borderColor = if (selected) look.accent.copy(alpha = 0.7f) else look.separator
+    val label = if (region.code == "AUTO") {
+        if (faUi) "خودکار" else "Auto"
+    } else {
+        region.code
+    }
+
+    Row(
+        modifier = Modifier
+            .glassPress(source, scale = 0.94f)
+            .defaultMinSize(minHeight = 48.dp)
+            .clip(shape)
+            .background(bg)
+            .glassHighlight(shape, look.highlight, 0.7.dp)
+            .border(1.dp, borderColor, shape)
+            .clickable(
+                interactionSource = source,
+                indication = ripple(bounded = true, color = look.accent),
+                role = Role.Button,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onClick()
+                }
+            )
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = countryCodeToFlag(region.code),
+            fontSize = 18.sp
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) look.textPrimary else look.textSecondary
+        )
+    }
+}
+
+@Composable
+private fun CountryPickerSheet(
+    selectedCode: String,
+    faUi: Boolean,
+    onSelectCountry: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val look = LocalGlassLook.current
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(query) {
+        val q = query.trim()
+        if (q.isEmpty()) PsiphonRegions.ALL
+        else PsiphonRegions.ALL.filter {
+            it.code.contains(q, ignoreCase = true) ||
+                it.nameEn.contains(q, ignoreCase = true) ||
+                it.nameFa.contains(q, ignoreCase = true)
+        }
+    }
+
+    GlassSheet(
+        onDismissRequest = onDismiss,
+        title = stringResource(R.string.home_country_picker_title),
+        icon = Icons.Rounded.Public
+    ) {
+        Text(
+            text = stringResource(R.string.home_country_picker_sub),
+            style = MaterialTheme.typography.bodySmall,
+            color = look.textSecondary
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            label = { Text(stringResource(R.string.home_country_search)) },
+            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+            singleLine = true,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 420.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(filtered, key = { it.code }) { region ->
+                val isSelected = region.code == selectedCode
+                val shape = RoundedCornerShape(18.dp)
+                val source = remember { MutableInteractionSource() }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 52.dp)
+                        .glassPress(source, scale = 0.98f)
+                        .clip(shape)
+                        .background(if (isSelected) look.accent.copy(alpha = 0.2f) else look.fill2)
+                        .border(
+                            width = 1.dp,
+                            color = if (isSelected) look.accent.copy(alpha = 0.65f) else look.separator,
+                            shape = shape
+                        )
+                        .clickable(
+                            interactionSource = source,
+                            indication = ripple(color = look.accent),
+                            role = Role.Button,
+                            onClick = { onSelectCountry(region.code) }
+                        )
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(text = countryCodeToFlag(region.code), fontSize = 24.sp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = if (faUi) region.nameFa else region.nameEn,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                                color = look.textPrimary
+                            )
+                            Text(
+                                text = if (faUi) "${region.nameEn} · ${region.code}" else region.code,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = look.textSecondary
+                            )
+                        }
+                    }
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = look.accent
                         )
                     }
                 }

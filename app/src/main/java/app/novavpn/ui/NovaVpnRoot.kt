@@ -3,18 +3,29 @@ package app.novavpn.ui
 import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -35,11 +46,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import app.novavpn.domain.model.SuggestedFixAction
-import app.novavpn.ui.components.AppLockGate
+import app.novavpn.ui.glass.GlassCapsuleButton
+import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.GlassNavigationRail
 import app.novavpn.ui.glass.GlassTabBar
 import app.novavpn.ui.glass.GlassTopEdge
 import app.novavpn.ui.glass.GlassWallpaperLayer
+import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.LocalGlassTiltOffset
 import app.novavpn.ui.glass.NovaDestination
 import app.novavpn.ui.glass.rememberGlassTilt
@@ -50,6 +63,14 @@ import app.novavpn.ui.settings.SettingsScreen
 import app.novavpn.ui.stats.StatsScreen
 import app.novavpn.ui.theme.NovaVpnTheme
 import com.example.R
+
+private fun destinationIndex(route: String?): Int = when {
+    route == null -> 0
+    route.contains("Profiles") -> 1
+    route.contains("Stats") -> 2
+    route.contains("Settings") -> 3
+    else -> 0
+}
 
 @Composable
 fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
@@ -64,7 +85,6 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
     val diagReport by viewModel.diagnosticReport.collectAsStateWithLifecycle()
     val updateInfo by viewModel.updateInfo.collectAsStateWithLifecycle()
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
-    val isUnlocked by viewModel.isUnlocked.collectAsStateWithLifecycle()
     val uiMessage by viewModel.uiMessage.collectAsStateWithLifecycle()
     val pendingDeepLinkProfile by viewModel.pendingDeepLinkProfile.collectAsStateWithLifecycle()
 
@@ -78,20 +98,28 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
     }
 
     var pendingStartAfterPermission by remember { mutableStateOf(false) }
+    var pendingRegionConnect by remember { mutableStateOf<String?>(null) }
+
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { res ->
-        if (res.resultCode == Activity.RESULT_OK && pendingStartAfterPermission) {
-            pendingStartAfterPermission = false
-            viewModel.toggleConnect()
-        } else {
-            pendingStartAfterPermission = false
+        val region = pendingRegionConnect
+        val shouldStart = pendingStartAfterPermission
+        pendingRegionConnect = null
+        pendingStartAfterPermission = false
+        if (res.resultCode == Activity.RESULT_OK) {
+            if (region != null) {
+                viewModel.selectCountryAndConnect(region)
+            } else if (shouldStart) {
+                viewModel.toggleConnect()
+            }
         }
     }
 
     val handleConnectOrFix = {
         val prep = viewModel.prepareVpnIntent()
         if (prep != null) {
+            pendingRegionConnect = null
             pendingStartAfterPermission = true
             vpnPermissionLauncher.launch(prep)
         } else {
@@ -99,32 +127,39 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
         }
     }
 
+    val handleSelectCountryAndConnect: (String) -> Unit = { regionCode ->
+        val prep = viewModel.prepareVpnIntent()
+        if (prep != null) {
+            pendingRegionConnect = regionCode
+            pendingStartAfterPermission = true
+            vpnPermissionLauncher.launch(prep)
+        } else {
+            viewModel.selectCountryAndConnect(regionCode)
+        }
+    }
+
     NovaVpnTheme(settings = settings) {
+        val look = LocalGlassLook.current
         val tilt by rememberGlassTilt(settings.glass.motionHighlights)
         CompositionLocalProvider(LocalGlassTiltOffset provides tilt) {
             Box(modifier = Modifier.fillMaxSize()) {
                 GlassWallpaperLayer()
 
-                when {
-                    settings.appLockEnabled && !isUnlocked -> {
-                        AppLockGate(
-                            hasPin = settings.appLockVaultBlob.isNotBlank() || settings.appLockPinHash.isNotBlank(),
-                            lockoutUntilMs = settings.appLockLockoutUntilMs,
-                            onBiometricUnlocked = { viewModel.unlockWithBiometric() },
-                            onVerifyPin = { pin -> viewModel.verifyPin(pin) }
-                        )
-                    }
-
-                    !settings.onboardingCompleted -> {
+                AnimatedContent(
+                    targetState = settings.onboardingCompleted,
+                    transitionSpec = {
+                        fadeIn(tween(320)) togetherWith fadeOut(tween(240))
+                    },
+                    label = "root_onboarding_switch"
+                ) { completed ->
+                    if (!completed) {
                         OnboardingScreen(
                             prepareVpnIntent = { viewModel.prepareVpnIntent() },
                             onOpenBatterySettings = { viewModel.openBatteryOptimizationSettings() },
                             onOpenVpnSettings = { viewModel.openVpnSystemSettings() },
                             onFinish = { viewModel.completeOnboarding() }
                         )
-                    }
-
-                    else -> {
+                    } else {
                         val navController = rememberNavController()
                         val backStack by navController.currentBackStackEntryAsState()
                         val currentDest: NovaDestination = when {
@@ -165,7 +200,33 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                     Box(modifier = Modifier.weight(1f).fillMaxSize()) {
                                         NavHost(
                                             navController = navController,
-                                            startDestination = NovaDestination.Home
+                                            startDestination = NovaDestination.Home,
+                                            enterTransition = {
+                                                val fromIdx = destinationIndex(initialState.destination.route)
+                                                val toIdx = destinationIndex(targetState.destination.route)
+                                                val dir = if (toIdx >= fromIdx) {
+                                                    AnimatedContentTransitionScope.SlideDirection.Start
+                                                } else {
+                                                    AnimatedContentTransitionScope.SlideDirection.End
+                                                }
+                                                slideIntoContainer(dir, tween(280)) + fadeIn(tween(260))
+                                            },
+                                            exitTransition = {
+                                                val fromIdx = destinationIndex(initialState.destination.route)
+                                                val toIdx = destinationIndex(targetState.destination.route)
+                                                val dir = if (toIdx >= fromIdx) {
+                                                    AnimatedContentTransitionScope.SlideDirection.Start
+                                                } else {
+                                                    AnimatedContentTransitionScope.SlideDirection.End
+                                                }
+                                                slideOutOfContainer(dir, tween(260)) + fadeOut(tween(200))
+                                            },
+                                            popEnterTransition = {
+                                                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(280)) + fadeIn(tween(260))
+                                            },
+                                            popExitTransition = {
+                                                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(260)) + fadeOut(tween(200))
+                                            }
                                         ) {
                                             composable<NovaDestination.Home> {
                                                 HomeScreen(
@@ -177,6 +238,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                     onFreshScanReconnect = { viewModel.connectWithFreshScan() },
                                                     onPauseResume = { viewModel.pauseOrResume() },
                                                     onSelectProfileClick = { navigateTo(NovaDestination.Profiles) },
+                                                    onSelectCountryAndConnect = handleSelectCountryAndConnect,
                                                     onSuggestedFixClick = { action ->
                                                         when (action) {
                                                             SuggestedFixAction.GRANT_VPN_PERMISSION -> handleConnectOrFix()
@@ -227,14 +289,15 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                     installedApps = installedApps,
                                                     logs = logs,
                                                     updateInfo = updateInfo,
+                                                    isBatteryOptimizationIgnored = { viewModel.isBatteryOptimizationIgnored() },
                                                     onUpdateSettings = { t -> viewModel.updateSettings(t) },
                                                     onLoadApps = { viewModel.loadInstalledApps() },
-                                                    onEnableAppLock = { pin -> viewModel.enableAppLock(pin) },
-                                                    onDisableAppLock = { viewModel.disableAppLock() },
                                                     onExportBackup = { cb -> viewModel.exportBackupJson(cb) },
                                                     onImportBackup = { raw -> viewModel.importBackupJson(raw) },
                                                     onClearLogs = { viewModel.clearLogs() },
                                                     onCheckUpdates = { ver -> viewModel.checkForUpdates(ver) },
+                                                    onDownloadUpdate = { viewModel.downloadAndInstallUpdate() },
+                                                    onRetryInstallUpdate = { viewModel.retryInstallDownloadedApk() },
                                                     onOpenVpnSettings = { viewModel.openVpnSystemSettings() },
                                                     onOpenBatterySettings = { viewModel.openBatteryOptimizationSettings() }
                                                 )
@@ -256,30 +319,38 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                         }
 
                         pendingDeepLinkProfile?.let { incoming ->
-                            AlertDialog(
+                            GlassModalDialog(
                                 onDismissRequest = { viewModel.dismissDeepLinkImport() },
-                                title = { Text(stringResource(R.string.deeplink_import_title)) },
-                                text = {
-                                    Text(
-                                        stringResource(
-                                            R.string.deeplink_import_body,
-                                            incoming.name,
-                                            incoming.routeChain.name,
-                                            incoming.aetherProtocol.name
-                                        )
+                                title = stringResource(R.string.deeplink_import_title),
+                                icon = Icons.Rounded.Download
+                            ) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.deeplink_import_body,
+                                        incoming.name,
+                                        incoming.routeChain.name,
+                                        incoming.aetherProtocol.name
+                                    ),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = look.textSecondary
+                                )
+                                Spacer(modifier = Modifier.height(18.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    GlassCapsuleButton(
+                                        text = stringResource(R.string.common_cancel),
+                                        onClick = { viewModel.dismissDeepLinkImport() }
                                     )
-                                },
-                                confirmButton = {
-                                    Button(onClick = { viewModel.confirmDeepLinkImport() }) {
-                                        Text(stringResource(R.string.deeplink_import_confirm))
-                                    }
-                                },
-                                dismissButton = {
-                                    TextButton(onClick = { viewModel.dismissDeepLinkImport() }) {
-                                        Text(stringResource(R.string.common_cancel))
-                                    }
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    GlassCapsuleButton(
+                                        text = stringResource(R.string.deeplink_import_confirm),
+                                        onClick = { viewModel.confirmDeepLinkImport() },
+                                        prominent = true
+                                    )
                                 }
-                            )
+                            }
                         }
                     }
                 }

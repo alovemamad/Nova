@@ -7,8 +7,12 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,11 +20,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -30,12 +36,10 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.QrCode2
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.rounded.Route
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,18 +50,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.novavpn.domain.model.AetherProtocol
+import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.VpnProfile
-import app.novavpn.ui.components.ProfileQrDialog
 import app.novavpn.ui.glass.GlassBadge
+import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassCircleButton
+import app.novavpn.ui.glass.GlassDivider
+import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.glassHighlight
+import app.novavpn.ui.theme.countryCodeToFlag
+import app.novavpn.ui.theme.fmtDigits
 import com.example.R
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ProfilesScreen(
     profiles: List<VpnProfile>,
@@ -105,7 +123,7 @@ fun ProfilesScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = stringResource(R.string.profiles_title),
                         style = MaterialTheme.typography.headlineMedium,
@@ -117,6 +135,7 @@ fun ProfilesScreen(
                         color = look.textSecondary
                     )
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GlassCircleButton(
                         icon = Icons.Rounded.PhotoLibrary,
@@ -134,7 +153,7 @@ fun ProfilesScreen(
                     )
                     GlassCircleButton(
                         icon = Icons.Rounded.Add,
-                        contentDescription = stringResource(R.string.profiles_title),
+                        contentDescription = stringResource(R.string.profiles_new),
                         onClick = { showCreateDialog = true },
                         tint = look.accent,
                         modifier = Modifier.testTag("add_profile_button")
@@ -145,71 +164,167 @@ fun ProfilesScreen(
 
         items(profiles, key = { it.id }) { profile ->
             val isActive = profile.id == activeProfileId
+            val routeTint = when (profile.routeChain) {
+                RouteChain.SMART_AUTO -> look.accent
+                RouteChain.AETHER -> look.secondaryAccent
+                RouteChain.AETHER_PSIPHON, RouteChain.PSIPHON_ONLY -> Color(0xFF0A84FF)
+                RouteChain.AETHER_TOR, RouteChain.TOR_ONLY -> Color(0xFFBF5AF2)
+            }
+            val iconShape = RoundedCornerShape(13.dp)
+            val iconBrush = remember(routeTint) {
+                Brush.verticalGradient(
+                    0f to lerp(routeTint, Color.White, 0.24f),
+                    0.65f to routeTint,
+                    1f to lerp(routeTint, Color.Black, 0.14f)
+                )
+            }
+
             GlassCard(
                 modifier = Modifier
+                    .animateItem()
                     .widthIn(max = 600.dp)
                     .fillMaxWidth()
                     .testTag("profile_card_${profile.id}"),
-                tintOverride = if (isActive) look.accent.copy(alpha = 0.14f) else null
+                elevated = isActive,
+                tintOverride = if (isActive) look.accent.copy(alpha = 0.16f) else null
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(iconShape)
+                                .background(iconBrush)
+                                .glassHighlight(iconShape, Color.White.copy(alpha = 0.45f), 0.6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (profile.routeChain == RouteChain.SMART_AUTO) Icons.Rounded.Shield else Icons.Rounded.Route,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 Text(
                                     text = profile.name,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = look.textPrimary
+                                    fontWeight = FontWeight.Bold,
+                                    color = look.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
                                 if (isActive) {
-                                    Spacer(modifier = Modifier.width(8.dp))
                                     Icon(
                                         imageVector = Icons.Rounded.CheckCircle,
                                         contentDescription = stringResource(R.string.profiles_active),
-                                        tint = look.accent
+                                        tint = look.accent,
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "${profile.routeChain.name} · ${profile.aetherProtocol.name} · MTU ${profile.mtu}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = look.textSecondary
-                            )
-                        }
-                        if (!isActive) {
-                            OutlinedButton(onClick = { onSelectProfile(profile.id) }) {
-                                Text(stringResource(R.string.profiles_select))
+                            Spacer(modifier = Modifier.height(6.dp))
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                ProfileMetaChip(
+                                    text = profile.routeChain.name.replace("_", " "),
+                                    tint = routeTint
+                                )
+                                ProfileMetaChip(
+                                    text = profile.aetherProtocol.name.replace("_", "-"),
+                                    tint = look.textSecondary
+                                )
+                                val usesMasque = profile.aetherProtocol == AetherProtocol.MASQUE ||
+                                    profile.aetherProtocol == AetherProtocol.WARP_IN_MASQUE ||
+                                    profile.aetherProtocol == AetherProtocol.MASQUE_IN_MASQUE
+                                if (usesMasque) {
+                                    ProfileMetaChip(
+                                        text = if (profile.masqueOverH2) "HTTP/2" else "HTTP/3",
+                                        tint = look.accent
+                                    )
+                                }
+                                if (profile.routeChain == RouteChain.AETHER_PSIPHON || profile.routeChain == RouteChain.PSIPHON_ONLY) {
+                                    ProfileMetaChip(
+                                        text = "${countryCodeToFlag(profile.psiphonRegion)} ${profile.psiphonRegion}",
+                                        tint = look.secondaryAccent
+                                    )
+                                }
+                                ProfileMetaChip(
+                                    text = fmtDigits("MTU ${profile.mtu}"),
+                                    tint = look.textMuted
+                                )
                             }
-                        } else {
-                            GlassBadge(text = stringResource(R.string.profiles_active), color = look.accent)
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    GlassDivider()
+
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = {
-                            val (uri, bmp) = onGenerateQr(profile)
-                            qrPreview = Triple(profile.name, uri, bmp)
-                        }) {
-                            Icon(Icons.Rounded.QrCode2, contentDescription = stringResource(R.string.profiles_copy_link), tint = look.textSecondary)
+                        if (!isActive) {
+                            GlassCapsuleButton(
+                                text = stringResource(R.string.profiles_select),
+                                prominent = true,
+                                onClick = { onSelectProfile(profile.id) }
+                            )
+                        } else {
+                            GlassBadge(
+                                text = stringResource(R.string.profiles_active),
+                                color = look.accent
+                            )
                         }
-                        IconButton(onClick = { onDuplicateProfile(profile.id) }) {
-                            Icon(Icons.Rounded.ContentCopy, contentDescription = stringResource(R.string.common_copy), tint = look.textSecondary)
-                        }
-                        IconButton(onClick = { editingProfile = profile }) {
-                            Icon(Icons.Rounded.Edit, contentDescription = stringResource(R.string.profiles_title), tint = look.accent)
-                        }
-                        if (profiles.size > 1) {
-                            IconButton(onClick = { onDeleteProfile(profile.id) }) {
-                                Icon(Icons.Rounded.Delete, contentDescription = stringResource(R.string.common_clear), tint = look.danger)
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GlassCircleButton(
+                                icon = Icons.Rounded.QrCode2,
+                                contentDescription = stringResource(R.string.profiles_copy_link),
+                                size = 40.dp,
+                                tint = look.textSecondary,
+                                onClick = {
+                                    val (uri, bmp) = onGenerateQr(profile)
+                                    qrPreview = Triple(profile.name, uri, bmp)
+                                }
+                            )
+                            GlassCircleButton(
+                                icon = Icons.Rounded.ContentCopy,
+                                contentDescription = stringResource(R.string.common_copy),
+                                size = 40.dp,
+                                tint = look.textSecondary,
+                                onClick = { onDuplicateProfile(profile.id) }
+                            )
+                            GlassCircleButton(
+                                icon = Icons.Rounded.Edit,
+                                contentDescription = stringResource(R.string.profiles_edit),
+                                size = 40.dp,
+                                tint = look.accent,
+                                onClick = { editingProfile = profile }
+                            )
+                            if (profiles.size > 1) {
+                                GlassCircleButton(
+                                    icon = Icons.Rounded.Delete,
+                                    contentDescription = stringResource(R.string.common_clear),
+                                    size = 40.dp,
+                                    tint = look.danger,
+                                    onClick = { onDeleteProfile(profile.id) }
+                                )
                             }
                         }
                     }
@@ -234,44 +349,49 @@ fun ProfilesScreen(
     }
 
     if (showImportTextDialog) {
-        AlertDialog(
+        GlassModalDialog(
             onDismissRequest = { showImportTextDialog = false },
-            title = { Text(stringResource(R.string.profiles_import_title)) },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = importInputText,
-                        onValueChange = { importInputText = it },
-                        label = { Text("novavpn://profile?data=… or JSON") },
-                        minLines = 3,
-                        maxLines = 6,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(onClick = {
-                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-                        if (clip.isNotBlank()) importInputText = clip
-                    }) {
-                        Text(stringResource(R.string.profiles_paste_clipboard))
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    onImportText(importInputText)
-                    importInputText = ""
-                    showImportTextDialog = false
-                }) {
-                    Text(stringResource(R.string.profiles_import))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showImportTextDialog = false }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
+            title = stringResource(R.string.profiles_import_title),
+            icon = Icons.Rounded.ContentPaste
+        ) {
+            OutlinedTextField(
+                value = importInputText,
+                onValueChange = { importInputText = it },
+                label = { Text("novavpn://profile?data=… or JSON") },
+                minLines = 3,
+                maxLines = 6,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                if (clip.isNotBlank()) importInputText = clip
+            }) {
+                Text(stringResource(R.string.profiles_paste_clipboard))
             }
-        )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                GlassCapsuleButton(
+                    text = stringResource(R.string.common_cancel),
+                    onClick = { showImportTextDialog = false }
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                GlassCapsuleButton(
+                    text = stringResource(R.string.profiles_import),
+                    prominent = true,
+                    onClick = {
+                        onImportText(importInputText)
+                        importInputText = ""
+                        showImportTextDialog = false
+                    }
+                )
+            }
+        }
     }
 
     qrPreview?.let { (name, uri, bmp) ->
@@ -286,6 +406,25 @@ fun ProfilesScreen(
                 qrPreview = null
             },
             onDismiss = { qrPreview = null }
+        )
+    }
+}
+
+@Composable
+private fun ProfileMetaChip(text: String, tint: Color) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .background(tint.copy(alpha = 0.14f))
+            .padding(horizontal = 9.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = tint,
+            maxLines = 1
         )
     }
 }

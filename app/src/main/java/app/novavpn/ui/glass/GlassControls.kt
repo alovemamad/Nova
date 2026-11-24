@@ -1,14 +1,19 @@
 package app.novavpn.ui.glass
 
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -48,17 +53,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -137,10 +146,11 @@ private fun NovaOrbControl(
 
     val btnScale by animateFloatAsState(
         targetValue = if (isConnected) 1.03f else 1f,
-        animationSpec = tween(300),
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
         label = "scale"
     )
 
+    val source = remember { MutableInteractionSource() }
     val desc = stringResource(if (isConnected) R.string.ctrl_disconnect_desc else R.string.ctrl_connect_desc)
 
     Box(
@@ -154,7 +164,7 @@ private fun NovaOrbControl(
             val r = size.minDimension / 2f
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(ringColor.copy(alpha = 0.28f), Color.Transparent),
+                    colors = listOf(ringColor.copy(alpha = 0.30f), Color.Transparent),
                     center = center,
                     radius = r
                 ),
@@ -165,8 +175,8 @@ private fun NovaOrbControl(
                     brush = Brush.sweepGradient(
                         colors = listOf(
                             Color.Transparent,
-                            look.accent.copy(alpha = 0.85f),
-                            look.secondaryAccent.copy(alpha = 0.85f),
+                            look.accent.copy(alpha = 0.90f),
+                            look.secondaryAccent.copy(alpha = 0.90f),
                             Color.Transparent
                         )
                     ),
@@ -180,12 +190,14 @@ private fun NovaOrbControl(
 
         Box(
             modifier = Modifier
-                .size(152.dp)
+                .size(154.dp)
+                .glassPress(source, scale = 0.93f)
                 .scale(btnScale)
                 .liquidGlass(shape = CircleShape, elevated = true)
                 .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
+                    interactionSource = source,
                     indication = null,
+                    role = Role.Button,
                     onClick = onToggle
                 ),
             contentAlignment = Alignment.Center
@@ -235,28 +247,142 @@ private fun NovaZedGlassControl(
 ) {
     val look = LocalGlassLook.current
     val isConnected = vpnState == VpnState.CONNECTED
-    val tint = if (isConnected) look.accent else look.secondaryAccent
+    val isBusy = vpnState == VpnState.CONNECTING || vpnState == VpnState.RECONNECTING
+    val isPaused = vpnState == VpnState.PAUSED
+    val isError = vpnState == VpnState.ERROR
+    val shape = RoundedCornerShape(46.dp)
+
+    val glowColor by animateColorAsState(
+        targetValue = when {
+            isConnected -> look.accent
+            isBusy -> look.secondaryAccent
+            isPaused -> look.warning
+            isError -> look.danger
+            else -> Color.Transparent
+        },
+        animationSpec = tween(420),
+        label = "zed_glow"
+    )
+
+    val inf = rememberInfiniteTransition(label = "zed_motion")
+    val shinePhase by inf.animateFloat(
+        initialValue = -0.35f,
+        targetValue = 1.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = if (isBusy) 1300 else 3200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "zed_shine"
+    )
+    val breathe by inf.animateFloat(
+        initialValue = 0.72f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "zed_breathe"
+    )
+
+    val source = remember { MutableInteractionSource() }
+    val glowModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !look.prefs.reduceTransparency) {
+        Modifier.graphicsLayer {
+            renderEffect = RenderEffect.createBlurEffect(36f, 36f, Shader.TileMode.DECAL).asComposeRenderEffect()
+        }
+    } else {
+        Modifier
+    }
+
     Box(
         modifier = modifier
-            .size(188.dp)
-            .liquidGlass(shape = RoundedCornerShape(42.dp), elevated = true)
-            .clickable(onClick = onToggle)
+            .size(216.dp)
+            .glassPress(source, scale = 0.94f)
             .testTag("connect_zed_button"),
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = Icons.Rounded.AutoAwesome,
-                contentDescription = stringResource(R.string.ctrl_toggle_vpn),
-                tint = tint,
-                modifier = Modifier.size(48.dp)
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = stringResource(if (isConnected) R.string.ctrl_protected else R.string.ctrl_tap_shield),
-                style = MaterialTheme.typography.titleMedium,
-                color = look.textPrimary
-            )
+        if (glowColor.alpha > 0f) {
+            Canvas(
+                modifier = Modifier
+                    .size(196.dp)
+                    .then(glowModifier)
+            ) {
+                drawRoundRect(
+                    brush = Brush.linearGradient(
+                        listOf(glowColor.copy(alpha = 0.65f * breathe), look.secondaryAccent.copy(alpha = 0.45f * breathe))
+                    ),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(46.dp.toPx())
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .size(182.dp)
+                .liquidGlass(
+                    shape = shape,
+                    elevated = true,
+                    tintOverride = if (isConnected) look.accent.copy(alpha = 0.18f) else null
+                )
+                .clickable(
+                    interactionSource = source,
+                    indication = null,
+                    role = Role.Button,
+                    onClick = onToggle
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(shape)
+            ) {
+                // Caustic sheen sweep across the glass crest
+                val cx = size.width * shinePhase
+                drawRect(
+                    brush = Brush.linearGradient(
+                        0f to Color.Transparent,
+                        0.42f to Color.Transparent,
+                        0.5f to Color.White.copy(alpha = if (isBusy) 0.34f else 0.16f),
+                        0.58f to Color.Transparent,
+                        1f to Color.Transparent,
+                        start = Offset(cx - size.width * 0.4f, 0f),
+                        end = Offset(cx + size.width * 0.4f, size.height)
+                    )
+                )
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = when {
+                        isPaused -> Icons.Rounded.Pause
+                        isConnected -> Icons.Rounded.Shield
+                        else -> Icons.Rounded.AutoAwesome
+                    },
+                    contentDescription = stringResource(R.string.ctrl_toggle_vpn),
+                    tint = when {
+                        isConnected -> look.accent
+                        isBusy -> look.secondaryAccent
+                        isPaused -> look.warning
+                        isError -> look.danger
+                        else -> look.textPrimary
+                    },
+                    modifier = Modifier.size(48.dp)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = stringResource(
+                        when {
+                            isConnected -> R.string.ctrl_protected
+                            isBusy -> R.string.ctrl_linking
+                            isPaused -> R.string.ctrl_paused
+                            isError -> R.string.ctrl_retry
+                            else -> R.string.ctrl_tap_shield
+                        }
+                    ),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = look.textPrimary
+                )
+            }
         }
     }
 }
@@ -269,13 +395,15 @@ private fun NovaPillButtonControl(
 ) {
     val look = LocalGlassLook.current
     val isConnected = vpnState == VpnState.CONNECTED
+    val source = remember { MutableInteractionSource() }
     val bg = if (isConnected) look.accent.copy(alpha = 0.24f) else look.secondaryAccent.copy(alpha = 0.22f)
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(64.dp)
+            .glassPress(source, scale = 0.97f)
             .liquidGlass(shape = RoundedCornerShape(32.dp), elevated = true, tintOverride = bg)
-            .clickable(onClick = onToggle)
+            .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onToggle)
             .testTag("connect_pill_button"),
         contentAlignment = Alignment.Center
     ) {
@@ -303,21 +431,23 @@ private fun NovaSwitchControl(
 ) {
     val look = LocalGlassLook.current
     val isConnected = vpnState == VpnState.CONNECTED || vpnState == VpnState.CONNECTING || vpnState == VpnState.RECONNECTING
+    val source = remember { MutableInteractionSource() }
     val thumbOffset by animateDpAsState(
         targetValue = if (isConnected) 74.dp else 8.dp,
-        animationSpec = tween(260),
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
         label = "switch_thumb"
     )
     Box(
         modifier = modifier
             .width(148.dp)
             .height(74.dp)
+            .glassPress(source, scale = 0.95f)
             .liquidGlass(
                 shape = RoundedCornerShape(37.dp),
                 elevated = true,
                 tintOverride = if (isConnected) look.accent.copy(alpha = 0.25f) else null
             )
-            .clickable(onClick = onToggle)
+            .clickable(interactionSource = source, indication = null, role = Role.Switch, onClick = onToggle)
             .testTag("connect_switch_button"),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -326,7 +456,8 @@ private fun NovaSwitchControl(
                 .offset(x = thumbOffset)
                 .size(58.dp)
                 .clip(CircleShape)
-                .background(if (isConnected) look.accent else look.textSecondary.copy(alpha = 0.7f)),
+                .background(if (isConnected) look.accent else look.textSecondary.copy(alpha = 0.7f))
+                .glassHighlight(CircleShape, Color.White.copy(alpha = 0.55f), 0.8.dp),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -374,6 +505,7 @@ private fun NovaSlideControl(
                 .size(56.dp)
                 .clip(CircleShape)
                 .background(if (isConnected) look.danger else look.accent)
+                .glassHighlight(CircleShape, Color.White.copy(alpha = 0.55f), 0.8.dp)
                 .pointerInput(isConnected, maxOffsetPx) {
                     detectHorizontalDragGestures(
                         onDragEnd = {

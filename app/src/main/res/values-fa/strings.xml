@@ -98,23 +98,24 @@
     <string name="onb_continue">ادامه</string>
     <string name="onb_finish">شروع استفاده</string>
 
-    <!-- App Lock & Deep Link -->
-    <string name="lock_title">نوا وی‌پی‌ان قفل است</string>
-    <string name="lock_subtitle">پین خود را وارد کنید یا از بیومتریک استفاده کنید</string>
-    <string name="lock_unlock">باز کردن قفل</string>
-    <string name="lock_authenticate">احراز هویت</string>
-    <string name="lock_incorrect_pin">پین اشتباه است (%1$d تلاش باقی‌مانده)</string>
-    <string name="lock_locked_out">تلاش ناموفق بیش از حد. %1$d ثانیه دیگر امتحان کنید.</string>
-    <string name="lock_pin_setup_title">تنظیم پین قفل برنامه (حداقل ۶ رقم)</string>
-    <string name="lock_pin_min_error">حداقل ۶ رقم وارد کنید</string>
-    <string name="lock_enable">فعال‌سازی قفل</string>
+    <!-- Deep Link & Country Picker -->
     <string name="deeplink_import_title">وارد کردن پروفایل اشتراک‌گذاری‌شده؟</string>
     <string name="deeplink_import_body">پروفایل «%1$s» (%2$s · %3$s) از لینک وارد و انتخاب شود؟</string>
     <string name="deeplink_import_confirm">وارد کردن و انتخاب</string>
+    <string name="home_country_picker_title">کشور خروجی</string>
+    <string name="home_country_picker_sub">برای اتصال مستقیم روی پرچم بزنید</string>
+    <string name="home_country_all">همه</string>
+    <string name="home_country_search">جستجوی نام یا کد کشور</string>
+    <string name="home_country_active_route_hint">مسیر به Aether → Psiphon تغییر می‌کند</string>
 
-    <!-- Settings -->
+    <!-- Settings (6 Categories) -->
     <string name="settings_title">تنظیمات</string>
-    <string name="settings_section_tunnel">تونل و شبکه</string>
+    <string name="settings_cat_connection">اتصال</string>
+    <string name="settings_cat_network">شبکه</string>
+    <string name="settings_cat_appearance">ظاهر</string>
+    <string name="settings_cat_privacy">حریم خصوصی</string>
+    <string name="settings_cat_updates">بروزرسانی</string>
+    <string name="settings_cat_about">درباره</string>
     <string name="settings_operation_mode">حالت اجرا</string>
     <string name="settings_mode_vpn">تونل کامل</string>
     <string name="settings_mode_proxy">فقط پروکسی</string>
@@ -126,7 +127,6 @@
     <string name="settings_lan_share_desc">روی 0.0.0.0 با نام کاربری و رمز نشست اجرا می‌شود؛ فقط در وای‌فای مطمئن فعال کنید</string>
     <string name="settings_prefer_last">اولویت با آخرین سرور سالم</string>
     <string name="settings_prefer_last_desc">اتصال سریع‌تر؛ با غیرفعال کردن هر بار اسکن تازه انجام می‌شود</string>
-    <string name="settings_section_reliability">پایداری و اتوماسیون</string>
     <string name="settings_keep_tun_reconnect">محافظت از ترافیک حین اتصال مجدد</string>
     <string name="settings_keep_tun_reconnect_desc">رابط TUN را حین راه‌اندازی مجدد هسته باز نگه می‌دارد تا ترافیک نشت نکند</string>
     <string name="settings_always_on">کیل‌سوئیچ سیستمی (Always-on VPN)</string>
@@ -137,14 +137,8 @@
     <string name="settings_auto_connect">قوانین اتصال خودکار</string>
     <string name="settings_disabled">غیرفعال</string>
     <string name="settings_battery_opt">استثنای بهینه‌سازی باتری</string>
-    <string name="settings_battery_opt_desc">جلوگیری از بسته شدن تونل در پس‌زمینه</string>
-    <string name="settings_section_security">امنیت و حریم خصوصی</string>
-    <string name="settings_app_lock">قفل برنامه (اثرانگشت / رمز)</string>
-    <string name="settings_enabled">فعال</string>
-    <string name="settings_app_lock_desc">محافظت از دسترسی به برنامه</string>
-    <string name="settings_hide_recents">مخفی کردن از برنامه‌های اخیر</string>
-    <string name="settings_hide_recents_desc">محافظت از پیش‌نمایش صفحه در بخش برنامه‌های اخیر</string>
-    <string name="settings_section_glass">ظاهر شیشه‌ای و زبان</string>
+    <string name="settings_battery_exempted">معاف شده · اجرای پس‌زمینه محافظت می‌شود</string>
+    <string name="settings_battery_not_exempted">محدود شده · برای معاف کردن مستقیم Nova لمس کنید</string>
     <string name="settings_theme">تم</string>
     <string name="settings_dark">تیره</string>
     <string name="settings_light">روشن</string>
@@ -161,12 +155,31 @@
     <string name="settings_dynamic_color">رنگ پویا از تصویر زمینه</string>
     <string name="settings_motion_tilt">بازتاب نور با حرکت گوشی</string>
     <string name="settings_reduce_transparency">کاهش شفافیت (عملکرد بالاتر)</string>
-    <string name="settings_section_maintenance">نگهداری و ابزارها</string>
+    <string name="settings_home_speed">کارت سرعت لحظه‌ای در صفحه اصلی</string>
+    <string name="settings_home_timer">زمان‌سنج اتصال در صفحه اصلی</string>
+    <string name="settings_home_card">کارت مسیر و آی‌پی در صفحه اصلی</string>
     <string name="settings_view_logs">مشاهده لاگ‌های سیستم</string>
     <string name="settings_logs_count">%1$d خط ثبت شده</string>
     <string name="settings_backup_restore">پشتیبان‌گیری و بازیابی</string>
     <string name="settings_backup_desc">خروجی یا بازیابی تمام پروفایل‌ها و تنظیمات</string>
     <string name="settings_check_updates">بررسی نسخه جدید</string>
+    <string name="updates_repo_title">انتشارهای گیت‌هاب</string>
+    <string name="updates_repo_sub">github.com/alovemamad/Nova</string>
+    <string name="updates_installed_version">نسخه نصب‌شده: v%1$s</string>
+    <string name="updates_checking">در حال بررسی نسخه جدید در گیت‌هاب…</string>
+    <string name="updates_available">نسخه جدید %1$s منتشر شده است</string>
+    <string name="updates_up_to_date">شما آخرین نسخه را دارید</string>
+    <string name="updates_downloading">در حال دانلود فایل نصب… %1$d%%</string>
+    <string name="updates_download_install">دانلود و نصب (%1$s)</string>
+    <string name="updates_install_now">نصب نسخه دانلودشده</string>
+    <string name="updates_grant_install_perm">اجازه نصب و تلاش مجدد</string>
+    <string name="updates_open_github">باز کردن در گیت‌هاب</string>
+    <string name="updates_check_now">بررسی الان</string>
+    <string name="about_version">نسخه برنامه</string>
+    <string name="about_engines">هسته‌های ارتباطی</string>
+    <string name="about_engines_list">Aether v2.4.0 · sing-box · Psiphon · Tor / lyrebird · hev-socks5-tunnel</string>
+    <string name="about_github">مخزن گیت‌هاب پروژه</string>
+    <string name="about_github_url">https://github.com/alovemamad/Nova</string>
 
     <!-- Common & Dialogs -->
     <string name="common_apply">اعمال</string>
@@ -226,4 +239,11 @@
     <string name="profile_masque_h2">HTTP/2 (TCP)</string>
     <string name="profile_tls_fragment">تکه‌تکه‌سازی TLS (--fragment)</string>
     <string name="profile_tls_fragment_desc">ارسال چندتکه بسته ClientHello در HTTP/2 و درخواست‌های WARP</string>
+    <string name="profiles_new">پروفایل جدید</string>
+    <string name="profiles_edit">ویرایش پروفایل</string>
+    <string name="profiles_section_identity">هویت و مسیر</string>
+    <string name="profiles_section_transport">بستر انتقال و پروتکل</string>
+    <string name="profiles_section_tuning">تنظیمات تونل و پینگ</string>
+    <string name="profiles_section_dns">تنظیمات DNS و بالادستی</string>
+    <string name="profiles_section_rules">قوانین مسیریابی</string>
 </resources>

@@ -183,6 +183,8 @@ data class VpnProfile(
     val name: String,
     val routeChain: RouteChain = RouteChain.SMART_AUTO,
     val aetherProtocol: AetherProtocol = AetherProtocol.MASQUE,
+    val masqueOverH2: Boolean = false,
+    val tlsFragment: Boolean = false,
     val customEndpoint: String = "",
     val scanLevel: Int = 2, // 1 = Fast, 2 = Balanced, 3 = Deep
     val obfuscation: ObfuscationProfile = ObfuscationProfile.AUTO,

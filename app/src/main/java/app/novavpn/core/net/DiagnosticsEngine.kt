@@ -140,11 +140,12 @@ internal object Socks5RemoteDns : Dns {
 class DiagnosticsEngine {
     private val json = Json { ignoreUnknownKeys = true }
 
-    private fun createClient(socksPort: Int?, auth: SessionProxyAuth?): OkHttpClient {
+    private fun createClient(socksPort: Int?, auth: SessionProxyAuth?, timeoutMs: Long = 9_000L): OkHttpClient {
+        val clamped = timeoutMs.coerceIn(3_000L, 45_000L)
         val builder = OkHttpClient.Builder()
-            .connectTimeout(7, TimeUnit.SECONDS)
-            .readTimeout(9, TimeUnit.SECONDS)
-            .writeTimeout(7, TimeUnit.SECONDS)
+            .connectTimeout(clamped, TimeUnit.MILLISECONDS)
+            .readTimeout(clamped, TimeUnit.MILLISECONDS)
+            .writeTimeout(clamped, TimeUnit.MILLISECONDS)
         if (socksPort != null) {
             builder
                 .dns(Socks5RemoteDns)
@@ -155,14 +156,15 @@ class DiagnosticsEngine {
 
     suspend fun verifyRealHttpsConnectivity(
         socksPort: Int?,
-        auth: SessionProxyAuth? = null
+        auth: SessionProxyAuth? = null,
+        timeoutMs: Long = 9_000L
     ): Result<Int> = withContext(Dispatchers.IO) {
         val probeUrls = listOf(
             "https://cp.cloudflare.com/generate_204",
             "https://www.gstatic.com/generate_204"
         )
         var lastError: Throwable? = null
-        val client = createClient(socksPort, auth)
+        val client = createClient(socksPort, auth, timeoutMs)
         for (url in probeUrls) {
             val attempt = app.novavpn.core.runCatchingCancellable {
                 val req = Request.Builder()

@@ -11,9 +11,12 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.net.VpnService
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import app.novavpn.NovaVpnApplication
 import app.novavpn.ServiceLocator
@@ -69,6 +72,8 @@ class NovaVpnService : VpnService() {
     private var reconnectJob: Job? = null
     private var networkDebounceJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -160,6 +165,7 @@ class NovaVpnService : VpnService() {
     override fun onDestroy() {
         unregisterNetworkCallback()
         cancelBackgroundJobs()
+        releaseLocks()
         val fdToClose = tunInterface
         tunInterface = null
         serviceScope.launch(Dispatchers.IO) {
@@ -171,6 +177,39 @@ class NovaVpnService : VpnService() {
             serviceScope.cancel()
         }
         super.onDestroy()
+    }
+
+    private fun acquireLocks() {
+        if (wakeLock?.isHeld != true) {
+            runCatching {
+                val pm = getSystemService(PowerManager::class.java)
+                wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NovaVpn:CoreWakeLock")?.apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        }
+        if (wifiLock?.isHeld != true) {
+            runCatching {
+                val wm = applicationContext.getSystemService(WifiManager::class.java)
+                @Suppress("DEPRECATION")
+                wifiLock = wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "NovaVpn:WifiLock")?.apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        }
+    }
+
+    private fun releaseLocks() {
+        runCatching {
+            wakeLock?.let { if (it.isHeld) it.release() }
+        }
+        wakeLock = null
+        runCatching {
+            wifiLock?.let { if (it.isHeld) it.release() }
+        }
+        wifiLock = null
     }
 
     private fun cancelBackgroundJobs() {
@@ -191,6 +230,7 @@ class NovaVpnService : VpnService() {
             override suspend fun onConnecting() {
                 telemetryJob?.cancel()
                 telemetryJob = null
+                acquireLocks()
                 val settings = settingsRepo.getSettings()
                 val profile = settingsRepo.getActiveProfile()
                 reconnectMachine.updateConfig(settings.preferLastGoodGateway, profile.pingFailureLimit)
@@ -350,8 +390,16 @@ class NovaVpnService : VpnService() {
                         suggestedFix = SuggestedFixAction.NONE
                     )
                 }
+                val isSlowRoute = route in setOf(
+                    RouteChain.PSIPHON_ONLY,
+                    RouteChain.AETHER_PSIPHON,
+                    RouteChain.TOR_ONLY,
+                    RouteChain.AETHER_TOR
+                )
+                val effectivePingLimit = if (isSlowRoute) maxOf(profile.pingFailureLimit, 5) else profile.pingFailureLimit
+                reconnectMachine.updateConfig(settings.preferLastGoodGateway, effectivePingLimit)
                 updateNotification(getString(R.string.status_connected) + " · ${route.name}", isPaused = false)
-                startTelemetryLoop(profile, socksPort, auth)
+                startTelemetryLoop(profile, socksPort, auth, tunEngine, route)
                 LogRepository.i("NovaVpnService", if (resumed) "TUN interface resumed" else "VPN connected via $route ($tunEngine)")
             }
 
@@ -374,6 +422,7 @@ class NovaVpnService : VpnService() {
                 suggestedFix: SuggestedFixAction,
                 stopService: Boolean
             ) {
+                releaseLocks()
                 settingsRepo.setVpnActiveState(false)
                 controller.updateSessionProxyAuth(null)
 
@@ -416,40 +465,128 @@ class NovaVpnService : VpnService() {
         }
     }
 
-    private fun startTelemetryLoop(profile: VpnProfile, socksPort: Int, auth: SessionProxyAuth?) {
+    private fun startTelemetryLoop(
+        profile: VpnProfile,
+        socksPort: Int,
+        auth: SessionProxyAuth?,
+        tunEngine: TunEngineType,
+        resolvedRoute: RouteChain
+    ) {
         telemetryJob?.cancel()
         val controller = ServiceLocator.vpnController
         val diagnostics = ServiceLocator.diagnosticsEngine
+        val isSlowRoute = resolvedRoute in setOf(
+            RouteChain.PSIPHON_ONLY,
+            RouteChain.AETHER_PSIPHON,
+            RouteChain.TOR_ONLY,
+            RouteChain.AETHER_TOR
+        )
+        val probeTimeoutMs = if (isSlowRoute) 25_000L else 9_000L
+        val aliveDataWindowMs = if (isSlowRoute) 20_000L else 5_000L
 
         telemetryJob = serviceScope.launch {
-            var lastRx = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)
-            var lastTx = TrafficStats.getUidTxBytes(Process.myUid()).coerceAtLeast(0L)
-            val startRx = lastRx
-            val startTx = lastTx
+            var lastUidRx = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)
+            var lastUidTx = TrafficStats.getUidTxBytes(Process.myUid()).coerceAtLeast(0L)
+            val startUidRx = lastUidRx
+            val startUidTx = lastUidTx
+
+            var lastHevRx = -1L
+            var lastHevTx = -1L
+            var totalHevDown = 0L
+            var totalHevUp = 0L
+            var stallSince = 0L
+            var stallTicks = 0
+            var lastRecycle = 0L
+            var lastRxAtMs = SystemClock.elapsedRealtime()
             var tick = 0
 
-            // Fetch exit IP asynchronously
+            // Fetch exit IP asynchronously (with retries for slow Psiphon/Tor links)
             launch {
-                val geo = diagnostics.fetchExitIpInfo(socksPort, auth)
-                if (geo != null) {
-                    controller.updateRuntimeStatus {
-                        it.copy(exitIp = geo.ip, exitCountryCode = geo.countryCode, exitCity = geo.city)
+                val maxAttempts = if (isSlowRoute) 3 else 1
+                for (attempt in 1..maxAttempts) {
+                    val geo = diagnostics.fetchExitIpInfo(socksPort, auth)
+                    if (geo != null) {
+                        controller.updateRuntimeStatus {
+                            it.copy(exitIp = geo.ip, exitCountryCode = geo.countryCode, exitCity = geo.city)
+                        }
+                        break
                     }
+                    if (attempt < maxAttempts) delay(3_000L)
                 }
             }
 
             while (isActive && !coordinator.isPaused && !coordinator.isUserStopping) {
                 delay(1000)
                 tick++
-                val nowRx = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)
-                val nowTx = TrafficStats.getUidTxBytes(Process.myUid()).coerceAtLeast(0L)
-                val downBps = (nowRx - lastRx).coerceAtLeast(0L)
-                val upBps = (nowTx - lastTx).coerceAtLeast(0L)
-                lastRx = nowRx
-                lastTx = nowTx
+                val now = SystemClock.elapsedRealtime()
 
-                val totalDown = (nowRx - startRx).coerceAtLeast(0L)
-                val totalUp = (nowTx - startTx).coerceAtLeast(0L)
+                val hevStats = if (tunEngine == TunEngineType.HEV_SOCKS5_TUNNEL) {
+                    tunManager.getHevStats()?.takeIf { it.size >= 4 }
+                } else null
+
+                val downBps: Long
+                val upBps: Long
+                val totalDown: Long
+                val totalUp: Long
+
+                if (hevStats != null) {
+                    val rawTx = hevStats[1].coerceAtLeast(0L)
+                    val rawRx = hevStats[3].coerceAtLeast(0L)
+                    if (lastHevTx < 0L || rawTx < lastHevTx || rawRx < lastHevRx) {
+                        lastHevTx = rawTx
+                        lastHevRx = rawRx
+                    }
+                    upBps = (rawTx - lastHevTx).coerceAtLeast(0L)
+                    downBps = (rawRx - lastHevRx).coerceAtLeast(0L)
+                    lastHevTx = rawTx
+                    lastHevRx = rawRx
+                    totalHevDown += downBps
+                    totalHevUp += upBps
+                    totalDown = totalHevDown
+                    totalUp = totalHevUp
+
+                    if (downBps > 0L) {
+                        lastRxAtMs = now
+                        stallSince = 0L
+                        stallTicks = 0
+                    } else if (upBps > 0L && coordinator.state == VpnState.CONNECTED) {
+                        if (stallSince == 0L) stallSince = now
+                        stallTicks++
+                    }
+
+                    // Hot-recycle stuck hev-socks5-tunnel after 20s TX-without-RX while keeping core alive
+                    if (stallSince != 0L &&
+                        now - stallSince >= 20_000L &&
+                        stallTicks >= 8 &&
+                        now - lastRecycle >= 60_000L
+                    ) {
+                        val fd = tunInterface?.fd ?: -1
+                        if (fd >= 0) {
+                            LogRepository.w(
+                                "NovaVpnService",
+                                "TUN data stall (${(now - stallSince) / 1000}s TX with 0 RX); hot-recycling hev-socks5-tunnel"
+                            )
+                            lastRecycle = now
+                            stallSince = 0L
+                            stallTicks = 0
+                            if (tunManager.recycleHevIfActive(fd)) {
+                                lastHevTx = -1L
+                                lastHevRx = -1L
+                            }
+                        }
+                    }
+                } else {
+                    val nowRx = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)
+                    val nowTx = TrafficStats.getUidTxBytes(Process.myUid()).coerceAtLeast(0L)
+                    downBps = (nowRx - lastUidRx).coerceAtLeast(0L)
+                    upBps = (nowTx - lastUidTx).coerceAtLeast(0L)
+                    lastUidRx = nowRx
+                    lastUidTx = nowTx
+                    totalDown = (nowRx - startUidRx).coerceAtLeast(0L)
+                    totalUp = (nowTx - startUidTx).coerceAtLeast(0L)
+                    if (downBps > 0L) lastRxAtMs = now
+                }
+
                 val uptime = if (sessionStartMs > 0L) (System.currentTimeMillis() - sessionStartMs) / 1000L else 0L
 
                 controller.pushSpeedSample(downBps, upBps)
@@ -468,11 +605,22 @@ class NovaVpnService : VpnService() {
                     updateNotification(speedSummary, isPaused = false)
                 }
 
-                if (tick % profile.pingIntervalSec.coerceIn(5, 120) == 0) {
-                    val result = diagnostics.verifyRealHttpsConnectivity(socksPort, auth)
+                val effectiveInterval = if (isSlowRoute) {
+                    maxOf(profile.pingIntervalSec, 15).coerceIn(5, 120)
+                } else {
+                    profile.pingIntervalSec.coerceIn(5, 120)
+                }
+                if (tick % effectiveInterval == 0) {
+                    val result = diagnostics.verifyRealHttpsConnectivity(socksPort, auth, probeTimeoutMs)
+                    val nowAfterProbe = SystemClock.elapsedRealtime()
+                    val recentData = downBps > 0L || (nowAfterProbe - lastRxAtMs < aliveDataWindowMs)
                     if (result.isSuccess) {
                         reconnectMachine.onPingSucceeded()
                         controller.updateRuntimeStatus { it.copy(pingMs = result.getOrNull()) }
+                    } else if (recentData) {
+                        // Active tunnel traffic is flowing; probe timeout is likely link saturation rather than a dead tunnel
+                        reconnectMachine.onPingSucceeded()
+                        controller.updateRuntimeStatus { it.copy(pingMs = null) }
                     } else {
                         val decision = reconnectMachine.onPingFailed()
                         if (decision.action != ReconnectActionType.NONE) {

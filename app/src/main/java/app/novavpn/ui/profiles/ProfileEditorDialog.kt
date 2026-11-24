@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.novavpn.domain.model.AetherProtocol
 import app.novavpn.domain.model.DnsMode
@@ -38,6 +39,7 @@ import app.novavpn.domain.routing.RoutingRuleParser
 import app.novavpn.domain.validation.InputValidators
 import app.novavpn.domain.validation.ValidationResult
 import app.novavpn.ui.theme.tr
+import com.example.R
 import java.util.UUID
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -51,6 +53,8 @@ fun ProfileEditorDialog(
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var routeChain by remember { mutableStateOf(initial?.routeChain ?: RouteChain.SMART_AUTO) }
     var protocol by remember { mutableStateOf(initial?.aetherProtocol ?: AetherProtocol.MASQUE) }
+    var masqueOverH2 by remember { mutableStateOf(initial?.masqueOverH2 ?: false) }
+    var tlsFragment by remember { mutableStateOf(initial?.tlsFragment ?: false) }
     var obfuscation by remember { mutableStateOf(initial?.obfuscation ?: ObfuscationProfile.AUTO) }
     var endpoint by remember { mutableStateOf(initial?.customEndpoint ?: "") }
     var scanLevel by remember { mutableIntStateOf(initial?.scanLevel ?: 2) }
@@ -113,6 +117,45 @@ fun ProfileEditorDialog(
                             label = { Text(p.name.replace("_", "-")) }
                         )
                     }
+                }
+
+                val supportsMasqueCarrier = protocol == AetherProtocol.MASQUE ||
+                    protocol == AetherProtocol.WARP_IN_MASQUE ||
+                    protocol == AetherProtocol.MASQUE_IN_MASQUE
+                if (supportsMasqueCarrier) {
+                    Text(stringResource(R.string.profile_masque_carrier), style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !masqueOverH2,
+                            onClick = { masqueOverH2 = false },
+                            label = { Text(stringResource(R.string.profile_masque_h3)) }
+                        )
+                        FilterChip(
+                            selected = masqueOverH2,
+                            onClick = { masqueOverH2 = true },
+                            label = { Text(stringResource(R.string.profile_masque_h2)) }
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text(stringResource(R.string.profile_tls_fragment), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            stringResource(R.string.profile_tls_fragment_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = tlsFragment,
+                        onCheckedChange = { tlsFragment = it },
+                        modifier = Modifier.testTag("profile_tls_fragment_switch")
+                    )
                 }
 
                 Text(tr("Obfuscation", "مبهم‌سازی"), style = MaterialTheme.typography.labelLarge)
@@ -338,6 +381,8 @@ fun ProfileEditorDialog(
                             name = cleanName,
                             routeChain = routeChain,
                             aetherProtocol = protocol,
+                            masqueOverH2 = masqueOverH2,
+                            tlsFragment = tlsFragment,
                             customEndpoint = endpoint.trim(),
                             scanLevel = scanLevel,
                             obfuscation = obfuscation,

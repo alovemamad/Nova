@@ -37,10 +37,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -49,6 +51,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.novavpn.core.net.LanShareHelper
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.DropReason
 import app.novavpn.domain.model.SuggestedFixAction
@@ -270,6 +273,10 @@ fun HomeScreen(
             item {
                 val bindHost = if (status.lanShareActive) "0.0.0.0" else "127.0.0.1"
                 val httpPart = status.httpPort?.let { " · HTTP :$it" } ?: ""
+                val lanAddresses = remember(status.state, status.lanShareActive, status.socksPort) {
+                    if (status.lanShareActive) LanShareHelper.addresses() else emptyList()
+                }
+                val primaryLanIp = lanAddresses.firstOrNull()?.ip ?: bindHost
                 val cardTitle = if (hasCreds) {
                     stringResource(R.string.home_proxy_creds_title)
                 } else {
@@ -306,7 +313,7 @@ fun HomeScreen(
                 val clipValue = if (hasCreds) {
                     "$user:$pass"
                 } else {
-                    "$bindHost:${status.socksPort}" + (status.httpPort?.let { " / $bindHost:$it" } ?: "")
+                    "$primaryLanIp:${status.socksPort}" + (status.httpPort?.let { " / $primaryLanIp:$it" } ?: "")
                 }
 
                 GlassCard(
@@ -345,6 +352,57 @@ fun HomeScreen(
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
                             color = look.textSecondary
                         )
+                        if (status.lanShareActive) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            if (lanAddresses.isNotEmpty()) {
+                                Text(
+                                    text = stringResource(R.string.home_lan_share_reachable),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = look.accent
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                lanAddresses.forEach { addr ->
+                                    val label = when {
+                                        LanShareHelper.isHotspotOrWifi(addr.iface) -> stringResource(R.string.home_lan_wifi_hotspot)
+                                        LanShareHelper.isUsbOrEthernet(addr.iface) -> stringResource(R.string.home_lan_usb_eth)
+                                        else -> addr.iface
+                                    }
+                                    val httpSuffix = status.httpPort?.let { " / :$it" } ?: ""
+                                    val endpointLine = "$label: ${addr.ip}:${status.socksPort}$httpSuffix"
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                cm?.setPrimaryClip(ClipData.newPlainText("Nova LAN Proxy", "${addr.ip}:${status.socksPort}"))
+                                                onPostMessage(copiedMsg)
+                                            }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = fmtDigits(endpointLine),
+                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
+                                            color = look.textPrimary
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Rounded.ContentCopy,
+                                            contentDescription = copyLabel,
+                                            tint = look.textMuted,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                val hints = LanShareHelper.fallbackHints.joinToString(" · ") { "${it.ip}:${status.socksPort}" }
+                                Text(
+                                    text = fmtDigits("${stringResource(R.string.home_lan_share_hint)} $hints"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = look.textMuted
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -95,7 +95,8 @@ class AetherCommandBuilderTest {
             settings = settings,
             resolvedRoute = RouteChain.AETHER_PSIPHON,
             useFreshScan = true,
-            sessionAuth = null
+            sessionAuth = null,
+            nonVpnDnsServers = listOf("192.168.1.1", "8.8.8.8")
         ).getOrThrow()
 
         val stage = plan.stages.single()
@@ -107,13 +108,21 @@ class AetherCommandBuilderTest {
         assertTrue(args.containsAll(listOf("--psiphon-bind", "127.0.0.1:10808")))
         assertTrue(args.containsAll(listOf("--psiphon-http", "127.0.0.1:10809")))
         assertTrue(args.containsAll(listOf("--psiphon-region", "DE")))
+        assertTrue(args.containsAll(listOf("--psiphon-mode", "auto")))
+        val psiConfigIdx = args.indexOf("--psiphon-config")
+        assertTrue(psiConfigIdx >= 0)
+        val psiConfigFile = java.io.File(args[psiConfigIdx + 1])
+        assertTrue(psiConfigFile.exists())
+        val psiJson = psiConfigFile.readText()
+        assertTrue(psiJson.contains("192.168.1.1"))
+        assertTrue(psiJson.contains("1.1.1.1"))
         assertTrue(args.contains("--no-quick-reconnect"))
         assertFalse(stage.readinessMatcher!!.invoke("[+] socks5 server listening on 127.0.0.1:10828"))
         assertTrue(stage.readinessMatcher.invoke("[+] psiphon is ready; socks=127.0.0.1:10808"))
     }
 
     @Test
-    fun `TOR_ONLY and AETHER_TOR require libaether_so and liblyrebird_so and wire PT flags`() {
+    fun `TOR_ONLY and AETHER_TOR require libaether_so and liblyrebird_so and wire PT flags and tor-bridge-file`() {
         val nativeDir = tempFolder.newFolder("jni_tor")
         val workDir = tempFolder.newFolder("work_tor")
         val bridgeLine = "obfs4 192.0.2.1:443 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA cert=abc iat-mode=0"
@@ -142,7 +151,9 @@ class AetherCommandBuilderTest {
         assertTrue(stage.args.contains("--tor"))
         assertTrue(stage.args.containsAll(listOf("--tor-bind", "127.0.0.1:24808")))
         assertTrue(stage.args.containsAll(listOf("--tor-pt", "obfs4=${nativeDir.absolutePath}/liblyrebird.so")))
-        assertTrue(stage.args.containsAll(listOf("--tor-bridge", bridgeLine)))
+        val bridgeFileIdx = stage.args.indexOf("--tor-bridge-file")
+        assertTrue(bridgeFileIdx >= 0)
+        assertTrue(java.io.File(stage.args[bridgeFileIdx + 1]).readText().contains(bridgeLine))
         assertFalse(stage.readinessMatcher!!.invoke("[+] socks5 server listening on 127.0.0.1:24828"))
         assertTrue(stage.readinessMatcher.invoke("[+] tor is ready; socks=127.0.0.1:24808"))
 
@@ -159,6 +170,42 @@ class AetherCommandBuilderTest {
         assertEquals(setOf("libaether.so", "liblyrebird.so"), torOnlyStage.preflightBinaries.map { it.name }.toSet())
         assertTrue(torOnlyStage.args.contains("--tor-only"))
         assertTrue(torOnlyStage.args.containsAll(listOf("--bind", "127.0.0.1:24808")))
+    }
+
+    @Test
+    fun `emits h2, h2-peer, fragment, and extracts NAME=VALUE tokens into envVars`() {
+        val nativeDir = tempFolder.newFolder("jni_h2")
+        val workDir = tempFolder.newFolder("work_h2")
+        val profile = VpnProfile(
+            id = "h2",
+            name = "MASQUE H2",
+            routeChain = RouteChain.AETHER,
+            aetherProtocol = AetherProtocol.MASQUE,
+            masqueOverH2 = true,
+            tlsFragment = true,
+            customEndpoint = "162.159.198.1:443",
+            extraCoreArgs = "AETHER_CUSTOM_TEST=42 --no-quic-v2"
+        )
+        val plan = AetherCommandBuilder.build(
+            nativeDir = nativeDir,
+            workDir = workDir,
+            profile = profile,
+            settings = AppSettings(),
+            resolvedRoute = RouteChain.AETHER,
+            useFreshScan = false
+        ).getOrThrow()
+
+        val stage = plan.stages.single()
+        assertTrue(stage.args.contains("--h2"))
+        assertFalse(stage.args.contains("--h3"))
+        assertTrue(stage.args.contains("--fragment"))
+        assertTrue(stage.args.containsAll(listOf("--peer", "162.159.198.1:443")))
+        assertTrue(stage.args.containsAll(listOf("--h2-peer", "162.159.198.1:443")))
+        assertTrue(stage.args.contains("--no-quic-v2"))
+        assertFalse(stage.args.contains("AETHER_CUSTOM_TEST=42"))
+        assertEquals("42", stage.envVars["AETHER_CUSTOM_TEST"])
+        assertEquals("info", stage.envVars["AETHER_LOG_LEVEL"])
+        assertTrue(stage.envVars["AETHER_TOR_PT"]!!.contains("liblyrebird.so"))
     }
 
     @Test

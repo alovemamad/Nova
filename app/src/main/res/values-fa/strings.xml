@@ -215,4 +215,15 @@
     <string name="stats_latency">تاخیر سرورها</string>
     <string name="stats_timeout">تایم‌اوت</string>
     <string name="stats_fix_conn">اصلاح خودکار اتصال (تنظیمات امن)</string>
+
+    <!-- LAN Share & Protocol Options -->
+    <string name="home_lan_share_reachable">آدرس‌های قابل دسترس در شبکه محلی</string>
+    <string name="home_lan_share_hint">هات‌اسپات وای‌فای یا اشتراک USB را روشن کنید؛ آی‌پی متداول:</string>
+    <string name="home_lan_wifi_hotspot">وای‌فای / هات‌اسپات</string>
+    <string name="home_lan_usb_eth">یواس‌بی / اترنت</string>
+    <string name="profile_masque_carrier">بستر انتقال MASQUE</string>
+    <string name="profile_masque_h3">HTTP/3 (QUIC)</string>
+    <string name="profile_masque_h2">HTTP/2 (TCP)</string>
+    <string name="profile_tls_fragment">تکه‌تکه‌سازی TLS (--fragment)</string>
+    <string name="profile_tls_fragment_desc">ارسال چندتکه بسته ClientHello در HTTP/2 و درخواست‌های WARP</string>
 </resources>

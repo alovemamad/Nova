@@ -33,11 +33,13 @@ class InputValidatorsTest {
     }
 
     @Test
-    fun `validateTorBridgeLine validates obfs4 and webtunnel`() {
+    fun `validateTorBridgeLine validates obfs4, webtunnel, and plain relay endpoints`() {
         val validObfs4 = "obfs4 192.0.2.1:443 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA cert=abc123== iat-mode=0"
         val validWebtunnel = "Bridge webtunnel 198.51.100.2:443 BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB url=https://example.org/tunnel"
         assertTrue(InputValidators.validateTorBridgeLine(validObfs4).isValid)
         assertTrue(InputValidators.validateTorBridgeLine(validWebtunnel).isValid)
+        assertTrue(InputValidators.validateTorBridgeLine("192.0.2.1:9001").isValid)
+        assertTrue(InputValidators.validateTorBridgeLine("Bridge 192.0.2.1:9001 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").isValid)
         assertFalse(InputValidators.validateTorBridgeLine("obfs4 192.0.2.1:443 SHORT cert=abc").isValid)
         assertFalse(InputValidators.validateTorBridgeLine("webtunnel 198.51.100.2:443 BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB").isValid)
     }
@@ -53,12 +55,14 @@ class InputValidatorsTest {
     }
 
     @Test
-    fun `redactSensitiveForLog masks credentials, certs, and third-party IPs`() {
-        val raw = "Connecting cert=SECRETKEY123== via socks5://alice:s3cr3t@198.51.100.42:1080 and 127.0.0.1"
+    fun `redactSensitiveForLog strips ANSI escapes and masks credentials, certs, and third-party IPs`() {
+        val raw = "\u001B[32m[+] Connecting\u001B[0m cert=SECRETKEY123== via socks5://alice:s3cr3t@198.51.100.42:1080 and 127.0.0.1"
         val redacted = InputValidators.redactSensitiveForLog(raw)
+        assertFalse(redacted.contains("\u001B"))
         assertFalse(redacted.contains("SECRETKEY123"))
         assertFalse(redacted.contains("alice:s3cr3t"))
         assertFalse(redacted.contains("100.42"))
+        assertTrue(redacted.contains("[+] Connecting"))
         assertTrue(redacted.contains("cert=[REDACTED]"))
         assertTrue(redacted.contains("198.51.x.x"))
         assertTrue(redacted.contains("127.0.0.1"))

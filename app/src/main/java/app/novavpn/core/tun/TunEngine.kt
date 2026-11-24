@@ -147,6 +147,21 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
                     put("protocol", "dns")
                     put("action", "hijack-dns")
                 })
+                // Reject QUIC (UDP 443) immediately so apps fall back to TCP fast instead of stalling
+                add(buildJsonObject {
+                    put("network", "udp")
+                    put("port", 443)
+                    put("action", "reject")
+                })
+                // Tor routes carry TCP only; reject all other UDP immediately
+                if (profile.routeChain == app.novavpn.domain.model.RouteChain.TOR_ONLY ||
+                    profile.routeChain == app.novavpn.domain.model.RouteChain.AETHER_TOR
+                ) {
+                    add(buildJsonObject {
+                        put("network", "udp")
+                        put("action", "reject")
+                    })
+                }
 
                 if (blockRules.isNotEmpty()) {
                     addRuleGroup(blockRules, action = "reject", outbound = null)
@@ -301,6 +316,12 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
     @Volatile
     private var usingJni = false
 
+    @Volatile
+    private var lastConfPath: String? = null
+
+    @Volatile
+    private var cachedClass: Class<*>? = null
+
     override suspend fun start(
         tunFd: Int,
         socksHost: String,
@@ -313,9 +334,10 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
             parentFile?.mkdirs()
             writeText(buildHevYaml(socksHost, socksPort, auth, profile))
         }
+        lastConfPath = confFile.absolutePath
 
         val clazz = try {
-            Class.forName(HevCoreAdapter.JNI_CLASS_NAME)
+            Class.forName(HevCoreAdapter.JNI_CLASS_NAME).also { cachedClass = it }
         } catch (e: ClassNotFoundException) {
             throw TunEngineException("hev-socks5-tunnel JNI wrapper (${HevCoreAdapter.JNI_CLASS_NAME}) is not bundled", e)
         }
@@ -341,10 +363,36 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
         if (!usingJni) return@withContext
         usingJni = false
         runCatching {
-            val clazz = Class.forName(HevCoreAdapter.JNI_CLASS_NAME)
+            val clazz = cachedClass ?: Class.forName(HevCoreAdapter.JNI_CLASS_NAME)
             clazz.getMethod("TProxyStopService").invoke(null)
         }
         LogRepository.i("HevTun", "hev-socks5-tunnel stopped")
+    }
+
+    fun getStats(): LongArray? {
+        if (!usingJni) return null
+        return runCatching {
+            val clazz = cachedClass ?: Class.forName(HevCoreAdapter.JNI_CLASS_NAME).also { cachedClass = it }
+            clazz.getMethod("TProxyGetStats").invoke(null) as? LongArray
+        }.getOrNull()
+    }
+
+    suspend fun recycle(tunFd: Int): Boolean = withContext(Dispatchers.IO) {
+        val confPath = lastConfPath ?: return@withContext false
+        if (!usingJni || tunFd < 0) return@withContext false
+        val clazz = runCatching { cachedClass ?: Class.forName(HevCoreAdapter.JNI_CLASS_NAME) }.getOrNull()
+            ?: return@withContext false
+
+        runCatching { clazz.getMethod("TProxyStopService").invoke(null) }
+        kotlinx.coroutines.delay(300L)
+        val ok = runCatching {
+            val startMethod = clazz.getMethod("TProxyStartService", String::class.java, Int::class.javaPrimitiveType)
+            val res = startMethod.invoke(null, confPath, tunFd)
+            if (res is Boolean) res else true
+        }.getOrDefault(false)
+        usingJni = ok
+        LogRepository.i("HevTun", if (ok) "hev-socks5-tunnel hot-recycled on fd=$tunFd" else "hev-socks5-tunnel recycle failed")
+        ok
     }
 
     companion object {
@@ -354,6 +402,12 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
             auth: SessionProxyAuth?,
             profile: VpnProfile
         ): String = buildString {
+            val isSlowRoute = profile.routeChain in setOf(
+                app.novavpn.domain.model.RouteChain.PSIPHON_ONLY,
+                app.novavpn.domain.model.RouteChain.AETHER_PSIPHON,
+                app.novavpn.domain.model.RouteChain.TOR_ONLY,
+                app.novavpn.domain.model.RouteChain.AETHER_TOR
+            )
             appendLine("tunnel:")
             appendLine("  mtu: ${profile.mtu}")
             appendLine("  ipv4: 10.10.0.1")
@@ -371,13 +425,18 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
             appendLine("mapdns:")
             appendLine("  address: 10.10.0.2")
             appendLine("  port: 53")
-            appendLine("  network: 240.0.0.0")
-            appendLine("  netmask: 240.0.0.0")
+            // RFC 6598 CGNAT range avoids Class-E (240/4) rejection in Android/OkHttp/Chromium stacks
+            appendLine("  network: 100.64.0.0")
+            appendLine("  netmask: 255.192.0.0")
             appendLine("  cache-size: 10000")
             appendLine("misc:")
             appendLine("  task-stack-size: ${profile.tcpBufferKb * 1024}")
-            appendLine("  connect-timeout: 5000")
+            appendLine("  tcp-buffer-size: ${profile.tcpBufferKb * 1024}")
+            appendLine("  connect-timeout: ${if (isSlowRoute) 30000 else 15000}")
             appendLine("  read-write-timeout: 60000")
+            appendLine("  tcp-read-write-timeout: 300000")
+            appendLine("  udp-read-write-timeout: 60000")
+            appendLine("  max-session-count: ${if (isSlowRoute) 1024 else 0}")
             appendLine("  log-level: warn")
         }
     }
@@ -389,6 +448,15 @@ class TunEngineManager(private val context: Context) {
 
     @Volatile
     private var activeEngine: TunEngine? = null
+
+    val activeEngineType: TunEngineType
+        get() = activeEngine?.type ?: TunEngineType.NONE
+
+    fun getHevStats(): LongArray? = if (activeEngine === hev) hev.getStats() else null
+
+    suspend fun recycleHevIfActive(tunFd: Int): Boolean {
+        return if (activeEngine === hev) hev.recycle(tunFd) else false
+    }
 
     suspend fun startTun(
         tunInterface: ParcelFileDescriptor,

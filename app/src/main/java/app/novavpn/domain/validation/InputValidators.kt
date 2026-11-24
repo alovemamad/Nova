@@ -138,12 +138,22 @@ object InputValidators {
     }
 
     fun validateTorBridgeLine(raw: String): ValidationResult {
-        val trimmed = raw.trim().removePrefix("Bridge ").trim()
+        val trimmed = raw.trim()
+            .removePrefix("Bridge ")
+            .removePrefix("bridge ")
+            .trim()
         if (trimmed.isEmpty()) return ValidationResult.Invalid("Bridge line is empty")
         if (SHELL_META_REGEX.containsMatchIn(trimmed)) {
             return ValidationResult.Invalid("Bridge line contains forbidden shell characters")
         }
         val parts = trimmed.split(Regex("""\s+"""))
+        // Support plain ip:port relays or ip:port + 40-hex fingerprint
+        if (parts.size <= 2 && validateEndpoint(parts[0], allowEmpty = false).isValid) {
+            if (parts.size == 2 && !HEX_40_REGEX.matches(parts[1])) {
+                return ValidationResult.Invalid("Bridge fingerprint must be 40 hex characters")
+            }
+            return ValidationResult.Valid
+        }
         if (parts.size < 3) return ValidationResult.Invalid("Incomplete bridge line")
         val transport = parts[0].lowercase()
         if (transport !in setOf("obfs4", "webtunnel", "snowflake", "meek_lite")) {
@@ -244,11 +254,13 @@ object InputValidators {
         }
     }
 
+    private val ANSI_ESCAPE_REGEX = Regex("""\u001B\[[0-9;]*[A-Za-z]""")
+
     /**
-     * Redacts sensitive bridge certs, proxy credentials, and third-party IPs before storing in logs.
+     * Strips ANSI color codes and redacts sensitive bridge certs, proxy credentials, and third-party IPs before storing in logs.
      */
     fun redactSensitiveForLog(raw: String): String {
-        var sanitized = raw
+        var sanitized = ANSI_ESCAPE_REGEX.replace(raw, "")
         // Redact obfs4 cert= and webtunnel url=
         sanitized = sanitized.replace(Regex("""cert=[A-Za-z0-9+/=]+"""), "cert=[REDACTED]")
         sanitized = sanitized.replace(Regex("""url=https?://\S+"""), "url=[REDACTED]")

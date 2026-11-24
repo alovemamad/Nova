@@ -24,18 +24,18 @@ interface CoreAdapter {
  * - `--bind <host:port>` SOCKS5 listen address (no auth; loopback by default)
  * - `--http-proxy <host:port>` optional HTTP CONNECT listen address
  * - `--masque` | `--wg` | `--gool` | `--gool --gool-classic` | `--mim`
- * - `--h3` (default QUIC/HTTP3) or `--h2` (overridable via extra args)
+ * - `--h3` (QUIC/HTTP3) or `--h2` (HTTP/2 over TCP) + `--fragment` (TLS ClientHello fragmentation)
  * - `--noize <off|light|firewall|balanced|gfw|aggressive>`
- * - `--peer <ip:port>` / `--wg-peer <ip:port>` / `--wiw-outer <ip:port>` / `--mim-outer <ip:port>`
+ * - `--peer <ip:port>` / `--h2-peer <ip:port>` / `--wg-peer <ip:port>` / `--wiw-outer <ip:port>` / `--mim-outer <ip:port>`
  * - `--turbo` | `--balanced` | `--thorough`
  * - `--quick-reconnect` | `--no-quick-reconnect`
  * - `-4` | `-6` | `--dual`
  * - `--dns <ip[,ip]>` (inside-tunnel plain resolvers when plain IP DNS is configured)
  * - `--upstream <uri>`
  * - `--route-direct <comma-separated>` / `--route-block <comma-separated>`
- * - Built-in Psiphon orchestration: `--psiphon` / `--psiphon-only` with `--psiphon-bin`, `--psiphon-dir`, `--psiphon-bind`, `--psiphon-http`, `--psiphon-region`
- * - Built-in Arti Tor orchestration: `--tor` / `--tor-only` with `--tor-dir`, `--tor-bind`, `--tor-http`, `--tor-pt <proto=path>`, `--tor-bridge` / `--tor-bridges`
- * - Env: `AETHER_MASQUE_MTU=<576..1500>`
+ * - Built-in Psiphon orchestration: `--psiphon` / `--psiphon-only` with `--psiphon-bin`, `--psiphon-dir`, `--psiphon-bind`, `--psiphon-http`, `--psiphon-region`, `--psiphon-mode`, `--psiphon-config`
+ * - Built-in Arti Tor orchestration: `--tor` / `--tor-only` with `--tor-dir`, `--tor-bind`, `--tor-http`, `--tor-pt <proto=path>`, `--tor-bridge-file <path>` / `--tor-bridges`
+ * - Env: `AETHER_MASQUE_MTU=<576..1500>`, `AETHER_LOG_LEVEL`, `AETHER_TOR_PT`
  */
 object AetherCoreAdapter : CoreAdapter {
     override val id: String = "aether"
@@ -55,8 +55,11 @@ object AetherCoreAdapter : CoreAdapter {
         extraArgs: List<String>,
         routeChain: RouteChain,
         chainExitSocksBind: String? = null,
-        chainExitHttpBind: String? = null
+        chainExitHttpBind: String? = null,
+        nonVpnDnsServers: List<String> = emptyList(),
+        psiphonSlot: Int = 0
     ): List<String> {
+        workDir.mkdirs()
         val bin = File(nativeDir, "libaether.so").absolutePath
         val configPath = File(workDir, "aether.toml").absolutePath
         val args = mutableListOf(bin, "--config", configPath)
@@ -71,7 +74,10 @@ object AetherCoreAdapter : CoreAdapter {
                     workDir = workDir,
                     profile = profile,
                     bindOverride = null,
-                    httpBind = httpBindAddress
+                    httpBind = httpBindAddress,
+                    extraArgs = extraArgs,
+                    nonVpnDnsServers = nonVpnDnsServers,
+                    psiphonSlot = psiphonSlot
                 )
                 appendUpstream(args, profile)
                 args.addAll(extraArgs)
@@ -110,7 +116,10 @@ object AetherCoreAdapter : CoreAdapter {
                     workDir = workDir,
                     profile = profile,
                     bindOverride = chainExitSocksBind,
-                    httpBind = chainExitHttpBind
+                    httpBind = chainExitHttpBind,
+                    extraArgs = extraArgs,
+                    nonVpnDnsServers = nonVpnDnsServers,
+                    psiphonSlot = psiphonSlot
                 )
             }
 
@@ -128,16 +137,19 @@ object AetherCoreAdapter : CoreAdapter {
             }
         }
 
+        val hasExplicitCarrierArg = extraArgs.any { it == "--h2" || it == "--h3" }
+        val useH2 = profile.masqueOverH2 || extraArgs.contains("--h2")
+
         // Core WARP/MASQUE transport selection (explicit so interactive prompts never trigger)
         when (profile.aetherProtocol) {
             AetherProtocol.MASQUE -> {
                 args.add("--masque")
-                args.add("--h3")
+                if (!hasExplicitCarrierArg) args.add(if (useH2) "--h2" else "--h3")
             }
             AetherProtocol.WIREGUARD -> args.add("--wg")
             AetherProtocol.WARP_IN_MASQUE -> {
                 args.add("--gool")
-                args.add("--h3")
+                if (!hasExplicitCarrierArg) args.add(if (useH2) "--h2" else "--h3")
             }
             AetherProtocol.WARP_IN_WARP -> {
                 args.add("--gool")
@@ -145,8 +157,12 @@ object AetherCoreAdapter : CoreAdapter {
             }
             AetherProtocol.MASQUE_IN_MASQUE -> {
                 args.add("--mim")
-                args.add("--h3")
+                if (!hasExplicitCarrierArg) args.add(if (useH2) "--h2" else "--h3")
             }
+        }
+
+        if (profile.tlsFragment && !extraArgs.contains("--fragment")) {
+            args.add("--fragment")
         }
 
         val noizeFlag = when (profile.obfuscation) {
@@ -164,7 +180,11 @@ object AetherCoreAdapter : CoreAdapter {
                 AetherProtocol.WIREGUARD -> args.addAll(listOf("--wg-peer", explicitEndpoint))
                 AetherProtocol.WARP_IN_WARP -> args.addAll(listOf("--wiw-outer", explicitEndpoint))
                 AetherProtocol.MASQUE_IN_MASQUE -> args.addAll(listOf("--mim-outer", explicitEndpoint))
-                AetherProtocol.MASQUE, AetherProtocol.WARP_IN_MASQUE -> args.addAll(listOf("--peer", explicitEndpoint))
+                AetherProtocol.MASQUE -> {
+                    args.addAll(listOf("--peer", explicitEndpoint))
+                    if (useH2) args.addAll(listOf("--h2-peer", explicitEndpoint))
+                }
+                AetherProtocol.WARP_IN_MASQUE -> args.addAll(listOf("--peer", explicitEndpoint))
             }
         } else if (!useFreshScan && settings.preferLastGoodGateway) {
             args.add("--quick-reconnect")
@@ -222,10 +242,15 @@ object AetherCoreAdapter : CoreAdapter {
         workDir: File,
         profile: VpnProfile,
         bindOverride: String?,
-        httpBind: String?
+        httpBind: String?,
+        extraArgs: List<String>,
+        nonVpnDnsServers: List<String>,
+        psiphonSlot: Int
     ) {
         val psiphonBin = File(nativeDir, "libpsiphon.so").absolutePath
-        val psiphonDir = File(workDir, "psiphon_state").apply { mkdirs() }.absolutePath
+        val dirName = if (psiphonSlot <= 0) "psiphon_state" else "psiphon_state-$psiphonSlot"
+        cleanStalePsiphonDirs(workDir, keepName = dirName)
+        val psiphonDir = File(workDir, dirName).apply { mkdirs() }.absolutePath
         args.addAll(listOf("--psiphon-bin", psiphonBin))
         args.addAll(listOf("--psiphon-dir", psiphonDir))
         if (bindOverride != null) {
@@ -234,11 +259,57 @@ object AetherCoreAdapter : CoreAdapter {
         if (httpBind != null) {
             args.addAll(listOf("--psiphon-http", httpBind))
         }
+        args.addAll(listOf("--psiphon-mode", "auto"))
         val region = profile.psiphonRegion.trim()
         if (region.isNotBlank() && !region.equals("AUTO", ignoreCase = true)) {
             args.addAll(listOf("--psiphon-region", region))
         }
+        if (extraArgs.none { it == "--psiphon-config" || it.startsWith("--psiphon-config=") }) {
+            writePsiphonDnsConfig(workDir, profile, nonVpnDnsServers)?.let { cfg ->
+                args.addAll(listOf("--psiphon-config", cfg.absolutePath))
+            }
+        }
     }
+
+    private fun cleanStalePsiphonDirs(workDir: File, keepName: String) {
+        runCatching {
+            workDir.listFiles()?.forEach { f ->
+                if (f.isDirectory && (f.name == "psiphon_state" || f.name.startsWith("psiphon_state-")) && f.name != keepName) {
+                    f.deleteRecursively()
+                }
+            }
+        }
+    }
+
+    /**
+     * Psiphon (Go) has no /etc/resolv.conf on Android and defaults to 127.0.0.1:53 (connection refused).
+     * Provide the real non-VPN DNS servers + public fallbacks via `--psiphon-config`.
+     */
+    internal fun writePsiphonDnsConfig(
+        workDir: File,
+        profile: VpnProfile,
+        nonVpnDnsServers: List<String>
+    ): File? = runCatching {
+        val servers = LinkedHashSet<String>()
+        nonVpnDnsServers
+            .map { it.trim() }
+            .filter { InputValidators.isValidIpv4(it) }
+            .forEach { servers.add(it) }
+        listOf(profile.customDnsPrimary, profile.customDnsSecondary)
+            .map { it.trim().removeSuffix(":53") }
+            .filter { InputValidators.isValidIpv4(it) }
+            .forEach { servers.add(it) }
+        listOf("1.1.1.1", "8.8.8.8", "9.9.9.9", "1.0.0.1", "8.8.4.4").forEach { servers.add(it) }
+
+        val valid = servers
+            .filter { it != "0.0.0.0" && !it.startsWith("127.") }
+            .take(8)
+        workDir.mkdirs()
+        val f = File(workDir, "psiphon-config.json")
+        val jsonBody = "{\"DNSResolverAlternateServers\":[" + valid.joinToString(",") { "\"$it\"" } + "]}\n"
+        f.writeText(jsonBody)
+        f
+    }.getOrNull()
 
     private fun appendTorArgs(
         args: MutableList<String>,
@@ -263,11 +334,11 @@ object AetherCoreAdapter : CoreAdapter {
         if (profile.torUseBridges) {
             val validBridges = profile.torBridges
                 .filter { InputValidators.validateTorBridgeLine(it).isValid }
-                .map { it.trim().removePrefix("Bridge ").trim() }
+                .map { it.trim().removePrefix("Bridge ").removePrefix("bridge ").trim() }
             if (validBridges.isNotEmpty()) {
-                validBridges.forEach { bridge ->
-                    args.addAll(listOf("--tor-bridge", bridge))
-                }
+                val bridgeFile = File(workDir, "tor-bridges.txt")
+                bridgeFile.writeText(validBridges.joinToString("\n") + "\n")
+                args.addAll(listOf("--tor-bridge-file", bridgeFile.absolutePath))
             } else {
                 args.add("--tor-bridges")
             }
@@ -289,13 +360,19 @@ object AetherCoreAdapter : CoreAdapter {
         val lower = line.lowercase()
         return lower.contains("socks5 server listening on") ||
             lower.contains("socks5 listening") ||
-            lower.contains("tunnel ready")
+            lower.contains("tunnel ready") ||
+            lower.contains("tunnel validated")
     }
 
     fun isPsiphonReadinessLine(line: String): Boolean {
         val lower = line.lowercase()
         return lower.contains("psiphon is ready") ||
             lower.contains("socks proxy listening")
+    }
+
+    fun isPsiphonDatastoreError(line: String): Boolean {
+        return line.contains("tryDatastoreOpenDB", ignoreCase = true) ||
+            line.contains("openDataStore", ignoreCase = true)
     }
 
     fun isTorReadinessLine(line: String): Boolean {

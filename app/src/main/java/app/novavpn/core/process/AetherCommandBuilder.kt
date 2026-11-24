@@ -32,6 +32,8 @@ data class BuiltLaunchPlan(
 
 object AetherCommandBuilder {
 
+    private val ENV_TOKEN_REGEX = Regex("""^[A-Z][A-Z0-9_]*=.*""")
+
     fun build(
         nativeDir: File,
         workDir: File,
@@ -39,7 +41,9 @@ object AetherCommandBuilder {
         settings: AppSettings,
         resolvedRoute: RouteChain,
         useFreshScan: Boolean,
-        sessionAuth: SessionProxyAuth? = null
+        sessionAuth: SessionProxyAuth? = null,
+        nonVpnDnsServers: List<String> = emptyList(),
+        psiphonSlot: Int = 0
     ): Result<BuiltLaunchPlan> = runCatching {
         val socksPort = settings.localSocksPort
         require(InputValidators.validatePort(socksPort).isValid) { "Invalid local SOCKS5 port: $socksPort" }
@@ -60,15 +64,26 @@ object AetherCommandBuilder {
             require(check.isValid) { (check as? ValidationResult.Invalid)?.reason ?: "Invalid upstream proxy" }
         }
 
-        val extraArgs = InputValidators.parseAndValidateExtraArgs(profile.extraCoreArgs).getOrThrow()
+        val parsedExtra = InputValidators.parseAndValidateExtraArgs(profile.extraCoreArgs).getOrThrow()
+        val extraCliArgs = parsedExtra.filterNot { ENV_TOKEN_REGEX.matches(it) }
+        val extraEnvVars = parsedExtra
+            .filter { ENV_TOKEN_REGEX.matches(it) }
+            .associate { it.substringBefore('=') to it.substringAfter('=') }
+
         val bindHost = if (settings.shareProxyOnLan) "0.0.0.0" else "127.0.0.1"
         val aetherInternalPort = if (socksPort + 20 <= 65535) socksPort + 20 else socksPort - 20
         val mtuValue = profile.mtu.coerceIn(576, 1500).toString()
-        val aetherEnv = mapOf("AETHER_MASQUE_MTU" to mtuValue)
 
         val aetherBin = File(nativeDir, "libaether.so")
         val psiphonBin = File(nativeDir, "libpsiphon.so")
         val lyrebirdBin = File(nativeDir, "liblyrebird.so")
+
+        val baseEnv = buildMap {
+            put("AETHER_LOG_LEVEL", "info")
+            put("AETHER_TOR_PT", "obfs4=${lyrebirdBin.absolutePath};webtunnel=${lyrebirdBin.absolutePath}")
+            putAll(extraEnvVars)
+        }
+        val aetherEnv = baseEnv + ("AETHER_MASQUE_MTU" to mtuValue)
 
         val isMasqueFamily = profile.aetherProtocol == AetherProtocol.MASQUE ||
             profile.aetherProtocol == AetherProtocol.WARP_IN_MASQUE ||
@@ -86,8 +101,10 @@ object AetherCommandBuilder {
                     profile = profile,
                     settings = settings,
                     useFreshScan = useFreshScan,
-                    extraArgs = extraArgs,
-                    routeChain = resolvedRoute
+                    extraArgs = extraCliArgs,
+                    routeChain = resolvedRoute,
+                    nonVpnDnsServers = nonVpnDnsServers,
+                    psiphonSlot = psiphonSlot
                 )
                 LaunchStage(
                     adapter = AetherCoreAdapter,
@@ -108,15 +125,17 @@ object AetherCommandBuilder {
                     profile = profile,
                     settings = settings,
                     useFreshScan = useFreshScan,
-                    extraArgs = extraArgs,
-                    routeChain = RouteChain.PSIPHON_ONLY
+                    extraArgs = extraCliArgs,
+                    routeChain = RouteChain.PSIPHON_ONLY,
+                    nonVpnDnsServers = nonVpnDnsServers,
+                    psiphonSlot = psiphonSlot
                 )
                 LaunchStage(
                     adapter = AetherCoreAdapter,
                     args = args,
                     preflightBinaries = listOf(aetherBin, psiphonBin),
-                    envVars = emptyMap(),
-                    readinessTimeoutMs = 75_000L,
+                    envVars = baseEnv,
+                    readinessTimeoutMs = 95_000L,
                     readinessMatcher = AetherCoreAdapter::isPsiphonReadinessLine
                 )
             }
@@ -130,17 +149,19 @@ object AetherCommandBuilder {
                     profile = profile,
                     settings = settings,
                     useFreshScan = useFreshScan,
-                    extraArgs = extraArgs,
+                    extraArgs = extraCliArgs,
                     routeChain = RouteChain.AETHER_PSIPHON,
                     chainExitSocksBind = "$bindHost:$socksPort",
-                    chainExitHttpBind = httpPort?.let { "$bindHost:$it" }
+                    chainExitHttpBind = httpPort?.let { "$bindHost:$it" },
+                    nonVpnDnsServers = nonVpnDnsServers,
+                    psiphonSlot = psiphonSlot
                 )
                 LaunchStage(
                     adapter = AetherCoreAdapter,
                     args = args,
                     preflightBinaries = listOf(aetherBin, psiphonBin),
                     envVars = aetherEnv,
-                    readinessTimeoutMs = aetherTimeoutMs + 30_000L,
+                    readinessTimeoutMs = aetherTimeoutMs + 35_000L,
                     readinessMatcher = AetherCoreAdapter::isPsiphonReadinessLine
                 )
             }
@@ -154,15 +175,17 @@ object AetherCommandBuilder {
                     profile = profile,
                     settings = settings,
                     useFreshScan = useFreshScan,
-                    extraArgs = extraArgs,
-                    routeChain = RouteChain.TOR_ONLY
+                    extraArgs = extraCliArgs,
+                    routeChain = RouteChain.TOR_ONLY,
+                    nonVpnDnsServers = nonVpnDnsServers,
+                    psiphonSlot = psiphonSlot
                 )
                 LaunchStage(
                     adapter = AetherCoreAdapter,
                     args = args,
                     preflightBinaries = listOf(aetherBin, lyrebirdBin),
-                    envVars = emptyMap(),
-                    readinessTimeoutMs = 120_000L,
+                    envVars = baseEnv,
+                    readinessTimeoutMs = 150_000L,
                     readinessMatcher = AetherCoreAdapter::isTorReadinessLine
                 )
             }
@@ -176,17 +199,19 @@ object AetherCommandBuilder {
                     profile = profile,
                     settings = settings,
                     useFreshScan = useFreshScan,
-                    extraArgs = extraArgs,
+                    extraArgs = extraCliArgs,
                     routeChain = RouteChain.AETHER_TOR,
                     chainExitSocksBind = "$bindHost:$socksPort",
-                    chainExitHttpBind = httpPort?.let { "$bindHost:$it" }
+                    chainExitHttpBind = httpPort?.let { "$bindHost:$it" },
+                    nonVpnDnsServers = nonVpnDnsServers,
+                    psiphonSlot = psiphonSlot
                 )
                 LaunchStage(
                     adapter = AetherCoreAdapter,
                     args = args,
                     preflightBinaries = listOf(aetherBin, lyrebirdBin),
                     envVars = aetherEnv,
-                    readinessTimeoutMs = aetherTimeoutMs + 45_000L,
+                    readinessTimeoutMs = aetherTimeoutMs + 50_000L,
                     readinessMatcher = AetherCoreAdapter::isTorReadinessLine
                 )
             }
@@ -198,7 +223,10 @@ object AetherCommandBuilder {
             finalSocksPort = socksPort,
             finalHttpPort = httpPort,
             sessionAuth = sessionAuth,
-            generatedConfigFiles = emptyList()
+            generatedConfigFiles = listOfNotNull(
+                File(workDir, "psiphon-config.json").takeIf { it.exists() },
+                File(workDir, "tor-bridges.txt").takeIf { it.exists() }
+            )
         )
     }
 }

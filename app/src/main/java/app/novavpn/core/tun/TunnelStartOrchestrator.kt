@@ -56,6 +56,41 @@ class TunnelStartOrchestrator(
         }
     }
 
+    private data class LaunchCandidate(
+        val route: RouteChain,
+        val profileOverride: VpnProfile,
+        val labelSuffix: String = ""
+    )
+
+    private fun buildLaunchCandidates(
+        profile: VpnProfile,
+        settings: AppSettings,
+        networkKey: String
+    ): List<LaunchCandidate> {
+        val routes = resolveCandidateRoutes(profile, settings, networkKey)
+        val supportsMasqueCarrier = profile.aetherProtocol in setOf(
+            app.novavpn.domain.model.AetherProtocol.MASQUE,
+            app.novavpn.domain.model.AetherProtocol.WARP_IN_MASQUE,
+            app.novavpn.domain.model.AetherProtocol.MASQUE_IN_MASQUE
+        )
+        val out = mutableListOf<LaunchCandidate>()
+        for (route in routes) {
+            out.add(LaunchCandidate(route, profile))
+            val usesAether = route != RouteChain.PSIPHON_ONLY && route != RouteChain.TOR_ONLY
+            // Resilient carrier fallback inspired by 8vpn: if QUIC/H3 is blocked, try H2+Fragment (or H3 if H2 failed)
+            if (usesAether && supportsMasqueCarrier && (profile.routeChain == RouteChain.SMART_AUTO || routes.size == 1)) {
+                val alt = if (!profile.masqueOverH2) {
+                    profile.copy(masqueOverH2 = true, tlsFragment = true)
+                } else {
+                    profile.copy(masqueOverH2 = false)
+                }
+                val suffix = if (alt.masqueOverH2) " (H2+Frag)" else " (H3)"
+                out.add(LaunchCandidate(route, alt, suffix))
+            }
+        }
+        return out
+    }
+
     suspend fun startCoreAndProbe(
         coreManager: CoreProcessManager,
         settings: AppSettings,
@@ -66,15 +101,17 @@ class TunnelStartOrchestrator(
         onProbeProgress: (String) -> Unit,
         verifyHttpsAfterCoreStart: Boolean = true
     ): CoreProbeOutcome {
-        val candidates = resolveCandidateRoutes(profile, settings, networkKey)
+        val candidates = buildLaunchCandidates(profile, settings, networkKey)
         val bindHost = if (settings.shareProxyOnLan) "0.0.0.0" else "127.0.0.1"
         val auth: SessionProxyAuth? = null
+        val nonVpnDns = coreManager.nonVpnDnsServers()
 
         var lastError = "Failed to establish tunnel core"
         var dropReason = DropReason.CORE_EXITED
         var suggestedFix = SuggestedFixAction.RUN_DIAGNOSTICS
 
-        for (route in candidates) {
+        for (candidate in candidates) {
+            val route = candidate.route
             if (isCancelled()) {
                 return CoreProbeOutcome.Failure(
                     DropReason.USER_DISCONNECTED,
@@ -82,18 +119,20 @@ class TunnelStartOrchestrator(
                     SuggestedFixAction.NONE
                 )
             }
-            if (profile.routeChain == RouteChain.SMART_AUTO) {
-                onProbeProgress("Testing route: ${route.name}…")
+            if (profile.routeChain == RouteChain.SMART_AUTO || candidate.labelSuffix.isNotEmpty()) {
+                onProbeProgress("Testing route: ${route.name}${candidate.labelSuffix}…")
             }
 
             val planResult = AetherCommandBuilder.build(
                 nativeDir = coreManager.nativeDir(),
                 workDir = coreManager.workDir(),
-                profile = profile,
+                profile = candidate.profileOverride,
                 settings = settings,
                 resolvedRoute = route,
                 useFreshScan = useFreshScan,
-                sessionAuth = auth
+                sessionAuth = auth,
+                nonVpnDnsServers = nonVpnDns,
+                psiphonSlot = coreManager.psiphonSlot
             )
             if (planResult.isFailure) {
                 lastError = planResult.exceptionOrNull()?.message ?: "Invalid configuration"
@@ -101,6 +140,14 @@ class TunnelStartOrchestrator(
                 suggestedFix = SuggestedFixAction.APPLY_SAFE_FIX
                 continue
             }
+
+            val isSlowRoute = route in setOf(
+                RouteChain.PSIPHON_ONLY,
+                RouteChain.AETHER_PSIPHON,
+                RouteChain.TOR_ONLY,
+                RouteChain.AETHER_TOR
+            )
+            val probeTimeoutMs = if (isSlowRoute) 20_000L else 9_000L
 
             val plan = planResult.getOrThrow()
             when (val coreRes = coreManager.startPlan(plan, bindHost)) {
@@ -110,7 +157,7 @@ class TunnelStartOrchestrator(
                     }
                     var pingMs: Int? = null
                     if (verifyHttpsAfterCoreStart) {
-                        val check = diagnostics.verifyRealHttpsConnectivity(coreRes.socksPort, plan.sessionAuth)
+                        val check = diagnostics.verifyRealHttpsConnectivity(coreRes.socksPort, plan.sessionAuth, probeTimeoutMs)
                         if (check.isFailure && candidates.size > 1) {
                             lastError = check.exceptionOrNull()?.message ?: "Route $route failed HTTPS verification"
                             coreManager.stopAll()

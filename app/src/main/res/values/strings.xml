@@ -215,4 +215,15 @@
     <string name="stats_latency">Endpoint Latency</string>
     <string name="stats_timeout">Timeout</string>
     <string name="stats_fix_conn">Fix Connection (Apply Safe Profile)</string>
+
+    <!-- LAN Share & Protocol Options -->
+    <string name="home_lan_share_reachable">Reachable LAN Addresses</string>
+    <string name="home_lan_share_hint">Turn on Hotspot or USB tethering; typical IP:</string>
+    <string name="home_lan_wifi_hotspot">Wi-Fi / Hotspot</string>
+    <string name="home_lan_usb_eth">USB / Ethernet</string>
+    <string name="profile_masque_carrier">MASQUE Carrier</string>
+    <string name="profile_masque_h3">HTTP/3 (QUIC)</string>
+    <string name="profile_masque_h2">HTTP/2 (TCP)</string>
+    <string name="profile_tls_fragment">TLS Fragmentation (--fragment)</string>
+    <string name="profile_tls_fragment_desc">Splits TLS ClientHello SNI packets on HTTP/2 and WARP API calls</string>
 </resources>

@@ -2,7 +2,9 @@ package app.novavpn.core.process
 
 import android.content.Context
 import android.os.Process as AndroidProcess
+import app.novavpn.core.net.ConnectivityHelper
 import app.novavpn.data.log.LogRepository
+import app.novavpn.domain.validation.InputValidators
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -52,9 +54,15 @@ class CoreProcessManager(
     @Volatile
     private var shuttingDown = false
 
+    @Volatile
+    var psiphonSlot: Int = 0
+        private set
+
     fun nativeDir(): File = File(context.applicationInfo.nativeLibraryDir)
 
     fun workDir(): File = File(context.filesDir, "nova_core").apply { mkdirs() }
+
+    fun nonVpnDnsServers(): List<String> = ConnectivityHelper.nonVpnIpv4DnsServers(context)
 
     /**
      * Immediately interrupts any in-flight readiness wait and destroys live processes
@@ -149,11 +157,14 @@ class CoreProcessManager(
                         while (isActive) {
                             line = reader.readLine() ?: break
                             LogRepository.i(stageName, line)
+                            if (AetherCoreAdapter.isPsiphonDatastoreError(line)) {
+                                psiphonSlot = (psiphonSlot + 1) % 8
+                            }
                             if (line.contains("Error:", ignoreCase = true) ||
                                 line.contains("[-]", ignoreCase = false) ||
                                 line.contains("error", ignoreCase = true)
                             ) {
-                                lastErrorLine.set(line.trim())
+                                lastErrorLine.set(InputValidators.redactSensitiveForLog(line.trim()))
                             }
 
                             stage.adapter.extractEndpoint(line)?.let { ep ->
@@ -173,13 +184,20 @@ class CoreProcessManager(
                 }
 
                 val code = runCatching { proc.waitFor() }.getOrDefault(-1)
+                val why = when (code) {
+                    137 -> " (SIGKILL)"
+                    139 -> " (SIGSEGV)"
+                    134 -> " (SIGABRT)"
+                    143 -> " (SIGTERM)"
+                    else -> ""
+                }
                 if (!readySignaled) {
                     val detail = lastErrorLine.get()?.let { ": $it" } ?: ""
                     readyDeferred.complete(
-                        Result.failure(IllegalStateException("$stageName exited before ready (code=$code)$detail"))
+                        Result.failure(IllegalStateException("$stageName exited before ready (code=$code$why)$detail"))
                     )
                 } else if (!managed.intentionalStop.get() && !shuttingDown) {
-                    LogRepository.w("CoreProcess", "$stageName exited unexpectedly with code $code")
+                    LogRepository.w("CoreProcess", "$stageName exited unexpectedly with code $code$why")
                     onUnexpectedExit(code, stageName)
                 }
             }

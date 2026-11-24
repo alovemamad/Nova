@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
@@ -121,6 +122,21 @@ private class Socks5AuthSocketFactory(
     }
 }
 
+/**
+ * Prevents OkHttp from calling local ISP DNS (which is subject to DNS poisoning such as 10.10.x.x
+ * on bypassed app UIDs) before Socks5Socket connects. Returns a synthetic InetAddress carrying the
+ * original hostname so Socks5Socket sends ATYP=0x03 directly over the tunnel.
+ */
+internal object Socks5RemoteDns : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        val isIpLiteral = hostname.all { it.isDigit() || it == '.' } || hostname.contains(':')
+        if (isIpLiteral) {
+            return Dns.SYSTEM.lookup(hostname)
+        }
+        return listOf(InetAddress.getByAddress(hostname, byteArrayOf(127, 0, 0, 1)))
+    }
+}
+
 class DiagnosticsEngine {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -130,7 +146,9 @@ class DiagnosticsEngine {
             .readTimeout(9, TimeUnit.SECONDS)
             .writeTimeout(7, TimeUnit.SECONDS)
         if (socksPort != null) {
-            builder.socketFactory(Socks5AuthSocketFactory("127.0.0.1", socksPort, auth))
+            builder
+                .dns(Socks5RemoteDns)
+                .socketFactory(Socks5AuthSocketFactory("127.0.0.1", socksPort, auth))
         }
         return builder.build()
     }
@@ -139,23 +157,33 @@ class DiagnosticsEngine {
         socksPort: Int?,
         auth: SessionProxyAuth? = null
     ): Result<Int> = withContext(Dispatchers.IO) {
-        app.novavpn.core.runCatchingCancellable {
-            val client = createClient(socksPort, auth)
-            val req = Request.Builder()
-                .url("https://cp.cloudflare.com/generate_204")
-                .header("User-Agent", "NovaVPN/1.0")
-                .build()
-            var code = 0
-            val ms = measureTimeMillis {
-                client.newCall(req).execute().use { resp ->
-                    code = resp.code
+        val probeUrls = listOf(
+            "https://cp.cloudflare.com/generate_204",
+            "https://www.gstatic.com/generate_204"
+        )
+        var lastError: Throwable? = null
+        val client = createClient(socksPort, auth)
+        for (url in probeUrls) {
+            val attempt = app.novavpn.core.runCatchingCancellable {
+                val req = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "NovaVPN/1.0")
+                    .build()
+                var code = 0
+                val ms = measureTimeMillis {
+                    client.newCall(req).execute().use { resp ->
+                        code = resp.code
+                    }
                 }
+                if (code !in 200..299) {
+                    error("HTTPS probe ($url) returned HTTP $code")
+                }
+                ms.toInt().coerceAtLeast(1)
             }
-            if (code !in 200..299) {
-                error("HTTPS probe returned HTTP $code")
-            }
-            ms.toInt().coerceAtLeast(1)
+            if (attempt.isSuccess) return@withContext attempt
+            lastError = attempt.exceptionOrNull()
         }
+        Result.failure(lastError ?: IOException("HTTPS probe failed"))
     }
 
     suspend fun fetchExitIpInfo(socksPort: Int?, auth: SessionProxyAuth? = null): ExitGeoInfo? = withContext(Dispatchers.IO) {

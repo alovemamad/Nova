@@ -112,6 +112,10 @@ class TunnelLifecycleCoordinator(
     @Volatile
     private var activeHttpPort: Int? = null
 
+    fun requestStop() {
+        isUserStopping = true
+    }
+
     suspend fun start(useFreshScan: Boolean) = lifecycleMutex.withLock {
         startLocked(useFreshScan = useFreshScan, keepExistingTun = false)
     }

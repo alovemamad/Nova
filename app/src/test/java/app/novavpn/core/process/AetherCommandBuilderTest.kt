@@ -198,4 +198,41 @@ class AetherCommandBuilderTest {
         assertTrue(plan.aetherArgs!!.contains("0.0.0.0:10900"))
         assertEquals(10900, plan.finalSocksPort)
     }
+
+    @Test
+    fun `sets readiness timeouts long enough for Aether WG 80s and MASQUE 120s scan budgets`() {
+        val nativeDir = tempFolder.newFolder("jni5")
+        val workDir = tempFolder.newFolder("work5")
+        val settings = AppSettings()
+
+        val masquePlan = AetherCommandBuilder.build(
+            nativeDir = nativeDir,
+            workDir = workDir,
+            profile = VpnProfile(id = "m", name = "M", aetherProtocol = AetherProtocol.MASQUE),
+            settings = settings,
+            resolvedRoute = RouteChain.AETHER,
+            useFreshScan = true
+        ).getOrThrow()
+        assertTrue(masquePlan.stages.single().readinessTimeoutMs >= 135_000L)
+
+        val wgPlan = AetherCommandBuilder.build(
+            nativeDir = nativeDir,
+            workDir = workDir,
+            profile = VpnProfile(id = "w", name = "W", aetherProtocol = AetherProtocol.WIREGUARD),
+            settings = settings,
+            resolvedRoute = RouteChain.AETHER,
+            useFreshScan = true
+        ).getOrThrow()
+        assertTrue(wgPlan.stages.single().readinessTimeoutMs >= 95_000L)
+
+        val thoroughMasque = AetherCommandBuilder.build(
+            nativeDir = nativeDir,
+            workDir = workDir,
+            profile = VpnProfile(id = "mt", name = "MT", aetherProtocol = AetherProtocol.MASQUE, scanLevel = 3),
+            settings = settings,
+            resolvedRoute = RouteChain.AETHER,
+            useFreshScan = true
+        ).getOrThrow()
+        assertTrue(thoroughMasque.stages.single().readinessTimeoutMs >= 165_000L)
+    }
 }

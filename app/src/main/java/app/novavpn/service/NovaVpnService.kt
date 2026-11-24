@@ -76,7 +76,7 @@ class NovaVpnService : VpnService() {
         NovaVpnApplication.createNotificationChannels(this)
         tunManager = TunEngineManager(applicationContext)
         coreManager = CoreProcessManager(applicationContext, serviceScope) { exitCode, binaryName ->
-            if (!coordinator.isUserStopping && !coordinator.isPaused) {
+            if (!coordinator.isUserStopping && !coordinator.isPaused && coordinator.state == VpnState.CONNECTED) {
                 LogRepository.w("NovaVpnService", "Unexpected exit of $binaryName ($exitCode)")
                 val decision = reconnectMachine.onCoreDied()
                 serviceScope.launch { handleReconnectDecision(decision) }
@@ -92,25 +92,31 @@ class NovaVpnService : VpnService() {
         when (intent?.action) {
             ACTION_START -> {
                 val fresh = intent.getBooleanExtra(EXTRA_FRESH_SCAN, false)
+                reconnectJob?.cancel()
+                reconnectJob = null
                 serviceScope.launch {
                     val settings = ServiceLocator.settingsRepository.getSettings()
                     if (coordinator.state == VpnState.CONNECTED || coordinator.state == VpnState.RECONNECTING) {
                         coordinator.reconnect(useFreshScan = fresh, keepTunOpen = settings.keepTunOnReconnect)
-                    } else {
+                    } else if (coordinator.state != VpnState.CONNECTING) {
                         coordinator.start(useFreshScan = fresh)
                     }
                 }
             }
             ACTION_STOP -> {
+                cancelBackgroundJobs()
+                coordinator.requestStop()
+                coreManager.forceAbort()
                 serviceScope.launch {
-                    cancelBackgroundJobs()
                     coordinator.stop(DropReason.USER_DISCONNECTED, errorMessage = null, stopService = true)
                 }
             }
             ACTION_PAUSE -> {
+                reconnectJob?.cancel()
+                reconnectJob = null
+                telemetryJob?.cancel()
+                telemetryJob = null
                 serviceScope.launch {
-                    telemetryJob?.cancel()
-                    telemetryJob = null
                     coordinator.pause()
                 }
             }
@@ -138,8 +144,10 @@ class NovaVpnService : VpnService() {
     override fun onRevoke() {
         super.onRevoke()
         LogRepository.w("NovaVpnService", "VPN permission revoked by system")
+        cancelBackgroundJobs()
+        coordinator.requestStop()
+        coreManager.forceAbort()
         serviceScope.launch {
-            cancelBackgroundJobs()
             coordinator.stop(
                 reason = DropReason.VPN_REVOKED,
                 errorMessage = "VPN permission was revoked or replaced by another VPN app.",
@@ -503,8 +511,7 @@ class NovaVpnService : VpnService() {
                     }
                     updateNotification(getString(R.string.status_reconnecting) + " (#${decision.nextAttemptCount})", isPaused = false)
                     delay(decision.delayMs)
-                    if (!coordinator.isUserStopping && !coordinator.isPaused) {
-                        coreManager.stopAll()
+                    if (!coordinator.isUserStopping && !coordinator.isPaused && coordinator.state != VpnState.CONNECTING) {
                         coordinator.reconnect(
                             useFreshScan = decision.useFreshScan,
                             keepTunOpen = settings.keepTunOnReconnect

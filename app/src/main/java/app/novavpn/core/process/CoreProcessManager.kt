@@ -3,6 +3,7 @@ package app.novavpn.core.process
 import android.content.Context
 import android.os.Process as AndroidProcess
 import app.novavpn.data.log.LogRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,7 @@ import java.io.InputStreamReader
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 sealed class CoreStartResult {
@@ -34,9 +36,18 @@ class CoreProcessManager(
     private val scope: CoroutineScope,
     private val onUnexpectedExit: (Int, String) -> Unit
 ) {
+    private data class ManagedProcess(
+        val proc: Process,
+        val intentionalStop: AtomicBoolean = AtomicBoolean(false)
+    )
+
     private val mutex = Mutex()
-    private val activeProcesses = mutableListOf<Process>()
+    private val procLock = Any()
+    private val activeProcesses = mutableListOf<ManagedProcess>()
     private val readerJobs = mutableListOf<Job>()
+
+    @Volatile
+    private var currentReadyDeferred: CompletableDeferred<Result<String?>>? = null
 
     @Volatile
     private var shuttingDown = false
@@ -45,8 +56,26 @@ class CoreProcessManager(
 
     fun workDir(): File = File(context.filesDir, "nova_core").apply { mkdirs() }
 
+    /**
+     * Immediately interrupts any in-flight readiness wait and destroys live processes
+     * without waiting for [mutex] (e.g. when the user cancels during a long scan).
+     */
+    fun forceAbort() {
+        shuttingDown = true
+        currentReadyDeferred?.complete(Result.failure(CancellationException("Aborted by user")))
+        val snapshot = synchronized(procLock) { activeProcesses.toList() }
+        snapshot.forEach { managed ->
+            managed.intentionalStop.set(true)
+            runCatching {
+                if (managed.proc.isAlive) {
+                    managed.proc.destroy()
+                }
+            }
+        }
+    }
+
     suspend fun startPlan(plan: BuiltLaunchPlan, bindHost: String): CoreStartResult = mutex.withLock {
-        shuttingDown = false
+        shuttingDown = true
         stopInternal()
         killOrphanedHelpers()
 
@@ -72,12 +101,19 @@ class CoreProcessManager(
             }
         }
 
+        shuttingDown = false
         val lastDetectedEndpoint = AtomicReference<String?>(null)
 
         for (stage in plan.stages) {
+            if (shuttingDown) {
+                stopInternal()
+                return@withLock CoreStartResult.Failed("Cancelled before starting ${stage.adapter.id}")
+            }
+
             val stageName = stage.adapter.id
             val isReadyLine = stage.readinessMatcher ?: stage.adapter::isReadinessLine
             val readyDeferred = CompletableDeferred<Result<String?>>()
+            currentReadyDeferred = readyDeferred
             val lastErrorLine = AtomicReference<String?>(null)
             val pb = ProcessBuilder(stage.args)
                 .directory(workDir())
@@ -89,11 +125,21 @@ class CoreProcessManager(
             val proc = try {
                 withContext(Dispatchers.IO) { pb.start() }
             } catch (e: Exception) {
+                currentReadyDeferred = null
                 stopInternal()
                 return@withLock CoreStartResult.Failed("Failed to launch $stageName: ${e.message}")
             }
 
-            activeProcesses.add(proc)
+            val managed = ManagedProcess(proc)
+            synchronized(procLock) {
+                activeProcesses.add(managed)
+            }
+
+            if (shuttingDown) {
+                currentReadyDeferred = null
+                stopInternal()
+                return@withLock CoreStartResult.Failed("Aborted during launch of $stageName")
+            }
 
             val job = scope.launch(Dispatchers.IO) {
                 var readySignaled = false
@@ -121,7 +167,7 @@ class CoreProcessManager(
                         }
                     }
                 } catch (e: Exception) {
-                    if (!shuttingDown && !readySignaled) {
+                    if (!managed.intentionalStop.get() && !shuttingDown && !readySignaled) {
                         readyDeferred.complete(Result.failure(e))
                     }
                 }
@@ -132,15 +178,17 @@ class CoreProcessManager(
                     readyDeferred.complete(
                         Result.failure(IllegalStateException("$stageName exited before ready (code=$code)$detail"))
                     )
-                }
-                if (!shuttingDown) {
+                } else if (!managed.intentionalStop.get() && !shuttingDown) {
                     LogRepository.w("CoreProcess", "$stageName exited unexpectedly with code $code")
                     onUnexpectedExit(code, stageName)
                 }
             }
-            readerJobs.add(job)
+            synchronized(procLock) {
+                readerJobs.add(job)
+            }
 
             val readyResult = withTimeoutOrNull(stage.readinessTimeoutMs) { readyDeferred.await() }
+            currentReadyDeferred = null
             if (readyResult == null) {
                 stopInternal()
                 return@withLock CoreStartResult.Failed("$stageName timed out waiting for readiness log")
@@ -157,27 +205,33 @@ class CoreProcessManager(
 
     suspend fun stopAll() = mutex.withLock {
         shuttingDown = true
+        currentReadyDeferred?.complete(Result.failure(CancellationException("Stopped")))
         stopInternal()
         killOrphanedHelpers()
     }
 
     private suspend fun stopInternal() = withContext(Dispatchers.IO) {
-        val procs = activeProcesses.toList()
-        activeProcesses.clear()
-        procs.forEach { proc ->
+        val (procs, jobs) = synchronized(procLock) {
+            val p = activeProcesses.toList()
+            val j = readerJobs.toList()
+            activeProcesses.clear()
+            readerJobs.clear()
+            p to j
+        }
+        procs.forEach { managed ->
+            managed.intentionalStop.set(true)
             runCatching {
-                if (proc.isAlive) {
-                    proc.destroy()
-                    val exited = proc.waitFor(1500, TimeUnit.MILLISECONDS)
-                    if (!exited && proc.isAlive) {
-                        proc.destroyForcibly()
-                        proc.waitFor(500, TimeUnit.MILLISECONDS)
+                if (managed.proc.isAlive) {
+                    managed.proc.destroy()
+                    val exited = managed.proc.waitFor(1500, TimeUnit.MILLISECONDS)
+                    if (!exited && managed.proc.isAlive) {
+                        managed.proc.destroyForcibly()
+                        managed.proc.waitFor(500, TimeUnit.MILLISECONDS)
                     }
                 }
             }
         }
-        readerJobs.forEach { it.cancel() }
-        readerJobs.clear()
+        jobs.forEach { it.cancel() }
     }
 
     /**

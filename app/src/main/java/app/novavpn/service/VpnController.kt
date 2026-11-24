@@ -74,9 +74,12 @@ class VpnController(
     @Volatile
     private var currentSessionAuth: SessionProxyAuth? = null
 
+    @Volatile
+    private var proxyUserCancelled: Boolean = false
+
     private val proxyProcessManager: CoreProcessManager = CoreProcessManager(context, scope) { code, bin ->
         scope.launch {
-            if (_status.value.state == VpnState.CONNECTED) {
+            if (!proxyUserCancelled && _status.value.state == VpnState.CONNECTED) {
                 LogRepository.w("ProxyMode", "$bin exited ($code), disconnecting proxy mode")
                 stateMutex.withLock {
                     handleProxyStopLocked(DropReason.CORE_EXITED, "Core exited (code $code)", SuggestedFixAction.RUN_DIAGNOSTICS)
@@ -113,6 +116,8 @@ class VpnController(
     }
 
     fun disconnect(reason: DropReason = DropReason.USER_DISCONNECTED) {
+        proxyUserCancelled = true
+        proxyProcessManager.forceAbort()
         scope.launch { disconnectInternal(reason) }
     }
 
@@ -178,6 +183,7 @@ class VpnController(
         val current = _status.value.state
         if (current == VpnState.CONNECTING || current == VpnState.CONNECTED) return@withLock
 
+        proxyUserCancelled = false
         val settings = settingsRepo.getSettings()
         val profile = settingsRepo.getActiveProfile()
 
@@ -245,7 +251,7 @@ class VpnController(
             profile = profile,
             networkKey = networkKey,
             useFreshScan = useFreshScan,
-            isCancelled = { false },
+            isCancelled = { proxyUserCancelled },
             onProbeProgress = { label -> updateSmartProbeStatus(label) },
             verifyHttpsAfterCoreStart = true
         )

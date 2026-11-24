@@ -1,6 +1,7 @@
 package app.novavpn.core.process
 
 import app.novavpn.core.SessionProxyAuth
+import app.novavpn.domain.model.AetherProtocol
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.VpnMode
@@ -69,6 +70,12 @@ object AetherCommandBuilder {
         val psiphonBin = File(nativeDir, "libpsiphon.so")
         val lyrebirdBin = File(nativeDir, "liblyrebird.so")
 
+        val isMasqueFamily = profile.aetherProtocol == AetherProtocol.MASQUE ||
+            profile.aetherProtocol == AetherProtocol.WARP_IN_MASQUE ||
+            profile.aetherProtocol == AetherProtocol.MASQUE_IN_MASQUE
+        val baseAetherTimeoutMs = if (isMasqueFamily) 135_000L else 95_000L
+        val aetherTimeoutMs = if (profile.scanLevel >= 3) baseAetherTimeoutMs + 30_000L else baseAetherTimeoutMs
+
         val stage: LaunchStage = when (resolvedRoute) {
             RouteChain.AETHER, RouteChain.SMART_AUTO -> {
                 val args = AetherCoreAdapter.buildTunnelArgs(
@@ -87,7 +94,7 @@ object AetherCommandBuilder {
                     args = args,
                     preflightBinaries = listOf(aetherBin),
                     envVars = aetherEnv,
-                    readinessTimeoutMs = 45_000L,
+                    readinessTimeoutMs = aetherTimeoutMs,
                     readinessMatcher = AetherCoreAdapter::isReadinessLine
                 )
             }
@@ -109,7 +116,7 @@ object AetherCommandBuilder {
                     args = args,
                     preflightBinaries = listOf(aetherBin, psiphonBin),
                     envVars = emptyMap(),
-                    readinessTimeoutMs = 60_000L,
+                    readinessTimeoutMs = 75_000L,
                     readinessMatcher = AetherCoreAdapter::isPsiphonReadinessLine
                 )
             }
@@ -133,7 +140,7 @@ object AetherCommandBuilder {
                     args = args,
                     preflightBinaries = listOf(aetherBin, psiphonBin),
                     envVars = aetherEnv,
-                    readinessTimeoutMs = 75_000L,
+                    readinessTimeoutMs = aetherTimeoutMs + 30_000L,
                     readinessMatcher = AetherCoreAdapter::isPsiphonReadinessLine
                 )
             }
@@ -155,7 +162,7 @@ object AetherCommandBuilder {
                     args = args,
                     preflightBinaries = listOf(aetherBin, lyrebirdBin),
                     envVars = emptyMap(),
-                    readinessTimeoutMs = 90_000L,
+                    readinessTimeoutMs = 120_000L,
                     readinessMatcher = AetherCoreAdapter::isTorReadinessLine
                 )
             }
@@ -179,7 +186,7 @@ object AetherCommandBuilder {
                     args = args,
                     preflightBinaries = listOf(aetherBin, lyrebirdBin),
                     envVars = aetherEnv,
-                    readinessTimeoutMs = 90_000L,
+                    readinessTimeoutMs = aetherTimeoutMs + 45_000L,
                     readinessMatcher = AetherCoreAdapter::isTorReadinessLine
                 )
             }

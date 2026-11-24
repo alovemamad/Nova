@@ -286,7 +286,9 @@ fun LogsViewerDialog(
                             type = "text/plain"
                             putExtra(Intent.EXTRA_TEXT, formatted)
                         }
-                        context.startActivity(Intent.createChooser(share, "Share Nova VPN Logs"))
+                        runCatching {
+                            context.startActivity(Intent.createChooser(share, "Share Nova VPN Logs"))
+                        }
                     }) { Text(stringResource(R.string.common_share)) }
                     TextButton(onClick = onClear) { Text(stringResource(R.string.common_clear)) }
                 }
@@ -473,7 +475,7 @@ fun UpdateCheckerDialog(
             if (info.updateAvailable && !info.releaseUrl.isNullOrBlank()) {
                 Button(onClick = {
                     val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(info.releaseUrl))
-                    context.startActivity(intent)
+                    runCatching { context.startActivity(intent) }
                 }) { Text(tr("Open Release", "باز کردن صفحه")) }
             } else {
                 Button(onClick = onDismiss) { Text(stringResource(R.string.common_ok)) }

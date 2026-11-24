@@ -23,9 +23,13 @@ fun rememberGlassTilt(enabled: Boolean): State<Offset> {
             tiltState.value = Offset.Zero
             return@DisposableEffect onDispose {}
         }
-        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
-        val gravity = sensorManager?.getDefaultSensor(Sensor.TYPE_GRAVITY)
-            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val sensorManager = runCatching {
+            context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        }.getOrNull()
+        val gravity = runCatching {
+            sensorManager?.getDefaultSensor(Sensor.TYPE_GRAVITY)
+                ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        }.getOrNull()
 
         if (sensorManager == null || gravity == null) {
             return@DisposableEffect onDispose {}
@@ -33,6 +37,7 @@ fun rememberGlassTilt(enabled: Boolean): State<Offset> {
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
+                if (event.values.size < 2) return
                 val nx = (event.values[0] / 9.81f).coerceIn(-1f, 1f)
                 val ny = (event.values[1] / 9.81f).coerceIn(-1f, 1f)
                 tiltState.value = Offset(nx, ny)
@@ -40,9 +45,13 @@ fun rememberGlassTilt(enabled: Boolean): State<Offset> {
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
         }
-        sensorManager.registerListener(listener, gravity, SensorManager.SENSOR_DELAY_UI)
+        val registered = runCatching {
+            sensorManager.registerListener(listener, gravity, SensorManager.SENSOR_DELAY_UI)
+        }.getOrDefault(false)
         onDispose {
-            sensorManager.unregisterListener(listener)
+            if (registered) {
+                runCatching { sensorManager.unregisterListener(listener) }
+            }
         }
     }
     return tiltState

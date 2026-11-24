@@ -27,6 +27,7 @@ import app.novavpn.domain.model.VpnMode
 import app.novavpn.domain.model.VpnProfile
 import app.novavpn.domain.model.VpnRuntimeStatus
 import app.novavpn.domain.model.VpnState
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -80,14 +81,34 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
     private val _pendingDeepLinkProfile = MutableStateFlow<VpnProfile?>(null)
     val pendingDeepLinkProfile: StateFlow<VpnProfile?> = _pendingDeepLinkProfile.asStateFlow()
 
+    private val startupExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        LogRepository.e(
+            "NovaVpnViewModel",
+            "Startup coroutine error: ${throwable::class.java.simpleName}: ${throwable.message}"
+        )
+    }
+
     init {
-        viewModelScope.launch {
-            settingsRepo.ensurePerInstallRandomPorts()
-            val initialSettings = settingsRepo.getSettings()
-            if (!initialSettings.appLockEnabled) {
+        viewModelScope.launch(startupExceptionHandler) {
+            try {
+                settingsRepo.ensurePerInstallRandomPorts()
+            } catch (t: Throwable) {
+                LogRepository.e("NovaVpnViewModel", "ensurePerInstallRandomPorts failed: ${t.message}")
+            }
+            try {
+                val initialSettings = settingsRepo.getSettings()
+                if (!initialSettings.appLockEnabled) {
+                    _isUnlocked.value = true
+                }
+            } catch (t: Throwable) {
+                LogRepository.e("NovaVpnViewModel", "Failed reading initial settings: ${t.message}")
                 _isUnlocked.value = true
             }
-            vpnController.checkAutoConnectRules()
+            try {
+                vpnController.checkAutoConnectRules()
+            } catch (t: Throwable) {
+                LogRepository.e("NovaVpnViewModel", "checkAutoConnectRules failed: ${t.message}")
+            }
         }
     }
 

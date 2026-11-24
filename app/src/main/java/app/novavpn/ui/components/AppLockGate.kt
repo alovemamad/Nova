@@ -88,31 +88,35 @@ fun AppLockGate(
     }
 
     val canUseBiometric = remember(context) {
-        val mgr = BiometricManager.from(context)
-        mgr.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL) ==
-            BiometricManager.BIOMETRIC_SUCCESS
+        runCatching {
+            val mgr = BiometricManager.from(context)
+            mgr.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL) ==
+                BiometricManager.BIOMETRIC_SUCCESS
+        }.getOrDefault(false)
     }
 
     fun launchBiometric() {
         val activity = hostActivity ?: return
-        val executor = ContextCompat.getMainExecutor(activity)
-        val prompt = BiometricPrompt(
-            activity,
-            executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    onBiometricUnlocked()
+        runCatching {
+            val executor = ContextCompat.getMainExecutor(activity)
+            val prompt = BiometricPrompt(
+                activity,
+                executor,
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        onBiometricUnlocked()
+                    }
                 }
-            }
-        )
-        val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(context.getString(R.string.lock_title))
-            .setSubtitle(context.getString(R.string.lock_subtitle))
-            .setAllowedAuthenticators(
-                BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
             )
-            .build()
-        prompt.authenticate(info)
+            val info = BiometricPrompt.PromptInfo.Builder()
+                .setTitle(context.getString(R.string.lock_title))
+                .setSubtitle(context.getString(R.string.lock_subtitle))
+                .setAllowedAuthenticators(
+                    BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                )
+                .build()
+            prompt.authenticate(info)
+        }
     }
 
     LaunchedEffect(canUseBiometric, hostActivity) {

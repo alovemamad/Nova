@@ -28,6 +28,7 @@ import app.novavpn.domain.model.VpnMode
 import app.novavpn.domain.model.VpnProfile
 import app.novavpn.domain.model.VpnRuntimeStatus
 import app.novavpn.domain.model.VpnState
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,7 +58,10 @@ class VpnController(
     private val diagnostics: DiagnosticsEngine,
     private val orchestrator: TunnelStartOrchestrator
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scopeExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        LogRepository.e("VpnController", "Uncaught coroutine error: ${throwable::class.java.simpleName}: ${throwable.message}")
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + scopeExceptionHandler)
     private val stateMutex = Mutex()
 
     private val _status = MutableStateFlow(VpnRuntimeStatus())

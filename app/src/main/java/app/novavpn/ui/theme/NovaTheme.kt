@@ -3,6 +3,7 @@ package app.novavpn.ui.theme
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Configuration
+import android.content.res.Resources
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -131,6 +132,13 @@ private fun buildTypography(isFa: Boolean): Typography {
     )
 }
 
+private class LocaleContextWrapper(
+    base: Context,
+    private val localized: Context
+) : ContextWrapper(base) {
+    override fun getResources(): Resources = localized.resources
+}
+
 private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {
     is FragmentActivity -> this
     is ContextWrapper -> baseContext.findFragmentActivity()
@@ -159,7 +167,7 @@ fun NovaVpnTheme(
     }
 
     val targetLocale = when (settings.language) {
-        AppLanguage.FA -> Locale("fa")
+        AppLanguage.FA -> Locale.forLanguageTag("fa")
         AppLanguage.EN -> Locale.ENGLISH
         AppLanguage.SYSTEM -> Locale.getDefault()
     }
@@ -171,7 +179,7 @@ fun NovaVpnTheme(
             setLocale(targetLocale)
             setLayoutDirection(targetLocale)
         }
-        baseContext.createConfigurationContext(config)
+        LocaleContextWrapper(baseContext, baseContext.createConfigurationContext(config))
     }
 
     CompositionLocalProvider(

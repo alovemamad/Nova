@@ -5,25 +5,52 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import app.novavpn.core.net.DiagnosticsEngine
 import app.novavpn.core.tun.TunnelStartOrchestrator
+import app.novavpn.data.log.LogRepository
 import app.novavpn.data.store.SettingsRepository
 import app.novavpn.data.store.StatsRepository
 import app.novavpn.service.VpnController
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class NovaVpnApplication : Application() {
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val appExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e("NovaVpnApp", "Uncaught background error", throwable)
+        runCatching {
+            LogRepository.e("NovaVpnApp", "${throwable::class.java.simpleName}: ${throwable.message}")
+        }
+    }
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + appExceptionHandler)
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannels(this)
-        ServiceLocator.init(this)
-        appScope.launch {
-            ServiceLocator.settingsRepository.ensurePerInstallRandomPorts()
+        try {
+            createNotificationChannels(this)
+        } catch (t: Throwable) {
+            Log.e("NovaVpnApp", "createNotificationChannels failed", t)
+            runCatching { LogRepository.e("NovaVpnApp", "Notification channel setup failed: ${t.message}") }
+        }
+        try {
+            ServiceLocator.init(this)
+            appScope.launch {
+                try {
+                    ServiceLocator.settingsRepository.ensurePerInstallRandomPorts()
+                } catch (t: Throwable) {
+                    Log.e("NovaVpnApp", "ensurePerInstallRandomPorts failed", t)
+                    LogRepository.e("NovaVpnApp", "Port initialization failed: ${t.message}")
+                }
+            }
+        } catch (t: Throwable) {
+            Log.e("NovaVpnApp", "ServiceLocator.init failed", t)
+            ServiceLocator.recordInitError(t)
+            runCatching {
+                LogRepository.e("NovaVpnApp", "Startup init failed: ${Log.getStackTraceString(t)}")
+            }
         }
     }
 
@@ -62,6 +89,10 @@ object ServiceLocator {
     @Volatile
     private var initialized = false
 
+    @Volatile
+    var initError: Throwable? = null
+        private set
+
     lateinit var settingsRepository: SettingsRepository
         private set
     lateinit var statsRepository: StatsRepository
@@ -73,6 +104,10 @@ object ServiceLocator {
     lateinit var vpnController: VpnController
         private set
 
+    fun recordInitError(error: Throwable) {
+        initError = error
+    }
+
     fun init(context: Context) {
         if (initialized) return
         synchronized(this) {
@@ -83,6 +118,7 @@ object ServiceLocator {
             diagnosticsEngine = DiagnosticsEngine()
             tunnelOrchestrator = TunnelStartOrchestrator(settingsRepository, diagnosticsEngine)
             vpnController = VpnController(appCtx, settingsRepository, statsRepository, diagnosticsEngine, tunnelOrchestrator)
+            initError = null
             initialized = true
         }
     }

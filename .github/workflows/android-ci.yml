@@ -1,14 +1,24 @@
-name: Nova VPN Android CI
+name: Nova VPN Android CI & Release
 
 on:
   push:
     branches: [ main, develop ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Optional version (e.g. 1.0.2). Leave empty to auto-bump from version.properties"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
 
 jobs:
   test-and-build-debug:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -25,9 +35,9 @@ jobs:
         run: chmod +x gradlew
 
       - name: Run Nova VPN unit tests
-        run: ./gradlew :app:testDebugUnitTest --tests "app.novavpn.*" --stacktrace
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
 
-      - name: Build Debug APK (no secrets required)
+      - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: Upload Debug APK artifact
@@ -36,17 +46,24 @@ jobs:
           name: nova-vpn-debug-apk
           path: app/build/outputs/apk/debug/*.apk
 
-  build-release-signed:
+  publish-github-release:
     needs: test-and-build-debug
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: >
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      (github.event_name == 'workflow_dispatch' ||
+       startsWith(github.ref, 'refs/tags/v') ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     env:
+      GH_TOKEN: ${{ github.token }}
       KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
       STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -55,26 +72,113 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      - name: Resolve Release Version & Tag
+        id: ver
+        run: |
+          set -euo pipefail
+          source app/version.properties
+          CUR_CODE="${VERSION_CODE:-2}"
+          CUR_NAME="${VERSION_NAME:-1.0.1}"
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TARGET_NAME="${GITHUB_REF_NAME#v}"
+            TAG="v${TARGET_NAME}"
+            NEXT_CODE="${CUR_CODE}"
+          elif [[ -n "${{ github.event.inputs.release_version }}" ]]; then
+            TARGET_NAME="${{ github.event.inputs.release_version }}"
+            TARGET_NAME="${TARGET_NAME#v}"
+            TAG="v${TARGET_NAME}"
+            NEXT_CODE="$((CUR_CODE + 1))"
+          else
+            TAG="v${CUR_NAME}"
+            TARGET_NAME="${CUR_NAME}"
+            NEXT_CODE="${CUR_CODE}"
+            while gh release view "${TAG}" >/dev/null 2>&1 || git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; do
+              NEXT_CODE="$((NEXT_CODE + 1))"
+              IFS='.' read -r MAJ MIN PAT <<< "${TARGET_NAME}"
+              PAT="$(( ${PAT:-0} + 1 ))"
+              TARGET_NAME="${MAJ}.${MIN}.${PAT}"
+              TAG="v${TARGET_NAME}"
+            done
+          fi
+
+          cat > app/version.properties <<EOF
+          VERSION_CODE=${NEXT_CODE}
+          VERSION_NAME=${TARGET_NAME}
+          EOF
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${TARGET_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${NEXT_CODE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release ${TAG} (code ${NEXT_CODE})"
+
+      - name: Ensure Native Core Binaries
+        run: |
+          if [[ ! -f app/src/main/jniLibs/arm64-v8a/libaether.so || ! -f app/libs/hev-socks5-tunnel.aar ]]; then
+            chmod +x scripts/build-native.sh
+            ./scripts/build-native.sh
+          fi
+
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Build Signed Release APK (when keystore secrets are present)
-        id: build_release
+      - name: Build Multi-ABI APKs (arm64-v8a, armeabi-v7a, x86_64, universal)
+        id: build_apks
         run: |
+          set -euo pipefail
+          mkdir -p dist
+          TAG="${{ steps.ver.outputs.tag }}"
+
           if [[ -n "${KEYSTORE_BASE64}" && -n "${STORE_PASSWORD}" && -n "${KEY_PASSWORD}" ]]; then
             echo "${KEYSTORE_BASE64}" | base64 --decode > my-upload-key.jks
             export KEYSTORE_PATH="${PWD}/my-upload-key.jks"
-            ./gradlew :app:assembleRelease --stacktrace
+            ./gradlew :app:assembleRelease -PsplitApks=true --stacktrace
             rm -f my-upload-key.jks
-            echo "signed=true" >> "$GITHUB_OUTPUT"
+            APK_DIR="app/build/outputs/apk/release"
+            VARIANT="release"
           else
-            echo "Keystore secrets not configured; skipping signed release build."
-            echo "signed=false" >> "$GITHUB_OUTPUT"
+            if [[ -f debug.keystore.base64 && ! -f debug.keystore ]]; then
+              base64 --decode debug.keystore.base64 > debug.keystore
+            fi
+            ./gradlew :app:assembleDebug -PsplitApks=true --stacktrace
+            APK_DIR="app/build/outputs/apk/debug"
+            VARIANT="debug"
           fi
 
-      - name: Upload Signed Release APK
-        if: steps.build_release.outputs.signed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: nova-vpn-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          shopt -s nullglob
+          for apk in "${APK_DIR}"/*.apk; do
+            base="$(basename "$apk")"
+            case "$base" in
+              *arm64-v8a*)  cp "$apk" "dist/NovaVPN-${TAG}-arm64-v8a.apk" ;;
+              *armeabi-v7a*) cp "$apk" "dist/NovaVPN-${TAG}-armeabi-v7a.apk" ;;
+              *x86_64*)     cp "$apk" "dist/NovaVPN-${TAG}-x86_64.apk" ;;
+              *universal*)  cp "$apk" "dist/NovaVPN-${TAG}-universal.apk" ;;
+              *)            cp "$apk" "dist/NovaVPN-${TAG}-${VARIANT}.apk" ;;
+            esac
+          done
+
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          ls -lh dist/
+
+      - name: Commit updated version.properties (best-effort)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          if ! git diff --quiet app/version.properties; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add app/version.properties
+            git commit -m "chore(release): bump version to ${{ steps.ver.outputs.tag }} [skip ci]" || true
+            git push || true
+          fi
+
+      - name: Create GitHub Release with ABI APKs
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/*.apk dist/SHA256SUMS.txt --clobber
+          else
+            gh release create "${TAG}" dist/*.apk dist/SHA256SUMS.txt \
+              --title "Nova VPN ${TAG}" \
+              --generate-notes \
+              --latest
+          fi

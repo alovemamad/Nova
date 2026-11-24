@@ -74,6 +74,8 @@ class GitHubUpdaterTest {
         )
         val chosen = GitHubUpdater.selectBestApkAsset(assets, listOf("arm64-v8a"))
         assertEquals("Nova-universal-release.apk", chosen?.name)
+        val x86Chosen = GitHubUpdater.selectBestApkAsset(assets, listOf("x86"))
+        assertEquals("Nova-universal-release.apk", x86Chosen?.name)
         assertNull(GitHubUpdater.selectBestApkAsset(emptyList(), listOf("arm64-v8a")))
     }
 }

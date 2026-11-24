@@ -28,6 +28,8 @@ plugins {
   alias(libs.plugins.kotlin.serialization)
 }
 
+val splitApks = providers.gradleProperty("splitApks").orNull == "true"
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -41,8 +43,21 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    ndk {
-      abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+    if (!splitApks) {
+      ndk {
+        abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+      }
+    }
+  }
+
+  if (splitApks) {
+    splits {
+      abi {
+        isEnable = true
+        reset()
+        include("arm64-v8a", "armeabi-v7a", "x86_64")
+        isUniversalApk = true
+      }
     }
   }
 

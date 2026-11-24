@@ -57,13 +57,36 @@ object GitHubUpdater {
                 .header("User-Agent", "NovaVPN/$currentVersion")
                 .build()
             httpClient().newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    val msg = if (resp.code == 404) {
-                        "No published GitHub release found yet (HTTP 404)."
-                    } else {
-                        "GitHub returned HTTP ${resp.code}"
+                if (resp.code == 404) {
+                    val listReq = Request.Builder()
+                        .url("https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases?per_page=1")
+                        .header("Accept", "application/vnd.github+json")
+                        .header("User-Agent", "NovaVPN/$currentVersion")
+                        .build()
+                    httpClient().newCall(listReq).execute().use { listResp ->
+                        if (listResp.isSuccessful) {
+                            val arrBody = listResp.body?.string().orEmpty()
+                            val arr = runCatching { json.parseToJsonElement(arrBody).jsonArray }.getOrNull()
+                            val firstObj = arr?.firstOrNull() as? JsonObject
+                            if (firstObj != null) {
+                                return@withContext parseLatestReleaseJson(
+                                    firstObj.toString(),
+                                    currentVersion,
+                                    supportedAbis
+                                )
+                            }
+                        }
                     }
-                    return@withContext UpdateInfo(checking = false, error = msg)
+                    return@withContext UpdateInfo(
+                        checking = false,
+                        error = "No published GitHub release found yet (alovemamad/Nova)."
+                    )
+                }
+                if (!resp.isSuccessful) {
+                    return@withContext UpdateInfo(
+                        checking = false,
+                        error = "GitHub returned HTTP ${resp.code}"
+                    )
                 }
                 val body = resp.body?.string() ?: error("Empty response from GitHub")
                 parseLatestReleaseJson(body, currentVersion, supportedAbis)
@@ -119,17 +142,22 @@ object GitHubUpdater {
         supportedAbis: List<String>
     ): ReleaseApkAsset? {
         if (assets.isEmpty()) return null
-        val abiAliases = mapOf(
+        val abiPatterns = mapOf(
             "arm64-v8a" to listOf("arm64-v8a", "arm64", "aarch64"),
             "armeabi-v7a" to listOf("armeabi-v7a", "armeabi", "armv7"),
-            "x86_64" to listOf("x86_64", "x64"),
+            "x86_64" to listOf("x86_64", "x64", "amd64"),
             "x86" to listOf("x86")
         )
         for (abi in supportedAbis) {
-            val aliases = abiAliases[abi.lowercase()] ?: listOf(abi.lowercase())
+            val normalizedAbi = abi.lowercase()
+            val aliases = abiPatterns[normalizedAbi] ?: listOf(normalizedAbi)
             val found = assets.firstOrNull { asset ->
                 val lower = asset.name.lowercase()
-                aliases.any { alias -> lower.contains(alias) }
+                if (normalizedAbi == "x86") {
+                    Regex("(^|[-_])x86(?!_?64)([-_.]|$)").containsMatchIn(lower)
+                } else {
+                    aliases.any { alias -> lower.contains(alias) }
+                }
             }
             if (found != null) return found
         }

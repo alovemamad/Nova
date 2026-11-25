@@ -61,7 +61,6 @@ import app.novavpn.ui.glass.LocalGlassTiltAngle
 import app.novavpn.ui.glass.LocalGlassTiltOffset
 import app.novavpn.ui.glass.NovaDestination
 import app.novavpn.ui.glass.glassTiltAngleDegrees
-import app.novavpn.ui.glass.layerBackdrop
 import app.novavpn.ui.glass.rememberGlassChromeBackdrops
 import app.novavpn.ui.glass.rememberGlassTilt
 import app.novavpn.ui.home.HomeScreen
@@ -189,7 +188,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
             LocalGlassTiltAngle provides tiltAngle
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
-                GlassWallpaperLayer(backdrop = chrome.wall)
+                GlassWallpaperLayer()
 
                 AnimatedContent(
                     targetState = settings.onboardingCompleted,
@@ -253,11 +252,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                     }
 
                                     Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .layerBackdrop(chrome.content)
-                                        ) {
+                                        Box(modifier = Modifier.fillMaxSize()) {
                                             NavHost(
                                                 navController = navController,
                                                 startDestination = NovaDestination.Home,

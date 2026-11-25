@@ -153,6 +153,8 @@
     <string name="settings_connect_control">Connect Control</string>
     <string name="settings_accent_tint">Accent Tint</string>
     <string name="settings_dynamic_color">Dynamic System Colors</string>
+    <string name="settings_dynamic_color_active">Active · Using wallpaper colors (overrides Accent Tint)</string>
+    <string name="settings_dynamic_color_inactive">Match app accents and glass to your system wallpaper</string>
     <string name="settings_motion_tilt">Motion Tilt Highlights</string>
     <string name="settings_reduce_transparency">Reduce Transparency</string>
     <string name="settings_home_speed">Live Speed Card on Home</string>

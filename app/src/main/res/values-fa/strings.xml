@@ -153,6 +153,8 @@
     <string name="settings_connect_control">دکمه اتصال</string>
     <string name="settings_accent_tint">رنگ تاکیدی</string>
     <string name="settings_dynamic_color">رنگ پویا از تصویر زمینه</string>
+    <string name="settings_dynamic_color_active">فعال · هماهنگ با رنگ تصویر زمینه گوشی</string>
+    <string name="settings_dynamic_color_inactive">هماهنگ‌سازی رنگ برنامه و شیشه‌ها با تصویر زمینه</string>
     <string name="settings_motion_tilt">بازتاب نور با حرکت گوشی</string>
     <string name="settings_reduce_transparency">کاهش شفافیت (عملکرد بالاتر)</string>
     <string name="settings_home_speed">کارت سرعت لحظه‌ای در صفحه اصلی</string>

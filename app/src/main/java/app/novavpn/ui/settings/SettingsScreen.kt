@@ -368,6 +368,27 @@ fun SettingsScreen(
                         }
                     }
 
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    GlassDivider()
+                    GlassSwitchRow(
+                        title = stringResource(R.string.settings_dynamic_color),
+                        subtitle = stringResource(
+                            if (settings.dynamicColor) R.string.settings_dynamic_color_active
+                            else R.string.settings_dynamic_color_inactive
+                        ),
+                        icon = GlassIcons.Palette,
+                        checked = settings.dynamicColor,
+                        onCheckedChange = { checked -> onUpdateSettings { it.copy(dynamicColor = checked) } }
+                    )
+                }
+
+                GlassDivider()
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     Text(stringResource(R.string.settings_accent_tint), style = MaterialTheme.typography.labelLarge, color = look.textSecondary)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -375,31 +396,28 @@ fun SettingsScreen(
                     ) {
                         GlassTint.entries.forEach { tint ->
                             val (primaryTint, _) = resolveGlassTintColor(tint, look.isDark)
-                            val selected = settings.glass.tint == tint
+                            val selected = settings.glass.tint == tint && !look.dynamicColor
                             Box(
                                 modifier = Modifier
                                     .size(34.dp)
                                     .clip(CircleShape)
-                                    .background(primaryTint)
+                                    .background(primaryTint.copy(alpha = if (look.dynamicColor) 0.55f else 1f))
                                     .border(
                                         width = if (selected) 3.dp else 1.dp,
                                         color = if (selected) look.textPrimary else Color.Transparent,
                                         shape = CircleShape
                                     )
-                                    .clickable { onUpdateSettings { it.copy(glass = it.glass.copy(tint = tint)) } }
+                                    .clickable {
+                                        onUpdateSettings {
+                                            it.copy(
+                                                dynamicColor = false,
+                                                glass = it.glass.copy(tint = tint)
+                                            )
+                                        }
+                                    }
                             )
                         }
                     }
-                }
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    GlassDivider()
-                    GlassSwitchRow(
-                        title = stringResource(R.string.settings_dynamic_color),
-                        icon = GlassIcons.Palette,
-                        checked = settings.dynamicColor,
-                        onCheckedChange = { checked -> onUpdateSettings { it.copy(dynamicColor = checked) } }
-                    )
                 }
                 GlassDivider()
                 GlassSwitchRow(

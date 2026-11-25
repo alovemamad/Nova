@@ -172,6 +172,8 @@ fun NovaVpnTheme(
         LocaleContextWrapper(baseContext, baseContext.createConfigurationContext(config))
     }
 
+    val dynamicActive = settings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
     CompositionLocalProvider(
         LocalContext provides localizedContext,
         LocalConfiguration provides localizedContext.resources.configuration,
@@ -187,6 +189,8 @@ fun NovaVpnTheme(
             GlassThemeProvider(
                 isDark = isDark,
                 glassPrefs = settings.glass,
+                dynamicColor = dynamicActive,
+                colorScheme = colorScheme,
                 latin = !isFa,
                 content = content
             )

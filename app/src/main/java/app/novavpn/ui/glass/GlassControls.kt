@@ -1,8 +1,4 @@
 package app.novavpn.ui.glass
-
-import android.graphics.RenderEffect
-import android.graphics.Shader
-import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -52,7 +48,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -279,13 +274,6 @@ private fun NovaZedGlassControl(
     )
 
     val source = remember { MutableInteractionSource() }
-    val glowModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !look.prefs.reduceTransparency) {
-        Modifier.graphicsLayer {
-            renderEffect = RenderEffect.createBlurEffect(36f, 36f, Shader.TileMode.DECAL).asComposeRenderEffect()
-        }
-    } else {
-        Modifier
-    }
 
     Box(
         modifier = modifier
@@ -295,16 +283,17 @@ private fun NovaZedGlassControl(
         contentAlignment = Alignment.Center
     ) {
         if (glowColor.alpha > 0f) {
-            Canvas(
-                modifier = Modifier
-                    .size(196.dp)
-                    .then(glowModifier)
-            ) {
-                drawRoundRect(
-                    brush = Brush.linearGradient(
-                        listOf(glowColor.copy(alpha = 0.65f * breathe), look.secondaryAccent.copy(alpha = 0.45f * breathe))
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val r = size.minDimension / 2f
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        0f to glowColor.copy(alpha = 0.48f * breathe),
+                        0.55f to look.secondaryAccent.copy(alpha = 0.22f * breathe),
+                        1f to Color.Transparent,
+                        center = center,
+                        radius = r
                     ),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(46.dp.toPx())
+                    radius = r
                 )
             }
         }

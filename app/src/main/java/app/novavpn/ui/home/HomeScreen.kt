@@ -795,7 +795,7 @@ fun HomeScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Text(
-                                        text = if (isIndependent && activeProfile != null) {
+                                        text = if (activeProfile != null && activeProfile.isCountryIndependent) {
                                             activeProfile.name
                                         } else {
                                             stringResource(R.string.home_country_picker_title)

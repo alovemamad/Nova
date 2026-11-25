@@ -1,10 +1,14 @@
 package app.novavpn.ui.glass
 
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import app.novavpn.domain.model.GlassMaterial
 import app.novavpn.domain.model.GlassPrefs
 import app.novavpn.domain.model.GlassTint
@@ -14,6 +18,7 @@ import app.novavpn.domain.model.GlassWallpaper
 data class GlassLook(
     val isDark: Boolean,
     val prefs: GlassPrefs,
+    val dynamicColor: Boolean = false,
     val accent: Color,
     val secondaryAccent: Color,
     val textPrimary: Color,
@@ -60,6 +65,7 @@ val LocalGlassLook = compositionLocalOf {
     GlassLook(
         isDark = true,
         prefs = GlassPrefs(),
+        dynamicColor = false,
         accent = Color(0xFF00D2E0),
         secondaryAccent = Color(0xFF6D7CFF),
         textPrimary = Color.White,
@@ -73,10 +79,10 @@ val LocalGlassLook = compositionLocalOf {
         chrome = Color(0x801C1D24),
         chromeSolid = Color(0xFF28282C),
         page = Color(0xFF000000),
-        rimHi = Color(0x94FFFFFF),
-        rimMid = Color(0x12FFFFFF),
-        rimLo = Color(0x42FFFFFF),
-        highlight = Color(0x38FFFFFF),
+        rimHi = Color(0x70FFFFFF),
+        rimMid = Color(0x16FFFFFF),
+        rimLo = Color(0x36FFFFFF),
+        highlight = Color(0x30FFFFFF),
         platter = Color(0x1CFFFFFF),
         thumb = Color(0x38FFFFFF),
         dim = Color(0x78000000),
@@ -108,89 +114,211 @@ fun resolveGlassTintColor(tint: GlassTint, isDark: Boolean = true): Pair<Color, 
     GlassTint.GRAPHITE -> if (isDark) Color(0xFF98989D) to Color(0xFF636366) else Color(0xFF636366) to Color(0xFF8E8E93)
 }
 
-fun wallpaperStops(wallpaper: GlassWallpaper, isDark: Boolean): List<Color> = if (isDark) {
-    when (wallpaper) {
-        GlassWallpaper.LAGOON -> listOf(Color(0xFF031327), Color(0xFF051C36), Color(0xFF010812))
-        GlassWallpaper.MIST -> listOf(Color(0xFF141820), Color(0xFF0B0D13), Color(0xFF040508))
-        GlassWallpaper.DUSK -> listOf(Color(0xFF1A0712), Color(0xFF1A0D2E), Color(0xFF0A0410))
-        GlassWallpaper.GRAPHITE -> listOf(Color(0xFF121317), Color(0xFF0B0C10), Color(0xFF050506))
-        GlassWallpaper.PLAIN -> listOf(Color(0xFF000000), Color(0xFF050608))
+fun wallpaperStops(
+    wallpaper: GlassWallpaper,
+    isDark: Boolean,
+    dynamicColor: Boolean = false,
+    colorScheme: ColorScheme? = null
+): List<Color> {
+    if (dynamicColor && colorScheme != null) {
+        if (wallpaper == GlassWallpaper.PLAIN) {
+            return if (isDark) {
+                listOf(lerp(colorScheme.background, Color.Black, 0.35f), colorScheme.background)
+            } else {
+                listOf(colorScheme.background, colorScheme.surface)
+            }
+        }
+        return if (isDark) {
+            listOf(
+                lerp(colorScheme.background, colorScheme.primaryContainer, 0.28f),
+                lerp(colorScheme.surface, colorScheme.tertiaryContainer, 0.18f),
+                lerp(colorScheme.background, Color.Black, 0.42f)
+            )
+        } else {
+            listOf(
+                lerp(colorScheme.background, colorScheme.primaryContainer, 0.36f),
+                lerp(colorScheme.surface, colorScheme.tertiaryContainer, 0.24f),
+                lerp(colorScheme.background, colorScheme.secondaryContainer, 0.20f)
+            )
+        }
     }
-} else {
-    when (wallpaper) {
-        GlassWallpaper.LAGOON -> listOf(Color(0xFFE2EFFF), Color(0xFFE8F4FA), Color(0xFFEEF5FA))
-        GlassWallpaper.MIST -> listOf(Color(0xFFE4E8EF), Color(0xFFECEEF3), Color(0xFFF2F2F7))
-        GlassWallpaper.DUSK -> listOf(Color(0xFFFFF0E6), Color(0xFFF9EAF5), Color(0xFFF6EDFB))
-        GlassWallpaper.GRAPHITE -> listOf(Color(0xFFE1E5EC), Color(0xFFE7EAEF), Color(0xFFECEEF2))
-        GlassWallpaper.PLAIN -> listOf(Color(0xFFF2F2F7), Color(0xFFF2F2F7))
+
+    return if (isDark) {
+        when (wallpaper) {
+            GlassWallpaper.LAGOON -> listOf(Color(0xFF031327), Color(0xFF051C36), Color(0xFF010812))
+            GlassWallpaper.MIST -> listOf(Color(0xFF141820), Color(0xFF0B0D13), Color(0xFF040508))
+            GlassWallpaper.DUSK -> listOf(Color(0xFF1A0712), Color(0xFF1A0D2E), Color(0xFF0A0410))
+            GlassWallpaper.GRAPHITE -> listOf(Color(0xFF121317), Color(0xFF0B0C10), Color(0xFF050506))
+            GlassWallpaper.PLAIN -> listOf(Color(0xFF000000), Color(0xFF050608))
+        }
+    } else {
+        when (wallpaper) {
+            GlassWallpaper.LAGOON -> listOf(Color(0xFFD5E9FF), Color(0xFFE1F0FC), Color(0xFFE8F3FA))
+            GlassWallpaper.MIST -> listOf(Color(0xFFDCE3EE), Color(0xFFE5EAF2), Color(0xFFECEFF5))
+            GlassWallpaper.DUSK -> listOf(Color(0xFFFBE6D8), Color(0xFFF5E0F0), Color(0xFFEFE4F8))
+            GlassWallpaper.GRAPHITE -> listOf(Color(0xFFD8DEE8), Color(0xFFE0E5ED), Color(0xFFE7EBF1))
+            GlassWallpaper.PLAIN -> listOf(Color(0xFFECEEF4), Color(0xFFF2F3F8))
+        }
     }
+}
+
+fun computeGlassLook(
+    isDark: Boolean,
+    glassPrefs: GlassPrefs,
+    dynamicColor: Boolean = false,
+    colorScheme: ColorScheme? = null,
+    latin: Boolean = true
+): GlassLook {
+    val dynamicScheme = if (dynamicColor) colorScheme else null
+    val useDynamic = dynamicScheme != null
+    val (accent, secondary) = if (dynamicScheme != null) {
+        val primary = dynamicScheme.primary
+        val sec = when {
+            dynamicScheme.tertiary != primary -> dynamicScheme.tertiary
+            dynamicScheme.secondary != primary -> dynamicScheme.secondary
+            else -> lerp(primary, Color.White, 0.25f)
+        }
+        primary to sec
+    } else {
+        resolveGlassTintColor(glassPrefs.tint, isDark)
+    }
+
+    val tinted = glassPrefs.material == GlassMaterial.TINTED
+    val reduced = glassPrefs.reduceTransparency
+
+    val solidCell = when {
+        dynamicScheme != null && isDark -> dynamicScheme.surfaceContainerHigh
+        dynamicScheme != null && !isDark -> dynamicScheme.surfaceContainerLowest
+        isDark -> Color(0xFF1C1C1E)
+        else -> Color(0xFFF9FAFC)
+    }
+
+    val moduleSurface = when {
+        reduced -> solidCell
+        dynamicScheme != null && isDark && tinted ->
+            lerp(dynamicScheme.surfaceContainerHigh, dynamicScheme.primaryContainer, 0.14f).copy(alpha = 0.86f)
+        dynamicScheme != null && isDark ->
+            lerp(dynamicScheme.surfaceContainer, dynamicScheme.primaryContainer, 0.10f).copy(alpha = 0.64f)
+        dynamicScheme != null && !isDark && tinted ->
+            lerp(dynamicScheme.surfaceContainerLow, dynamicScheme.primaryContainer, 0.14f).copy(alpha = 0.84f)
+        dynamicScheme != null ->
+            lerp(dynamicScheme.surfaceContainerLowest, dynamicScheme.primaryContainer, 0.10f).copy(alpha = 0.68f)
+        isDark && tinted -> Color(0xD4262830)
+        isDark -> Color(0x66282A32)
+        tinted -> Color(0xBFEEF3FA)
+        else -> Color(0x78F4F7FC)
+    }
+
+    val chromeSolid = when {
+        dynamicScheme != null && isDark -> dynamicScheme.surfaceContainerHighest
+        dynamicScheme != null && !isDark -> dynamicScheme.surfaceContainerLow
+        isDark -> Color(0xFF28282C)
+        else -> Color(0xFFF3F5FA)
+    }
+
+    val pillSurface = when {
+        reduced -> chromeSolid
+        dynamicScheme != null && isDark && tinted ->
+            lerp(dynamicScheme.surfaceContainerHighest, dynamicScheme.primaryContainer, 0.16f).copy(alpha = 0.90f)
+        dynamicScheme != null && isDark ->
+            lerp(dynamicScheme.surfaceContainerHigh, dynamicScheme.primaryContainer, 0.12f).copy(alpha = 0.78f)
+        dynamicScheme != null && !isDark && tinted ->
+            lerp(dynamicScheme.surfaceContainer, dynamicScheme.primaryContainer, 0.16f).copy(alpha = 0.88f)
+        dynamicScheme != null ->
+            lerp(dynamicScheme.surfaceContainerLow, dynamicScheme.primaryContainer, 0.12f).copy(alpha = 0.74f)
+        isDark && tinted -> Color(0xDC22232A)
+        isDark -> Color(0x821C1D24)
+        tinted -> Color(0xCCEAF0F8)
+        else -> Color(0x8AF4F7FC)
+    }
+
+    val cardSurface = if (glassPrefs.glassLists && !reduced) moduleSurface else solidCell
+    val pageBg = wallpaperStops(glassPrefs.wallpaper, isDark, useDynamic, dynamicScheme).first()
+
+    val sheetColor = when {
+        dynamicScheme != null && isDark ->
+            lerp(dynamicScheme.surfaceContainer, dynamicScheme.background, 0.25f).copy(alpha = 0.96f)
+        dynamicScheme != null ->
+            dynamicScheme.surfaceContainerLowest.copy(alpha = 0.96f)
+        isDark -> Color(0xF21B1C20)
+        else -> Color(0xF5F4F6FA)
+    }
+
+    val textPrimary = when {
+        dynamicScheme != null -> dynamicScheme.onSurface
+        isDark -> Color.White
+        else -> Color(0xFF0A0A0C)
+    }
+    val textSecondary = when {
+        dynamicScheme != null -> dynamicScheme.onSurfaceVariant.copy(alpha = 0.88f)
+        isDark -> Color(0xB8EBEBF5)
+        else -> Color(0xA63C3C43)
+    }
+    val textMuted = when {
+        dynamicScheme != null -> dynamicScheme.onSurfaceVariant.copy(alpha = 0.54f)
+        isDark -> Color(0x6BEBEBF5)
+        else -> Color(0x6B3C3C43)
+    }
+    val separatorColor = when {
+        dynamicScheme != null -> dynamicScheme.outlineVariant.copy(alpha = if (isDark) 0.45f else 0.55f)
+        isDark -> Color(0x24FFFFFF)
+        else -> Color(0x223C3C43)
+    }
+
+    return GlassLook(
+        isDark = isDark,
+        prefs = glassPrefs,
+        dynamicColor = useDynamic,
+        accent = accent,
+        secondaryAccent = secondary,
+        textPrimary = textPrimary,
+        textSecondary = textSecondary,
+        textMuted = textMuted,
+        cardSurface = cardSurface,
+        solidSurface = solidCell,
+        cardBorder = if (isDark) Color(0x3DFFFFFF) else Color(0x80FFFFFF),
+        pillSurface = pillSurface,
+        moduleSurface = moduleSurface,
+        chrome = pillSurface,
+        chromeSolid = chromeSolid,
+        page = pageBg,
+        rimHi = if (isDark) Color(0x70FFFFFF) else Color(0xCCFFFFFF),
+        rimMid = if (isDark) Color(0x16FFFFFF) else Color(0x47FFFFFF),
+        rimLo = if (isDark) Color(0x36FFFFFF) else Color(0x99FFFFFF),
+        highlight = if (isDark) Color(0x30FFFFFF) else Color(0x88FFFFFF),
+        platter = if (isDark) Color(0x22FFFFFF) else Color(0x12000000),
+        thumb = if (isDark) Color(0x38FFFFFF) else Color(0xE8FFFFFF),
+        dim = if (isDark) Color(0x78000000) else Color(0x36000000),
+        sheet = sheetColor,
+        separator = separatorColor,
+        fill = if (isDark) Color(0x5C787880) else Color(0x33787880),
+        fill2 = if (isDark) Color(0x3D767680) else Color(0x1A767680),
+        shadow = if (isDark) Color(0x70000000) else Color(0x1A000000),
+        danger = if (isDark) Color(0xFFFF453A) else Color(0xFFFF383C),
+        warning = if (isDark) Color(0xFFFF9F0A) else Color(0xFFFF8D28),
+        success = if (isDark) Color(0xFF30D158) else Color(0xFF34C759),
+        latin = latin
+    )
 }
 
 @Composable
 fun GlassThemeProvider(
     isDark: Boolean,
     glassPrefs: GlassPrefs,
+    dynamicColor: Boolean = false,
+    colorScheme: ColorScheme = MaterialTheme.colorScheme,
     latin: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val (accent, secondary) = resolveGlassTintColor(glassPrefs.tint, isDark)
-    val tinted = glassPrefs.material == GlassMaterial.TINTED
-    val reduced = glassPrefs.reduceTransparency
-
-    val solidCell = if (isDark) Color(0xFF1C1C1E) else Color.White
-    val moduleSurface = when {
-        reduced -> solidCell
-        isDark && tinted -> Color(0xDB28282C)
-        isDark -> Color(0x66282A32)
-        tinted -> Color(0xD9FFFFFF)
-        else -> Color(0x88FFFFFF)
+    val look = remember(isDark, glassPrefs, dynamicColor, colorScheme, latin) {
+        computeGlassLook(
+            isDark = isDark,
+            glassPrefs = glassPrefs,
+            dynamicColor = dynamicColor,
+            colorScheme = colorScheme,
+            latin = latin
+        )
     }
-
-    val chromeSolid = if (isDark) Color(0xFF28282C) else Color(0xFFF9F9FB)
-    val pillSurface = when {
-        reduced -> chromeSolid
-        isDark && tinted -> Color(0xE0222226)
-        isDark -> Color(0x801C1D24)
-        tinted -> Color(0xD8FFFFFF)
-        else -> Color(0x8CFFFFFF)
-    }
-
-    val cardSurface = if (glassPrefs.glassLists && !reduced) moduleSurface else solidCell
-    val pageBg = wallpaperStops(glassPrefs.wallpaper, isDark).first()
-
-    val look = GlassLook(
-        isDark = isDark,
-        prefs = glassPrefs,
-        accent = accent,
-        secondaryAccent = secondary,
-        textPrimary = if (isDark) Color.White else Color(0xFF0A0A0C),
-        textSecondary = if (isDark) Color(0xB8EBEBF5) else Color(0x9E3C3C43),
-        textMuted = if (isDark) Color(0x6BEBEBF5) else Color(0x5E3C3C43),
-        cardSurface = cardSurface,
-        solidSurface = solidCell,
-        cardBorder = if (isDark) Color(0x42FFFFFF) else Color(0x66FFFFFF),
-        pillSurface = pillSurface,
-        moduleSurface = moduleSurface,
-        chrome = pillSurface,
-        chromeSolid = chromeSolid,
-        page = pageBg,
-        rimHi = if (isDark) Color(0x94FFFFFF) else Color.White,
-        rimMid = if (isDark) Color(0x16FFFFFF) else Color(0x47FFFFFF),
-        rimLo = if (isDark) Color(0x42FFFFFF) else Color(0xCCFFFFFF),
-        highlight = if (isDark) Color(0x38FFFFFF) else Color(0xF2FFFFFF),
-        platter = if (isDark) Color(0x22FFFFFF) else Color(0x12000000),
-        thumb = if (isDark) Color(0x38FFFFFF) else Color(0xF5FFFFFF),
-        dim = if (isDark) Color(0x78000000) else Color(0x36000000),
-        sheet = if (isDark) Color(0xF21B1C20) else Color(0xF5F7F8FA),
-        separator = if (isDark) Color(0x1FFFFFFF) else Color(0x243C3C43),
-        fill = if (isDark) Color(0x5C787880) else Color(0x33787880),
-        fill2 = if (isDark) Color(0x3D767680) else Color(0x1A767680),
-        shadow = if (isDark) Color(0x80000000) else Color(0x1F000000),
-        danger = if (isDark) Color(0xFFFF453A) else Color(0xFFFF383C),
-        warning = if (isDark) Color(0xFFFF9F0A) else Color(0xFFFF8D28),
-        success = if (isDark) Color(0xFF30D158) else Color(0xFF34C759),
-        latin = latin
-    )
 
     CompositionLocalProvider(LocalGlassLook provides look, content = content)
 }

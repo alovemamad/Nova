@@ -1,9 +1,6 @@
 package app.novavpn.ui.glass
 
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
 import android.graphics.RenderEffect
-import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
 import androidx.compose.runtime.Composable
@@ -15,19 +12,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.RoundRect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
@@ -43,7 +35,6 @@ import kotlin.math.PI
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.min
 import kotlin.math.sin
 
 fun isRenderEffectSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -111,7 +102,7 @@ data class GlassShadowSpec(
 )
 
 class BackdropEffectScope internal constructor(
-    val size: Size,
+    val size: androidx.compose.ui.geometry.Size,
     val layoutDirection: LayoutDirection,
     val density: Float
 ) {
@@ -136,130 +127,13 @@ class BackdropEffectScope internal constructor(
     }
 }
 
-private const val LENS_AGSL_SRC = """
-    uniform shader content;
-    uniform float2 resolution;
-    uniform float cornerRadius;
-    uniform float refractionHeight;
-    uniform float refractionAmount;
-    uniform float aberration;
-
-    float sdRoundRect(float2 p, float2 b, float r) {
-        float2 q = abs(p) - b + r;
-        return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
-    }
-
-    half4 main(float2 fragCoord) {
-        float2 halfSize = resolution * 0.5;
-        float2 p = fragCoord - halfSize;
-        float r = min(cornerRadius, min(halfSize.x, halfSize.y));
-        float dist = sdRoundRect(p, halfSize, r);
-        float band = clamp(1.0 + dist / max(refractionHeight, 1.0), 0.0, 1.0);
-        float2 dir = length(p) > 0.001 ? normalize(p) : float2(0.0, 0.0);
-        float shift = band * band * refractionAmount;
-        float2 baseCoord = clamp(fragCoord - dir * shift, float2(0.0), resolution - 1.0);
-        if (aberration > 0.5 && shift > 0.25) {
-            float2 rCoord = clamp(fragCoord - dir * (shift * 1.18), float2(0.0), resolution - 1.0);
-            float2 bCoord = clamp(fragCoord - dir * (shift * 0.82), float2(0.0), resolution - 1.0);
-            half4 cr = content.eval(rCoord);
-            half4 cg = content.eval(baseCoord);
-            half4 cb = content.eval(bCoord);
-            return half4(cr.r, cg.g, cb.b, cg.a);
-        }
-        return content.eval(baseCoord);
-    }
-"""
-
 private data class CachedBackdropState(
-    var lastSize: Size = Size.Unspecified,
+    var lastSize: androidx.compose.ui.geometry.Size = androidx.compose.ui.geometry.Size.Unspecified,
     var lastLayoutDirection: LayoutDirection? = null,
     var outline: Outline? = null,
-    var path: Path = Path(),
-    var cornerRadiusPx: Float = 0f,
-    var lastEffectKey: BackdropEffectKey? = null,
-    var runtimeShader: RuntimeShader? = null,
+    var lastBlurPx: Float = -1f,
     var composeRenderEffect: androidx.compose.ui.graphics.RenderEffect? = null
 )
-
-private data class BackdropEffectKey(
-    val width: Float,
-    val height: Float,
-    val cornerRadiusPx: Float,
-    val useVibrancy: Boolean,
-    val blurRadiusPx: Float,
-    val lensHeightPx: Float,
-    val lensAmountPx: Float,
-    val lensAberration: Boolean
-)
-
-private val SHARED_VIBRANCY_FILTER: ColorMatrixColorFilter by lazy {
-    val matrix = ColorMatrix().apply { setSaturation(1.42f) }
-    ColorMatrixColorFilter(matrix)
-}
-
-private fun buildBackdropRenderEffect(
-    scope: BackdropEffectScope,
-    cornerRadiusPx: Float,
-    cache: CachedBackdropState
-): androidx.compose.ui.graphics.RenderEffect? {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
-
-    val key = BackdropEffectKey(
-        width = scope.size.width,
-        height = scope.size.height,
-        cornerRadiusPx = cornerRadiusPx,
-        useVibrancy = scope.useVibrancy,
-        blurRadiusPx = scope.blurRadiusPx,
-        lensHeightPx = scope.lensHeightPx,
-        lensAmountPx = scope.lensAmountPx,
-        lensAberration = scope.lensAberration
-    )
-    if (cache.lastEffectKey == key) {
-        return cache.composeRenderEffect
-    }
-
-    var effect: RenderEffect? = null
-
-    if (scope.useVibrancy) {
-        effect = RenderEffect.createColorFilterEffect(SHARED_VIBRANCY_FILTER)
-    }
-
-    if (scope.blurRadiusPx > 0.5f) {
-        val blur = RenderEffect.createBlurEffect(
-            scope.blurRadiusPx,
-            scope.blurRadiusPx,
-            Shader.TileMode.CLAMP
-        )
-        effect = if (effect != null) RenderEffect.createChainEffect(blur, effect) else blur
-    }
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-        scope.lensAmountPx > 0.5f &&
-        scope.lensHeightPx > 0.5f &&
-        scope.size.width > 4f &&
-        scope.size.height > 4f
-    ) {
-        val lensEffect = runCatching {
-            val shader = cache.runtimeShader ?: RuntimeShader(LENS_AGSL_SRC).also {
-                cache.runtimeShader = it
-            }
-            shader.setFloatUniform("resolution", scope.size.width, scope.size.height)
-            shader.setFloatUniform("cornerRadius", cornerRadiusPx)
-            shader.setFloatUniform("refractionHeight", scope.lensHeightPx)
-            shader.setFloatUniform("refractionAmount", scope.lensAmountPx)
-            shader.setFloatUniform("aberration", if (scope.lensAberration) 1f else 0f)
-            RenderEffect.createRuntimeShaderEffect(shader, "content")
-        }.getOrNull()
-        if (lensEffect != null) {
-            effect = if (effect != null) RenderEffect.createChainEffect(lensEffect, effect) else lensEffect
-        }
-    }
-
-    val composeEffect = effect?.asComposeRenderEffect()
-    cache.lastEffectKey = key
-    cache.composeRenderEffect = composeEffect
-    return composeEffect
-}
 
 fun Modifier.drawBackdrop(
     backdrop: GlassBackdrop?,
@@ -273,7 +147,6 @@ fun Modifier.drawBackdrop(
     onDrawFront: (DrawScope.() -> Unit)? = null
 ): Modifier = composed {
     val blurLayer = rememberGraphicsLayer()
-    val compositeLayer = rememberGraphicsLayer()
     val cache = remember { CachedBackdropState() }
     var selfPos by remember { mutableStateOf(Offset.Zero) }
 
@@ -292,17 +165,11 @@ fun Modifier.drawBackdrop(
             }
 
             if (cache.lastSize != size || cache.lastLayoutDirection != layoutDirection || cache.outline == null) {
-                val newOutline = shape.createOutline(size, layoutDirection, this)
-                cache.outline = newOutline
-                cache.path.reset()
-                cache.path.addOutline(newOutline)
-                cache.cornerRadiusPx = estimateCornerRadiusPx(newOutline, size)
+                cache.outline = shape.createOutline(size, layoutDirection, this)
                 cache.lastSize = size
                 cache.lastLayoutDirection = layoutDirection
             }
             val outline = cache.outline!!
-            val shapePath = cache.path
-            val cornerRadiusPx = cache.cornerRadiusPx
 
             shadow?.invoke()?.let { s ->
                 if (s.color.alpha > 0f && s.radius > 0.dp) {
@@ -310,49 +177,56 @@ fun Modifier.drawBackdrop(
                 }
             }
 
-            val effectScope = BackdropEffectScope(size, layoutDirection, density).apply(effects)
-            val renderEffect = if (backdrop != null && isRenderEffectSupported()) {
-                buildBackdropRenderEffect(effectScope, cornerRadiusPx, cache)
-            } else {
-                null
-            }
-
-            val drawCapturedBackdrop: () -> Unit = {
-                if (backdrop != null && isRenderEffectSupported()) {
-                    val activeSources = backdrop.layers.filter { src ->
-                        val l = src.recordedLayer
-                        l != null && src !== exportedBackdrop && l.size.width > 0 && l.size.height > 0
+            if (backdrop != null && isRenderEffectSupported()) {
+                val effectScope = BackdropEffectScope(size, layoutDirection, density).apply(effects)
+                if (effectScope.blurRadiusPx != cache.lastBlurPx) {
+                    cache.composeRenderEffect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && effectScope.blurRadiusPx > 0.5f) {
+                        RenderEffect.createBlurEffect(
+                            effectScope.blurRadiusPx,
+                            effectScope.blurRadiusPx,
+                            Shader.TileMode.CLAMP
+                        ).asComposeRenderEffect()
+                    } else {
+                        null
                     }
-                    if (activeSources.isNotEmpty()) {
-                        blurLayer.renderEffect = renderEffect
-                        blurLayer.record(size = intSize) {
-                            activeSources.forEach { src ->
-                                val srcLayer = src.recordedLayer ?: return@forEach
-                                val dx = src.rootPosition.x - selfPos.x
-                                val dy = src.rootPosition.y - selfPos.y
-                                translate(left = dx, top = dy) {
-                                    drawLayer(srcLayer)
-                                }
+                    cache.lastBlurPx = effectScope.blurRadiusPx
+                }
+
+                val activeSources = backdrop.layers.filter { src ->
+                    val l = src.recordedLayer
+                    l != null && src !== exportedBackdrop && l.size.width > 0 && l.size.height > 0
+                }
+                if (activeSources.isNotEmpty()) {
+                    blurLayer.clip = true
+                    blurLayer.renderEffect = cache.composeRenderEffect
+                    when (outline) {
+                        is Outline.Rounded -> blurLayer.setRoundRectOutline(
+                            cornerRadius = outline.roundRect.topLeftCornerRadius.x
+                        )
+                        is Outline.Rectangle -> blurLayer.setRectOutline()
+                        is Outline.Generic -> blurLayer.setPathOutline(outline.path)
+                    }
+                    blurLayer.record(size = intSize) {
+                        activeSources.forEach { src ->
+                            val srcLayer = src.recordedLayer ?: return@forEach
+                            val dx = src.rootPosition.x - selfPos.x
+                            val dy = src.rootPosition.y - selfPos.y
+                            translate(left = dx, top = dy) {
+                                drawLayer(srcLayer)
                             }
                         }
+                    }
+                    if (onDrawBackdrop != null) {
+                        onDrawBackdrop { drawLayer(blurLayer) }
+                    } else {
                         drawLayer(blurLayer)
                     }
                 }
             }
 
-            clipPath(shapePath) {
-                if (onDrawBackdrop != null) {
-                    compositeLayer.record(size = intSize) {
-                        onDrawBackdrop(drawCapturedBackdrop)
-                    }
-                    drawLayer(compositeLayer)
-                } else {
-                    drawCapturedBackdrop()
-                }
-                onDrawSurface?.invoke(this)
-                highlight?.invoke()?.let { h ->
-                    drawDirectionalHighlight(shapePath, size, h)
-                }
+            onDrawSurface?.invoke(this)
+            highlight?.invoke()?.let { h ->
+                drawDirectionalHighlightOutline(outline, size, h)
             }
 
             this@drawWithContent.drawContent()
@@ -360,25 +234,16 @@ fun Modifier.drawBackdrop(
         }
 }
 
-private fun estimateCornerRadiusPx(outline: Outline, size: Size): Float = when (outline) {
-    is Outline.Rounded -> {
-        val rr: RoundRect = outline.roundRect
-        maxOf(rr.topLeftCornerRadius.x, rr.topRightCornerRadius.x)
-    }
-    is Outline.Rectangle -> 0f
-    is Outline.Generic -> min(size.width, size.height) * 0.5f
-}
-
 private fun DrawScope.drawSoftShapeShadow(outline: Outline, spec: GlassShadowSpec) {
-    val layers = 3
-    val spread = spec.radius.toPx() * 0.45f
+    val layers = 2
+    val spread = spec.radius.toPx() * 0.4f
     val ox = spec.offset.x.toPx()
     val oy = spec.offset.y.toPx()
     for (i in layers downTo 1) {
         val frac = i / layers.toFloat()
         val strokeW = spread * frac
-        val alpha = spec.color.alpha * (1f - frac * 0.65f) / layers
-        translate(left = ox, top = oy + strokeW * 0.25f) {
+        val alpha = spec.color.alpha * (1f - frac * 0.55f) / layers
+        translate(left = ox, top = oy + strokeW * 0.22f) {
             drawOutline(
                 outline = outline,
                 color = spec.color.copy(alpha = alpha.coerceIn(0f, 1f)),
@@ -388,9 +253,9 @@ private fun DrawScope.drawSoftShapeShadow(outline: Outline, spec: GlassShadowSpe
     }
 }
 
-private fun DrawScope.drawDirectionalHighlight(
-    shapePath: Path,
-    size: Size,
+private fun DrawScope.drawDirectionalHighlightOutline(
+    outline: Outline,
+    size: androidx.compose.ui.geometry.Size,
     spec: GlassHighlightSpec
 ) {
     if (spec.alpha <= 0f || spec.width <= 0.dp) return
@@ -406,12 +271,12 @@ private fun DrawScope.drawDirectionalHighlight(
     val start = Offset(cx - dx * halfDiag, cy - dy * halfDiag)
     val end = Offset(cx + dx * halfDiag, cy + dy * halfDiag)
 
-    val hi = Color.White.copy(alpha = (0.72f * spec.alpha).coerceIn(0f, 1f))
-    val mid = Color.White.copy(alpha = (0.08f * spec.alpha).coerceIn(0f, 1f))
-    val lo = Color.White.copy(alpha = (0.34f * spec.alpha).coerceIn(0f, 1f))
+    val hi = Color.White.copy(alpha = (0.58f * spec.alpha).coerceIn(0f, 1f))
+    val mid = Color.White.copy(alpha = (0.10f * spec.alpha).coerceIn(0f, 1f))
+    val lo = Color.White.copy(alpha = (0.28f * spec.alpha).coerceIn(0f, 1f))
 
-    drawPath(
-        path = shapePath,
+    drawOutline(
+        outline = outline,
         brush = Brush.linearGradient(
             0f to hi,
             0.32f to mid,
@@ -421,6 +286,6 @@ private fun DrawScope.drawDirectionalHighlight(
             start = start,
             end = end
         ),
-        style = Stroke(width = spec.width.toPx() * 1.4f)
+        style = Stroke(width = spec.width.toPx() * 1.25f)
     )
 }

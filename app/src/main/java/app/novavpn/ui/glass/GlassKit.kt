@@ -60,17 +60,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.addOutline
-import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -82,7 +79,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -90,21 +86,27 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.R
 
 /**
- * Top inner specular bevel highlight clipped to the inside edge of [shape], matching ZedSecure iOS-style Liquid Glass.
+ * Top inner specular bevel highlight clipped cleanly to the outline of [shape], avoiding ClipOp.Difference artifacts.
  */
 fun Modifier.glassHighlight(shape: Shape, color: Color, thickness: Dp = 1.dp): Modifier =
     drawWithCache {
         val outline = shape.createOutline(size, layoutDirection, this)
-        val inner = Path().apply { addOutline(outline) }
-        val shifted = Path().apply {
-            addOutline(outline)
-            translate(Offset(0f, thickness.toPx()))
-        }
+        val strokePx = thickness.toPx().coerceAtLeast(1f)
+        val bevelHeight = (size.height * 0.34f).coerceAtLeast(strokePx * 4f)
+        val topRimBrush = Brush.verticalGradient(
+            0f to color,
+            0.45f to color.copy(alpha = color.alpha * 0.25f),
+            1f to Color.Transparent,
+            startY = 0f,
+            endY = bevelHeight
+        )
         onDrawWithContent {
-            clipPath(inner) {
-                clipPath(shifted, ClipOp.Difference) { drawRect(color) }
-            }
             drawContent()
+            drawOutline(
+                outline = outline,
+                brush = topRimBrush,
+                style = Stroke(width = strokePx * 1.35f)
+            )
         }
     }
 
@@ -142,9 +144,6 @@ fun Modifier.liquidGlass(
 ): Modifier {
     val look = LocalGlassLook.current
     val tilt = LocalGlassTiltOffset.current
-    val tiltAngle = LocalGlassTiltAngle.current
-    val chrome = LocalGlassChrome.current
-    val effectiveBackdrop = backdrop ?: chrome?.wall
     val surfaceColor = tintOverride ?: if (elevated) look.pillSurface else look.cardSurface
 
     if (look.reduced) {
@@ -161,56 +160,11 @@ fun Modifier.liquidGlass(
             .border(0.6.dp, look.separator, shape)
     }
 
-    val specularAlpha = if (look.isDark) 0.12f else 0.34f
-    val bottomAlpha = if (look.isDark) 0.04f else 0.10f
+    val specularAlpha = if (look.isDark) 0.11f else 0.22f
+    val bottomAlpha = if (look.isDark) 0.05f else 0.08f
+    val shadowElevation = if (elevated) 10.dp else 4.dp
+    val rimWidth = if (elevated) 1.1.dp else 0.9.dp
 
-    if (effectiveBackdrop != null && isRenderEffectSupported()) {
-        return this.drawBackdrop(
-            backdrop = effectiveBackdrop,
-            shape = shape,
-            effects = {
-                vibrancy()
-                blur(if (elevated) 22f * density else 16f * density)
-                if (elevated) {
-                    lens(14f * density, 22f * density, chromaticAberration = true)
-                } else {
-                    lens(10f * density, 14f * density, chromaticAberration = false)
-                }
-            },
-            highlight = {
-                GlassHighlightSpec(
-                    width = 1.dp,
-                    alpha = if (look.isDark) 0.85f else 1f,
-                    style = HighlightStyle.Default(tiltAngle)
-                )
-            },
-            shadow = {
-                GlassShadowSpec(
-                    radius = if (elevated) 18.dp else 10.dp,
-                    offset = DpOffset(0.dp, if (elevated) 6.dp else 3.dp),
-                    color = look.shadow
-                )
-            },
-            onDrawSurface = {
-                drawRect(surfaceColor)
-                val shiftX = tilt.x * size.width * 0.22f
-                val shiftY = tilt.y * size.height * 0.18f
-                drawRect(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = specularAlpha),
-                            Color.Transparent,
-                            look.accent.copy(alpha = bottomAlpha)
-                        ),
-                        start = Offset(shiftX, shiftY),
-                        end = Offset(size.width + shiftX, size.height + shiftY)
-                    )
-                )
-            }
-        )
-    }
-
-    val shadowElevation = if (elevated) 14.dp else 6.dp
     return this
         .shadow(
             elevation = shadowElevation,
@@ -220,24 +174,51 @@ fun Modifier.liquidGlass(
             spotColor = look.shadow
         )
         .clip(shape)
-        .background(surfaceColor, shape)
-        .drawBehind {
-            val shiftX = tilt.x * size.width * 0.25f
-            val shiftY = tilt.y * size.height * 0.20f
-            drawRect(
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = specularAlpha),
-                        Color.Transparent,
-                        look.accent.copy(alpha = bottomAlpha)
-                    ),
-                    start = Offset(shiftX, shiftY),
-                    end = Offset(size.width + shiftX, size.height + shiftY)
-                )
+        .drawWithCache {
+            val outline = shape.createOutline(size, layoutDirection, this)
+            val shiftX = tilt.x * size.width * 0.20f
+            val shiftY = tilt.y * size.height * 0.16f
+            val sheenBrush = Brush.linearGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = specularAlpha),
+                    Color.Transparent,
+                    look.accent.copy(alpha = bottomAlpha)
+                ),
+                start = Offset(shiftX, shiftY),
+                end = Offset(size.width + shiftX, size.height + shiftY)
             )
+            val rimBrush = Brush.linearGradient(
+                0f to look.rimHi,
+                0.28f to look.rimMid,
+                0.50f to Color.Transparent,
+                0.68f to look.rimMid,
+                1f to look.rimLo
+            )
+            val bevelHeight = (size.height * 0.30f).coerceAtLeast(6.dp.toPx())
+            val topBevelBrush = Brush.verticalGradient(
+                0f to look.highlight,
+                0.5f to look.highlight.copy(alpha = look.highlight.alpha * 0.22f),
+                1f to Color.Transparent,
+                startY = 0f,
+                endY = bevelHeight
+            )
+            val rimPx = rimWidth.toPx()
+
+            onDrawBehind {
+                drawOutline(outline = outline, color = surfaceColor)
+                drawOutline(outline = outline, brush = sheenBrush)
+                drawOutline(
+                    outline = outline,
+                    brush = topBevelBrush,
+                    style = Stroke(width = 1.2.dp.toPx())
+                )
+                drawOutline(
+                    outline = outline,
+                    brush = rimBrush,
+                    style = Stroke(width = rimPx)
+                )
+            }
         }
-        .glassHighlight(shape, look.highlight)
-        .glassRim(shape, look)
 }
 
 @Composable

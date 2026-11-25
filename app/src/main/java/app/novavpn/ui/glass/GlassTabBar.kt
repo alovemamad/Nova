@@ -91,7 +91,6 @@ fun GlassTabBar(
     shrunk: Boolean = false
 ) {
     val look = LocalGlassLook.current
-    val chrome = LocalGlassChrome.current
     val haptic = LocalHapticFeedback.current
     val currentIndex = novaTabs.indexOfFirst { it.dest == current }.coerceAtLeast(0)
     val capsule = RoundedCornerShape(32.dp)
@@ -121,8 +120,7 @@ fun GlassTabBar(
                 .height(barHeight)
                 .liquidGlass(
                     shape = capsule,
-                    elevated = true,
-                    backdrop = chrome?.combined
+                    elevated = true
                 )
                 .padding(5.dp)
         ) {
@@ -262,19 +260,38 @@ fun ReportScrollShrink(
 ) {
     val currentCallback by rememberUpdatedState(onShrinkChanged)
     LaunchedEffect(listState) {
-        var lastIndex = 0
-        var lastOffset = 0
+        var anchorIndex = listState.firstVisibleItemIndex
+        var anchorOffset = listState.firstVisibleItemScrollOffset
+        var lastReported: Boolean? = null
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
             .collect { (index, offset) ->
-                if (index == 0 && offset < 24) {
-                    currentCallback(false)
-                } else {
-                    val delta = (index - lastIndex) * 500 + (offset - lastOffset)
-                    if (delta > 16) currentCallback(true)
-                    else if (delta < -16) currentCallback(false)
+                val targetShrunk = when {
+                    index == 0 && offset < 24 -> {
+                        anchorIndex = index
+                        anchorOffset = offset
+                        false
+                    }
+                    else -> {
+                        val delta = (index - anchorIndex) * 400 + (offset - anchorOffset)
+                        when {
+                            delta > 48 -> {
+                                anchorIndex = index
+                                anchorOffset = offset
+                                true
+                            }
+                            delta < -48 -> {
+                                anchorIndex = index
+                                anchorOffset = offset
+                                false
+                            }
+                            else -> lastReported ?: false
+                        }
+                    }
                 }
-                lastIndex = index
-                lastOffset = offset
+                if (lastReported != targetShrunk) {
+                    lastReported = targetShrunk
+                    currentCallback(targetShrunk)
+                }
             }
     }
 }

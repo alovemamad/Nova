@@ -16,6 +16,7 @@ import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.VpnMode
 import app.novavpn.domain.model.VpnProfile
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -88,9 +89,44 @@ object SettingsMigrator {
         if (rawJson.isNullOrBlank()) return defaultProfiles()
         return runCatching {
             val parsed = json.decodeFromString<List<VpnProfile>>(rawJson)
-            parsed.ifEmpty { defaultProfiles() }
+            if (parsed.isEmpty()) {
+                defaultProfiles()
+            } else {
+                ensureIndependentAetherPreset(parsed)
+            }
         }.getOrElse { defaultProfiles() }
     }
+
+    private fun ensureIndependentAetherPreset(profiles: List<VpnProfile>): List<VpnProfile> {
+        val hasIndependentAether = profiles.any { it.id == VpnProfile.PRESET_AETHER_ID }
+        val normalized = profiles.map { profile ->
+            if (profile.id == VpnProfile.PRESET_AETHER_ID && profile.requiresCountry) {
+                profile.copy(requiresCountry = false, psiphonRegion = "")
+            } else {
+                profile
+            }
+        }
+        return if (hasIndependentAether) {
+            normalized
+        } else {
+            val insertAt = if (normalized.firstOrNull()?.id == AppSettings.DEFAULT_PROFILE_ID) 1 else 0
+            normalized.toMutableList().apply {
+                add(insertAt, independentAetherPreset())
+            }
+        }
+    }
+
+    fun independentAetherPreset(): VpnProfile = VpnProfile(
+        id = VpnProfile.PRESET_AETHER_ID,
+        name = "Aether",
+        routeChain = RouteChain.AETHER,
+        aetherProtocol = AetherProtocol.MASQUE,
+        masqueOverH2 = true,
+        obfuscation = ObfuscationProfile.QUIC_TLS_CAMO,
+        psiphonRegion = "",
+        requiresCountry = false,
+        mtu = 1280
+    )
 
     fun defaultProfiles(): List<VpnProfile> = listOf(
         VpnProfile(
@@ -102,6 +138,7 @@ object SettingsMigrator {
             obfuscation = ObfuscationProfile.AUTO,
             mtu = 1280
         ),
+        independentAetherPreset(),
         VpnProfile(
             id = "preset-aether-masque",
             name = "Aether · MASQUE",
@@ -109,6 +146,8 @@ object SettingsMigrator {
             aetherProtocol = AetherProtocol.MASQUE,
             masqueOverH2 = true,
             obfuscation = ObfuscationProfile.QUIC_TLS_CAMO,
+            requiresCountry = false,
+            psiphonRegion = "",
             mtu = 1280
         ),
         VpnProfile(
@@ -117,6 +156,8 @@ object SettingsMigrator {
             routeChain = RouteChain.AETHER,
             aetherProtocol = AetherProtocol.WIREGUARD,
             obfuscation = ObfuscationProfile.WIREGUARD_NOISE,
+            requiresCountry = false,
+            psiphonRegion = "",
             mtu = 1280
         ),
         VpnProfile(
@@ -126,6 +167,7 @@ object SettingsMigrator {
             aetherProtocol = AetherProtocol.WARP_IN_MASQUE,
             masqueOverH2 = true,
             psiphonRegion = "AUTO",
+            requiresCountry = true,
             mtu = 1280
         ),
         VpnProfile(
@@ -135,6 +177,8 @@ object SettingsMigrator {
             aetherProtocol = AetherProtocol.MASQUE,
             masqueOverH2 = true,
             torUseBridges = false,
+            requiresCountry = false,
+            psiphonRegion = "",
             mtu = 1280
         )
     )
@@ -142,6 +186,12 @@ object SettingsMigrator {
 
 class SettingsRepository(private val context: Context) {
     private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        prettyPrint = false
+        coerceInputValues = true
+    }
+    private val exportJson = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
         prettyPrint = true
@@ -157,17 +207,27 @@ class SettingsRepository(private val context: Context) {
         val LEGACY_MODE = stringPreferencesKey("vpn_mode")
     }
 
-    val settingsFlow: Flow<AppSettings> = context.novaDataStore.data.map { prefs ->
-        SettingsMigrator.migrateSettingsJson(
-            rawJson = prefs[Keys.SETTINGS_JSON],
-            legacyVpnMode = prefs[Keys.LEGACY_MODE],
-            legacyWasOn = prefs[Keys.WAS_VPN_ACTIVE] ?: false
-        )
-    }
+    val settingsFlow: Flow<AppSettings> = context.novaDataStore.data
+        .map { prefs ->
+            Triple(
+                prefs[Keys.SETTINGS_JSON],
+                prefs[Keys.LEGACY_MODE],
+                prefs[Keys.WAS_VPN_ACTIVE] ?: false
+            )
+        }
+        .distinctUntilChanged()
+        .map { (rawJson, legacyMode, legacyWasOn) ->
+            SettingsMigrator.migrateSettingsJson(
+                rawJson = rawJson,
+                legacyVpnMode = legacyMode,
+                legacyWasOn = legacyWasOn
+            )
+        }
 
-    val profilesFlow: Flow<List<VpnProfile>> = context.novaDataStore.data.map { prefs ->
-        SettingsMigrator.migrateProfilesJson(prefs[Keys.PROFILES_JSON])
-    }
+    val profilesFlow: Flow<List<VpnProfile>> = context.novaDataStore.data
+        .map { prefs -> prefs[Keys.PROFILES_JSON] }
+        .distinctUntilChanged()
+        .map { rawJson -> SettingsMigrator.migrateProfilesJson(rawJson) }
 
     suspend fun getSettings(): AppSettings = settingsFlow.first()
 
@@ -268,7 +328,7 @@ class SettingsRepository(private val context: Context) {
             settings = getSettings(),
             profiles = getProfiles()
         )
-        return json.encodeToString(payload)
+        return exportJson.encodeToString(payload)
     }
 
     suspend fun importBackupJson(raw: String): Result<Unit> = runCatching {

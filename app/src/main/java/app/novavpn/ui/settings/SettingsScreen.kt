@@ -56,6 +56,8 @@ import app.novavpn.domain.model.AppLanguage
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.AppThemeMode
 import app.novavpn.domain.model.DigitMode
+import app.novavpn.domain.model.GeoResourceItem
+import app.novavpn.domain.model.GeoResourceStatus
 import app.novavpn.domain.model.GlassConnectControl
 import app.novavpn.domain.model.GlassMaterial
 import app.novavpn.domain.model.GlassTint
@@ -89,7 +91,11 @@ fun SettingsScreen(
     installedApps: List<InstalledAppInfo>,
     logs: List<LogEntry>,
     updateInfo: UpdateInfo,
-    isBatteryOptimizationIgnored: () -> Boolean,
+    batteryOptimizationIgnored: Boolean,
+    geoResources: List<GeoResourceItem> = emptyList(),
+    isUpdatingGeoResources: Boolean = false,
+    geoActionError: String? = null,
+    onRefreshBatteryOptimizationState: () -> Unit = {},
     onUpdateSettings: ((AppSettings) -> AppSettings) -> Unit,
     onLoadApps: () -> Unit,
     onExportBackup: ((String) -> Unit) -> Unit,
@@ -100,6 +106,13 @@ fun SettingsScreen(
     onRetryInstallUpdate: () -> Unit,
     onOpenVpnSettings: () -> Unit,
     onOpenBatterySettings: () -> Unit,
+    onClearGeoError: () -> Unit = {},
+    onAddGeoFromUri: (Uri) -> Unit = {},
+    onAddGeoFromUrl: (String, String?) -> Unit = { _, _ -> },
+    onImportGeoFromQr: (Uri) -> Unit = {},
+    onUpdateAllGeoResources: () -> Unit = {},
+    onRefreshSingleGeoResource: (String) -> Unit = {},
+    onDeleteGeoResource: (String) -> Unit = {},
     onTabBarShrinkChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -108,11 +121,10 @@ fun SettingsScreen(
     val listState = rememberLazyListState()
     ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
 
-    var batteryExempted by remember { mutableStateOf(isBatteryOptimizationIgnored()) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                batteryExempted = isBatteryOptimizationIgnored()
+                onRefreshBatteryOptimizationState()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -126,6 +138,7 @@ fun SettingsScreen(
     var exportedJson by remember { mutableStateOf<String?>(null) }
     var showPortsDialog by remember { mutableStateOf(false) }
     var showSystemKillSwitchDialog by remember { mutableStateOf(false) }
+    var showGeoResourcesDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         state = listState,
@@ -237,21 +250,36 @@ fun SettingsScreen(
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(shareProxyOnLan = checked) } }
                 )
                 GlassDivider()
+                val hasGeoErrors = geoResources.any { it.status == GeoResourceStatus.ERROR }
+                GlassRow(
+                    title = stringResource(R.string.settings_geo_resources),
+                    subtitle = stringResource(R.string.settings_geo_resources_desc),
+                    icon = GlassIcons.Globe,
+                    iconTint = if (hasGeoErrors) look.warning else look.secondaryAccent,
+                    onClick = { showGeoResourcesDialog = true },
+                    modifier = Modifier.testTag("settings_geo_resources_row")
+                ) {
+                    GlassBadge(
+                        text = fmtDigits(stringResource(R.string.settings_geo_count, geoResources.size)),
+                        color = if (hasGeoErrors) look.warning else look.accent
+                    )
+                }
+                GlassDivider()
                 GlassRow(
                     title = stringResource(R.string.settings_battery_opt),
                     subtitle = stringResource(
-                        if (batteryExempted) R.string.settings_battery_exempted
+                        if (batteryOptimizationIgnored) R.string.settings_battery_exempted
                         else R.string.settings_battery_not_exempted
                     ),
                     icon = GlassIcons.Shield,
-                    iconTint = if (batteryExempted) look.success else look.warning,
+                    iconTint = if (batteryOptimizationIgnored) look.success else look.warning,
                     onClick = onOpenBatterySettings,
                     modifier = Modifier.testTag("settings_battery_opt_row")
                 ) {
                     Icon(
-                        imageVector = if (batteryExempted) GlassIcons.CheckCircle else GlassIcons.Warning,
+                        imageVector = if (batteryOptimizationIgnored) GlassIcons.CheckCircle else GlassIcons.Warning,
                         contentDescription = null,
-                        tint = if (batteryExempted) look.success else look.warning,
+                        tint = if (batteryOptimizationIgnored) look.success else look.warning,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -680,6 +708,32 @@ fun SettingsScreen(
                         runCatching { context.startActivity(intent) }
                     }
                 )
+                GlassDivider()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.about_notice_text),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = look.textPrimary,
+                        modifier = Modifier.testTag("about_notice_text")
+                    )
+                    val telegramUrl = stringResource(R.string.about_telegram_url)
+                    GlassCapsuleButton(
+                        text = stringResource(R.string.about_telegram_support),
+                        icon = GlassIcons.Telegram,
+                        prominent = true,
+                        tint = Color(0xFF2AABEE),
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(telegramUrl))
+                            runCatching { context.startActivity(intent) }
+                        },
+                        modifier = Modifier.testTag("about_telegram_button")
+                    )
+                }
             }
         }
     }
@@ -769,6 +823,25 @@ fun SettingsScreen(
                 showPortsDialog = false
             },
             onDismiss = { showPortsDialog = false }
+        )
+    }
+
+    if (showGeoResourcesDialog) {
+        GeoResourcesDialog(
+            resources = geoResources,
+            isUpdatingAll = isUpdatingGeoResources,
+            errorMessage = geoActionError,
+            onClearError = onClearGeoError,
+            onAddFromFile = onAddGeoFromUri,
+            onAddFromUrl = onAddGeoFromUrl,
+            onImportFromQr = onImportGeoFromQr,
+            onUpdateAll = onUpdateAllGeoResources,
+            onRefreshSingle = onRefreshSingleGeoResource,
+            onDeleteResource = onDeleteGeoResource,
+            onDismiss = {
+                onClearGeoError()
+                showGeoResourcesDialog = false
+            }
         )
     }
 }

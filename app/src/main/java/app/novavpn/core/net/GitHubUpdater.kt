@@ -2,11 +2,15 @@ package app.novavpn.core.net
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
 import app.novavpn.core.runCatchingCancellable
+import app.novavpn.data.log.LogRepository
 import app.novavpn.domain.model.UpdateInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,12 +25,20 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
-import java.util.concurrent.TimeUnit
+import java.io.RandomAccessFile
+import java.security.MessageDigest
+import java.util.Locale
 
 data class ReleaseApkAsset(
     val name: String,
     val downloadUrl: String,
     val sizeBytes: Long
+)
+
+data class ApkValidationResult(
+    val valid: Boolean,
+    val versionCode: Long? = null,
+    val errorMessage: String? = null
 )
 
 object GitHubUpdater {
@@ -38,32 +50,32 @@ object GitHubUpdater {
     private val json = Json { ignoreUnknownKeys = true }
 
     private fun httpClient(readTimeoutSec: Long = 20L): OkHttpClient =
-        OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(readTimeoutSec, TimeUnit.SECONDS)
-            .writeTimeout(15, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .build()
+        SharedHttpClient.forTimeout(
+            connectMs = 15_000L,
+            readMs = readTimeoutSec * 1_000L,
+            writeMs = 15_000L,
+            followRedirects = true
+        )
 
     suspend fun checkLatestRelease(
         currentVersion: String,
         supportedAbis: List<String> = Build.SUPPORTED_ABIS.toList()
     ): UpdateInfo = withContext(Dispatchers.IO) {
         runCatchingCancellable {
+            val client = httpClient()
             val req = Request.Builder()
                 .url(LATEST_RELEASE_API_URL)
                 .header("Accept", "application/vnd.github+json")
                 .header("User-Agent", "NovaVPN/$currentVersion")
                 .build()
-            httpClient().newCall(req).execute().use { resp ->
+            client.newCall(req).execute().use { resp ->
                 if (resp.code == 404) {
                     val listReq = Request.Builder()
                         .url("https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases?per_page=1")
                         .header("Accept", "application/vnd.github+json")
                         .header("User-Agent", "NovaVPN/$currentVersion")
                         .build()
-                    httpClient().newCall(listReq).execute().use { listResp ->
+                    client.newCall(listReq).execute().use { listResp ->
                         if (listResp.isSuccessful) {
                             val arrBody = listResp.body?.string().orEmpty()
                             val arr = runCatching { json.parseToJsonElement(arrBody).jsonArray }.getOrNull()
@@ -79,7 +91,7 @@ object GitHubUpdater {
                     }
                     return@withContext UpdateInfo(
                         checking = false,
-                        error = "No published GitHub release found yet (alovemamad/Nova)."
+                        error = "No published GitHub release found yet ($REPO_OWNER/$REPO_NAME)."
                     )
                 }
                 if (!resp.isSuccessful) {
@@ -149,10 +161,10 @@ object GitHubUpdater {
             "x86" to listOf("x86")
         )
         for (abi in supportedAbis) {
-            val normalizedAbi = abi.lowercase()
+            val normalizedAbi = abi.lowercase(Locale.US)
             val aliases = abiPatterns[normalizedAbi] ?: listOf(normalizedAbi)
             val found = assets.firstOrNull { asset ->
-                val lower = asset.name.lowercase()
+                val lower = asset.name.lowercase(Locale.US)
                 if (normalizedAbi == "x86") {
                     Regex("(^|[-_])x86(?!_?64)([-_.]|$)").containsMatchIn(lower)
                 } else {
@@ -161,9 +173,23 @@ object GitHubUpdater {
             }
             if (found != null) return found
         }
+
+        // Universal or ABI-neutral APK fallback — never pick an explicitly incompatible ABI APK
         return assets.firstOrNull { it.name.contains("universal", ignoreCase = true) }
-            ?: assets.firstOrNull { it.name.contains("release", ignoreCase = true) }
-            ?: assets.firstOrNull()
+            ?: assets.firstOrNull { asset ->
+                val lower = asset.name.lowercase(Locale.US)
+                !hasExplicitAbiTag(lower)
+            }
+    }
+
+    private fun hasExplicitAbiTag(lowerName: String): Boolean {
+        return lowerName.contains("arm64") ||
+            lowerName.contains("aarch64") ||
+            lowerName.contains("armeabi") ||
+            lowerName.contains("armv7") ||
+            lowerName.contains("x86_64") ||
+            lowerName.contains("amd64") ||
+            Regex("(^|[-_])x(86|64)([-_.]|$)").containsMatchIn(lowerName)
     }
 
     internal fun compareSemVer(a: String, b: String): Int {
@@ -184,15 +210,19 @@ object GitHubUpdater {
         context: Context,
         downloadUrl: String,
         assetName: String,
+        expectedSizeBytes: Long? = null,
         onProgress: (Float) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatchingCancellable {
-            val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
+            val updatesDir = File(context.filesDir, "updates").apply { mkdirs() }
             updatesDir.listFiles()?.forEach { old ->
-                if (old.isFile && old.name.endsWith(".apk", ignoreCase = true)) {
+                if (old.isFile && (old.name.endsWith(".apk", ignoreCase = true) || old.name.endsWith(".part", ignoreCase = true))) {
                     runCatching { old.delete() }
                 }
             }
+            // Also prune legacy cacheDir/updates files from prior versions
+            runCatching { File(context.cacheDir, "updates").deleteRecursively() }
+
             val safeName = assetName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
                 .ifBlank { "nova-update.apk" }
             val outFile = File(updatesDir, safeName)
@@ -203,27 +233,39 @@ object GitHubUpdater {
                 .header("User-Agent", "NovaVPN-Updater")
                 .build()
 
+            var expectedTotal = expectedSizeBytes?.takeIf { it > 0L } ?: -1L
             httpClient(readTimeoutSec = 120L).newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     error("APK download failed (HTTP ${resp.code})")
                 }
                 val body = resp.body ?: error("Empty APK response")
-                val total = body.contentLength()
+                val headerLen = body.contentLength()
+                if (headerLen > 0L) expectedTotal = headerLen
+
                 body.byteStream().use { input ->
                     FileOutputStream(tmpFile).use { output ->
                         val buffer = ByteArray(16 * 1024)
                         var copied = 0L
                         var lastReported = -1f
+                        var lastIndeterminateAt = 0L
                         while (true) {
                             val read = input.read(buffer)
                             if (read <= 0) break
                             output.write(buffer, 0, read)
                             copied += read
-                            if (total > 0L) {
-                                val pct = (copied.toFloat() / total.toFloat()).coerceIn(0f, 1f)
-                                if (pct - lastReported >= 0.02f || pct >= 1f) {
+                            if (expectedTotal > 0L) {
+                                val pct = (copied.toFloat() / expectedTotal.toFloat()).coerceIn(0f, 0.99f)
+                                if (pct - lastReported >= 0.02f) {
                                     lastReported = pct
                                     onProgress(pct)
+                                }
+                            } else {
+                                val now = System.currentTimeMillis()
+                                if (now - lastIndeterminateAt >= 200L) {
+                                    lastIndeterminateAt = now
+                                    // Smooth progress curve for chunked responses without Content-Length
+                                    val synthetic = (copied / (copied + 12_000_000f)).coerceIn(0.05f, 0.92f)
+                                    onProgress(synthetic)
                                 }
                             }
                         }
@@ -231,13 +273,103 @@ object GitHubUpdater {
                     }
                 }
             }
-            if (tmpFile.exists()) {
-                if (outFile.exists()) outFile.delete()
-                check(tmpFile.renameTo(outFile)) { "Failed to finalize APK file" }
+
+            if (expectedTotal > 0L && tmpFile.length() != expectedTotal) {
+                tmpFile.delete()
+                error("Downloaded APK is incomplete (${tmpFile.length()} / $expectedTotal bytes)")
             }
+
+            check(hasZipMagicHeader(tmpFile)) {
+                tmpFile.delete()
+                "Downloaded file is not a valid APK package"
+            }
+
+            val validation = validateDownloadedApk(context, tmpFile)
+            if (!validation.valid) {
+                tmpFile.delete()
+                error(validation.errorMessage ?: "Downloaded APK failed package verification")
+            }
+
+            if (outFile.exists()) outFile.delete()
+            check(tmpFile.renameTo(outFile)) { "Failed to finalize APK file" }
             onProgress(1f)
+            LogRepository.i("Updater", "Verified update APK '${outFile.name}' (versionCode=${validation.versionCode})")
             outFile
         }
+    }
+
+    internal fun hasZipMagicHeader(file: File): Boolean {
+        if (!file.isFile || file.length() < 64L) return false
+        return runCatching {
+            RandomAccessFile(file, "r").use { raf ->
+                val b0 = raf.read()
+                val b1 = raf.read()
+                b0 == 0x50 && b1 == 0x4B // 'PK' ZIP/APK magic header
+            }
+        }.getOrDefault(false)
+    }
+
+    @Suppress("DEPRECATION")
+    fun validateDownloadedApk(context: Context, apkFile: File): ApkValidationResult {
+        if (!apkFile.isFile || !hasZipMagicHeader(apkFile)) {
+            return ApkValidationResult(valid = false, errorMessage = "Invalid or corrupted APK file")
+        }
+        val pm = context.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            PackageManager.GET_SIGNATURES
+        }
+
+        val archiveInfo = pm.getPackageArchiveInfo(apkFile.absolutePath, flags)
+            ?: return ApkValidationResult(valid = false, errorMessage = "Unable to parse APK manifest")
+
+        if (archiveInfo.packageName != context.packageName) {
+            return ApkValidationResult(
+                valid = false,
+                errorMessage = "Package ID mismatch (${archiveInfo.packageName} != ${context.packageName})"
+            )
+        }
+
+        val apkVersionCode = PackageInfoCompat.getLongVersionCode(archiveInfo)
+        val installedInfo = runCatching { pm.getPackageInfo(context.packageName, flags) }.getOrNull()
+        if (installedInfo != null) {
+            val installedVersionCode = PackageInfoCompat.getLongVersionCode(installedInfo)
+            if (apkVersionCode < installedVersionCode) {
+                return ApkValidationResult(
+                    valid = false,
+                    versionCode = apkVersionCode,
+                    errorMessage = "APK versionCode ($apkVersionCode) is lower than installed ($installedVersionCode)"
+                )
+            }
+            val installedSigs = extractSigningSha256(installedInfo)
+            val apkSigs = extractSigningSha256(archiveInfo)
+            if (installedSigs.isNotEmpty() && apkSigs.isNotEmpty() && installedSigs.intersect(apkSigs).isEmpty()) {
+                return ApkValidationResult(
+                    valid = false,
+                    versionCode = apkVersionCode,
+                    errorMessage = "APK signature mismatch with installed app; cannot upgrade in-place"
+                )
+            }
+        }
+        return ApkValidationResult(valid = true, versionCode = apkVersionCode)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun extractSigningSha256(info: PackageInfo): Set<String> {
+        val rawSigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = info.signingInfo
+            if (signingInfo == null) null
+            else if (signingInfo.hasMultipleSigners()) signingInfo.apkContentsSigners
+            else signingInfo.signingCertificateHistory
+        } else {
+            info.signatures
+        } ?: return emptySet()
+
+        val md = MessageDigest.getInstance("SHA-256")
+        return rawSigs.map { sig ->
+            md.digest(sig.toByteArray()).joinToString("") { "%02x".format(it) }
+        }.toSet()
     }
 
     fun canInstallPackages(context: Context): Boolean {
@@ -248,27 +380,45 @@ object GitHubUpdater {
         }
     }
 
+    @Suppress("DEPRECATION")
     fun launchInstallOrRequestPermission(context: Context, apkFile: File): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !canInstallPackages(context)) {
             val permIntent = Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                 Uri.parse("package:${context.packageName}")
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            runCatching { context.startActivity(permIntent) }
+            context.startActivity(permIntent)
             return false
         }
+
+        val validation = validateDownloadedApk(context, apkFile)
+        check(validation.valid) { validation.errorMessage ?: "Invalid update APK" }
 
         val apkUri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
             apkFile
         )
-        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+
+        val installPkgIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
+            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
+            putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, context.packageName)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(installIntent)
+
+        val pm = context.packageManager
+        val chosenIntent = if (installPkgIntent.resolveActivity(pm) != null) {
+            installPkgIntent
+        } else {
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        }
+        context.startActivity(chosenIntent)
         return true
     }
 }

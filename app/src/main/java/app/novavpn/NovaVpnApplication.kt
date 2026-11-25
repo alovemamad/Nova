@@ -9,6 +9,7 @@ import android.util.Log
 import app.novavpn.core.net.DiagnosticsEngine
 import app.novavpn.core.tun.TunnelStartOrchestrator
 import app.novavpn.data.log.LogRepository
+import app.novavpn.data.store.GeoResourceRepository
 import app.novavpn.data.store.SettingsRepository
 import app.novavpn.data.store.StatsRepository
 import app.novavpn.service.VpnController
@@ -40,9 +41,10 @@ class NovaVpnApplication : Application() {
             appScope.launch {
                 try {
                     ServiceLocator.settingsRepository.ensurePerInstallRandomPorts()
+                    ServiceLocator.geoResourceRepository.loadInitial()
                 } catch (t: Throwable) {
-                    Log.e("NovaVpnApp", "ensurePerInstallRandomPorts failed", t)
-                    LogRepository.e("NovaVpnApp", "Port initialization failed: ${t.message}")
+                    Log.e("NovaVpnApp", "startup async init failed", t)
+                    LogRepository.e("NovaVpnApp", "Startup init failed: ${t.message}")
                 }
             }
         } catch (t: Throwable) {
@@ -97,6 +99,8 @@ object ServiceLocator {
         private set
     lateinit var statsRepository: StatsRepository
         private set
+    lateinit var geoResourceRepository: GeoResourceRepository
+        private set
     lateinit var diagnosticsEngine: DiagnosticsEngine
         private set
     lateinit var tunnelOrchestrator: TunnelStartOrchestrator
@@ -115,6 +119,7 @@ object ServiceLocator {
             val appCtx = context.applicationContext
             settingsRepository = SettingsRepository(appCtx)
             statsRepository = StatsRepository(appCtx)
+            geoResourceRepository = GeoResourceRepository(appCtx)
             diagnosticsEngine = DiagnosticsEngine()
             tunnelOrchestrator = TunnelStartOrchestrator(settingsRepository, diagnosticsEngine)
             vpnController = VpnController(appCtx, settingsRepository, statsRepository, diagnosticsEngine, tunnelOrchestrator)

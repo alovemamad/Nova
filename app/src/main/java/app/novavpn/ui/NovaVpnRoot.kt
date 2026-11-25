@@ -1,6 +1,8 @@
 package app.novavpn.ui
 
 import android.app.Activity
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -34,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -44,6 +47,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import app.novavpn.domain.model.SuggestedFixAction
+import app.novavpn.domain.model.VpnState
 import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
@@ -92,15 +96,42 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
     val diagReport by viewModel.diagnosticReport.collectAsStateWithLifecycle()
     val updateInfo by viewModel.updateInfo.collectAsStateWithLifecycle()
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
+    val lanAddresses by viewModel.lanAddresses.collectAsStateWithLifecycle()
+    val batteryIgnored by viewModel.batteryOptimizationIgnored.collectAsStateWithLifecycle()
+    val geoResources by viewModel.geoResources.collectAsStateWithLifecycle()
+    val isUpdatingGeoResources by viewModel.isUpdatingGeoResources.collectAsStateWithLifecycle()
+    val geoActionError by viewModel.geoActionError.collectAsStateWithLifecycle()
     val uiMessage by viewModel.uiMessage.collectAsStateWithLifecycle()
     val pendingDeepLinkProfile by viewModel.pendingDeepLinkProfile.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(uiMessage) {
         val msg = uiMessage
         if (!msg.isNullOrBlank()) {
             snackbarHostState.showSnackbar(msg)
             viewModel.consumeMessage()
+        }
+    }
+
+    // Show non-blocking disconnect message when transitioning cleanly from active tunnel to DISCONNECTED
+    var previousVpnState by remember { mutableStateOf(status.state) }
+    LaunchedEffect(status.state) {
+        val prev = previousVpnState
+        val curr = status.state
+        if (prev != curr) {
+            previousVpnState = curr
+            val wasActive = prev == VpnState.CONNECTED ||
+                prev == VpnState.CONNECTING ||
+                prev == VpnState.RECONNECTING ||
+                prev == VpnState.PAUSED
+            if (wasActive && curr == VpnState.DISCONNECTED) {
+                Toast.makeText(
+                    context.applicationContext,
+                    context.getString(R.string.msg_disconnect_exit_taunt),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
@@ -197,6 +228,10 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                             }
                         }
 
+                        BackHandler(enabled = currentDest == NovaDestination.Home) {
+                            (context as? Activity)?.finish()
+                        }
+
                         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                             val useRail = maxWidth >= 600.dp
 
@@ -259,11 +294,13 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         speedHistory = speedHistory,
                                                         settings = settings,
                                                         activeProfile = activeProfile,
+                                                        lanAddresses = lanAddresses,
                                                         testingTelemetry = testingTelemetry,
                                                         telemetryUpdatedAtMs = telemetryUpdatedAtMs,
                                                         onToggleConnect = handleConnectOrFix,
                                                         onFreshScanReconnect = { viewModel.connectWithFreshScan() },
                                                         onRefreshTelemetry = { viewModel.refreshTelemetry() },
+                                                        onRefreshLanAddresses = { viewModel.refreshLanAddresses() },
                                                         onOpenLogs = { showLogsDialog = true },
                                                         onSwitchVpnMode = { mode ->
                                                             viewModel.updateSettings { it.copy(vpnMode = mode) }
@@ -324,7 +361,11 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         installedApps = installedApps,
                                                         logs = logs,
                                                         updateInfo = updateInfo,
-                                                        isBatteryOptimizationIgnored = { viewModel.isBatteryOptimizationIgnored() },
+                                                        batteryOptimizationIgnored = batteryIgnored,
+                                                        geoResources = geoResources,
+                                                        isUpdatingGeoResources = isUpdatingGeoResources,
+                                                        geoActionError = geoActionError,
+                                                        onRefreshBatteryOptimizationState = { viewModel.refreshBatteryOptimizationState() },
                                                         onUpdateSettings = { t -> viewModel.updateSettings(t) },
                                                         onLoadApps = { viewModel.loadInstalledApps() },
                                                         onExportBackup = { cb -> viewModel.exportBackupJson(cb) },
@@ -335,6 +376,13 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         onRetryInstallUpdate = { viewModel.retryInstallDownloadedApk() },
                                                         onOpenVpnSettings = { viewModel.openVpnSystemSettings() },
                                                         onOpenBatterySettings = { viewModel.openBatteryOptimizationSettings() },
+                                                        onClearGeoError = { viewModel.clearGeoActionError() },
+                                                        onAddGeoFromUri = { uri -> viewModel.addGeoResourceFromUri(uri) },
+                                                        onAddGeoFromUrl = { url, name -> viewModel.addGeoResourceFromUrl(url, name) },
+                                                        onImportGeoFromQr = { uri -> viewModel.importGeoResourceFromQrImage(uri) },
+                                                        onUpdateAllGeoResources = { viewModel.refreshAllGeoResources() },
+                                                        onRefreshSingleGeoResource = { id -> viewModel.refreshGeoResource(id) },
+                                                        onDeleteGeoResource = { id -> viewModel.deleteGeoResource(id) },
                                                         onTabBarShrinkChanged = { tabBarShrunk = it }
                                                     )
                                                 }

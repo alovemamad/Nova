@@ -91,6 +91,13 @@ fun ProfileEditorDialog(
     var pingLimitText by remember { mutableStateOf((initial?.pingFailureLimit ?: 3).toString()) }
     var extraArgs by remember { mutableStateOf(initial?.extraCoreArgs ?: "") }
     var psiphonRegion by remember { mutableStateOf(initial?.psiphonRegion ?: "AUTO") }
+    val isPresetAether = initial?.id == VpnProfile.PRESET_AETHER_ID
+    var requiresCountry by remember {
+        mutableStateOf(
+            if (isPresetAether) false
+            else initial?.requiresCountry ?: (routeChain == RouteChain.AETHER_PSIPHON || routeChain == RouteChain.PSIPHON_ONLY || routeChain == RouteChain.SMART_AUTO)
+        )
+    }
     var torUseBridges by remember { mutableStateOf(initial?.torUseBridges ?: false) }
     var torBridgesText by remember { mutableStateOf((initial?.torBridges ?: emptyList()).joinToString("\n")) }
     var dnsMode by remember { mutableStateOf(initial?.dnsMode ?: DnsMode.DOH) }
@@ -178,7 +185,8 @@ fun ProfileEditorDialog(
                 pingIntervalSec = pingSec,
                 pingFailureLimit = pingLimit,
                 extraCoreArgs = extraArgs.trim(),
-                psiphonRegion = psiphonRegion,
+                psiphonRegion = if (isPresetAether || !requiresCountry) "" else psiphonRegion.ifBlank { "AUTO" },
+                requiresCountry = if (isPresetAether) false else requiresCountry,
                 torUseBridges = torUseBridges,
                 torBridges = bridges,
                 dnsMode = dnsMode,
@@ -232,28 +240,71 @@ fun ProfileEditorDialog(
                             GlassOptionPill(
                                 label = r.name.replace("_", " "),
                                 selected = routeChain == r,
-                                onClick = { routeChain = r }
+                                onClick = {
+                                    routeChain = r
+                                    if (!isPresetAether) {
+                                        requiresCountry = when (r) {
+                                            RouteChain.AETHER_PSIPHON, RouteChain.PSIPHON_ONLY -> true
+                                            RouteChain.AETHER, RouteChain.AETHER_TOR, RouteChain.TOR_ONLY -> false
+                                            RouteChain.SMART_AUTO -> requiresCountry
+                                        }
+                                    }
+                                }
                             )
                         }
                     }
 
-                    Text(
-                        tr("Psiphon Exit Region", "کشور خروجی سایفون"),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = look.textSecondary
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(PsiphonRegions.ALL, key = { it.code }) { reg ->
-                            val regLabel = if (reg.code == "AUTO") {
-                                if (faUi) "خودکار" else "Auto"
-                            } else {
-                                if (faUi) "${reg.nameFa} (${reg.code})" else "${reg.nameEn} (${reg.code})"
-                            }
-                            GlassOptionPill(
-                                label = "${countryCodeToFlag(reg.code)} $regLabel",
-                                selected = psiphonRegion == reg.code,
-                                onClick = { psiphonRegion = reg.code }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                            Text(
+                                stringResource(R.string.profile_requires_country),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = look.textPrimary
                             )
+                            Text(
+                                stringResource(R.string.profile_requires_country_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = look.textSecondary
+                            )
+                        }
+                        GlassSwitch(
+                            checked = !isPresetAether && requiresCountry,
+                            onCheckedChange = { checked ->
+                                if (!isPresetAether) {
+                                    requiresCountry = checked
+                                }
+                            },
+                            modifier = Modifier.testTag("profile_requires_country_switch")
+                        )
+                    }
+
+                    val showPsiphonRegionPicker = !isPresetAether && requiresCountry &&
+                        (routeChain == RouteChain.AETHER_PSIPHON || routeChain == RouteChain.PSIPHON_ONLY || routeChain == RouteChain.SMART_AUTO)
+                    AnimatedVisibility(visible = showPsiphonRegionPicker) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                tr("Psiphon Exit Region", "کشور خروجی سایفون"),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = look.textSecondary
+                            )
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(PsiphonRegions.ALL, key = { it.code }) { reg ->
+                                    val regLabel = if (reg.code == "AUTO") {
+                                        if (faUi) "خودکار" else "Auto"
+                                    } else {
+                                        if (faUi) "${reg.nameFa} (${reg.code})" else "${reg.nameEn} (${reg.code})"
+                                    }
+                                    GlassOptionPill(
+                                        label = "${countryCodeToFlag(reg.code)} $regLabel",
+                                        selected = psiphonRegion.ifBlank { "AUTO" } == reg.code,
+                                        onClick = { psiphonRegion = reg.code }
+                                    )
+                                }
+                            }
                         }
                     }
                 }

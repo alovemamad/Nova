@@ -99,6 +99,9 @@ class VpnController(
     private var proxyMonitorJob: Job? = null
     private var proxySessionStartMs: Long = 0L
 
+    @Volatile
+    private var lastSurfaceNotifyMs: Long = 0L
+
     fun currentProxyAuth(): SessionProxyAuth? = currentSessionAuth
 
     internal fun updateSessionProxyAuth(auth: SessionProxyAuth?) {
@@ -343,6 +346,7 @@ class VpnController(
                 }
             }
 
+            var pingProbeInFlight = false
             while (isActive && _status.value.state == VpnState.CONNECTED) {
                 delay(1000)
                 tick++
@@ -367,11 +371,20 @@ class VpnController(
                     )
                 }
 
-                if (tick % profile.pingIntervalSec.coerceIn(5, 120) == 0) {
-                    val ping = diagnostics.verifyRealHttpsConnectivity(socksPort, auth).getOrNull()
-                    _status.update { it.copy(pingMs = ping) }
-                    if (ping != null) {
-                        _telemetryUpdatedAtMs.value = System.currentTimeMillis()
+                if (!pingProbeInFlight && tick % profile.pingIntervalSec.coerceIn(5, 120) == 0) {
+                    pingProbeInFlight = true
+                    launch {
+                        try {
+                            val ping = diagnostics.verifyRealHttpsConnectivity(socksPort, auth).getOrNull()
+                            if (_status.value.state == VpnState.CONNECTED) {
+                                _status.update { it.copy(pingMs = ping) }
+                                if (ping != null) {
+                                    _telemetryUpdatedAtMs.value = System.currentTimeMillis()
+                                }
+                            }
+                        } finally {
+                            pingProbeInFlight = false
+                        }
                     }
                 }
             }
@@ -433,7 +446,15 @@ class VpnController(
         ) {
             _telemetryUpdatedAtMs.value = System.currentTimeMillis()
         }
-        notifySystemSurfaces()
+        val stateChanged = after.state != before.state ||
+            after.activeRoute != before.activeRoute ||
+            after.activeProfileName != before.activeProfileName ||
+            after.exitIp != before.exitIp
+        val now = System.currentTimeMillis()
+        if (stateChanged || now - lastSurfaceNotifyMs >= 5_000L) {
+            lastSurfaceNotifyMs = now
+            notifySystemSurfaces()
+        }
     }
 
     internal fun updateSmartProbeStatus(label: String?) {

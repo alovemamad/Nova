@@ -258,4 +258,44 @@
     <string name="home_mode_proxy_short">پروکسی</string>
     <string name="settings_glass_lists">کارت‌ها و لیست‌های شیشه‌ای</string>
     <string name="settings_shrink_tab_bar">جمع‌شدن نوار پایین هنگام اسکرول</string>
+
+    <!-- Connection & Exit Messages -->
+    <string name="home_connected_tagline">این وصل شدنت رو از کی داری؟</string>
+    <string name="msg_disconnect_exit_taunt">برو باهمون وی‌پی‌ان‌های دوهزاریت</string>
+
+    <!-- Independent Aether Profile -->
+    <string name="profile_requires_country">نیاز به انتخاب کشور</string>
+    <string name="profile_requires_country_desc">برای مسیرهای سایفون فعال است؛ پروفایل‌های مستقل مانند Aether بدون انتخاب کشور متصل می‌شوند</string>
+    <string name="profile_independent_badge">بدون نیاز به کشور</string>
+    <string name="home_aether_no_country_desc">پروفایل مستقل — بدون نیاز به انتخاب کشور مستقیماً متصل می‌شود. تنها در صورت نیاز به تغییر به Aether → Psiphon پرچم کشور انتخاب کنید.</string>
+
+    <!-- Geo-Resource (.dat) Manager -->
+    <string name="settings_geo_resources">فایل‌های منبع جغرافیایی (.dat)</string>
+    <string name="settings_geo_resources_desc">مدیریت فایل‌های محلی، افزودن از URL، اسکن QR و به‌روزرسانی پس‌زمینه</string>
+    <string name="settings_geo_count">%1$d منبع</string>
+    <string name="geo_title">مدیریت فایل‌های منبع جغرافیایی</string>
+    <string name="geo_subtitle">افزودن فایل .dat از حافظه، لینک URL یا کد QR</string>
+    <string name="geo_add_file">افزودن فایل</string>
+    <string name="geo_add_url">افزودن URL</string>
+    <string name="geo_scan_qr">اسکن QR</string>
+    <string name="geo_update_all">به‌روزرسانی منابع</string>
+    <string name="geo_updating_all">در حال به‌روزرسانی منابع…</string>
+    <string name="geo_empty">هنوز فایلی اضافه نشده است</string>
+    <string name="geo_empty_sub">فایل .dat را از حافظه انتخاب کنید، لینک URL وارد کنید یا QR اسکن نمایید.</string>
+    <string name="geo_source_local">حافظه دستگاه</string>
+    <string name="geo_source_url">لینک URL</string>
+    <string name="geo_last_updated">آخرین به‌روزرسانی: %1$s</string>
+    <string name="geo_status_ready">آماده</string>
+    <string name="geo_status_updating">در حال دریافت…</string>
+    <string name="geo_status_error">خطا</string>
+    <string name="geo_url_dialog_title">افزودن منبع از طریق URL</string>
+    <string name="geo_url_hint">https://example.com/geosite.dat</string>
+    <string name="geo_name_hint">نام دلخواه فایل (اختیاری، .dat)</string>
+    <string name="geo_refresh_single">به‌روزرسانی</string>
+    <string name="geo_delete">حذف</string>
+
+    <!-- About Notice & Telegram Support -->
+    <string name="about_notice_text">برای این برنامه توسط توسعه‌دهنده زحمت زیادی کشیده شده است. شرعاً استفاده از آن برای کوچکی مجاز نمی‌باشد. اگر یک کوچکی هستید فوراً برنامه را ترک کنید.</string>
+    <string name="about_telegram_support">پشتیبانی تلگرام (momo1f@)</string>
+    <string name="about_telegram_url">https://t.me/momo1f</string>
 </resources>

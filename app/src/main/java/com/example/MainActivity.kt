@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -41,6 +42,7 @@ import app.novavpn.ui.NovaVpnViewModel
 
 class MainActivity : ComponentActivity() {
     private val vpnViewModel: NovaVpnViewModel by viewModels()
+    private var exitMessageShown = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,6 +86,20 @@ class MainActivity : ComponentActivity() {
         setContent {
             NovaVpnRoot(viewModel = vm)
         }
+    }
+
+    override fun finish() {
+        if (!exitMessageShown && !isChangingConfigurations) {
+            exitMessageShown = true
+            runCatching {
+                Toast.makeText(
+                    applicationContext,
+                    getString(R.string.msg_disconnect_exit_taunt),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+        super.finish()
     }
 
     override fun onNewIntent(intent: Intent) {

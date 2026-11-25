@@ -142,16 +142,15 @@ class DiagnosticsEngine {
 
     private fun createClient(socksPort: Int?, auth: SessionProxyAuth?, timeoutMs: Long = 9_000L): OkHttpClient {
         val clamped = timeoutMs.coerceIn(3_000L, 45_000L)
-        val builder = OkHttpClient.Builder()
-            .connectTimeout(clamped, TimeUnit.MILLISECONDS)
-            .readTimeout(clamped, TimeUnit.MILLISECONDS)
-            .writeTimeout(clamped, TimeUnit.MILLISECONDS)
-        if (socksPort != null) {
-            builder
-                .dns(Socks5RemoteDns)
-                .socketFactory(Socks5AuthSocketFactory("127.0.0.1", socksPort, auth))
+        return if (socksPort != null) {
+            SharedHttpClient.forProxy(
+                dns = Socks5RemoteDns,
+                socketFactory = Socks5AuthSocketFactory("127.0.0.1", socksPort, auth),
+                timeoutMs = clamped
+            )
+        } else {
+            SharedHttpClient.forTimeout(connectMs = clamped, readMs = clamped, writeMs = clamped)
         }
-        return builder.build()
     }
 
     suspend fun verifyRealHttpsConnectivity(

@@ -199,6 +199,7 @@ data class VpnProfile(
     val pingFailureLimit: Int = 3,
     val extraCoreArgs: String = "",
     val psiphonRegion: String = "AUTO",
+    val requiresCountry: Boolean = true,
     val torUseBridges: Boolean = false,
     val torBridges: List<String> = emptyList(),
     val dnsMode: DnsMode = DnsMode.DOH,
@@ -208,7 +209,14 @@ data class VpnProfile(
     val directRules: String = "10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16\n*.ir",
     val blockRules: String = "geosite:category-ads-all",
     val updatedAtEpochMs: Long = System.currentTimeMillis()
-)
+) {
+    val isCountryIndependent: Boolean
+        get() = !requiresCountry || id == PRESET_AETHER_ID
+
+    companion object {
+        const val PRESET_AETHER_ID = "preset-aether"
+    }
+}
 
 @Serializable
 data class AutoConnectSettings(

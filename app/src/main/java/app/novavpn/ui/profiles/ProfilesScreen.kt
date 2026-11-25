@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +67,7 @@ import app.novavpn.ui.glass.glassHighlight
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
 import com.example.R
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -78,12 +80,13 @@ fun ProfilesScreen(
     onDeleteProfile: (String) -> Unit,
     onImportText: (String) -> Unit,
     onImportQrImage: (Uri) -> Unit,
-    onGenerateQr: (VpnProfile) -> Pair<String, android.graphics.Bitmap?>,
+    onGenerateQr: suspend (VpnProfile) -> Pair<String, android.graphics.Bitmap?>,
     onNotify: (String) -> Unit,
     onTabBarShrinkChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
+    val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
 
@@ -252,7 +255,12 @@ fun ProfilesScreen(
                                         tint = look.accent
                                     )
                                 }
-                                if (profile.routeChain == RouteChain.AETHER_PSIPHON || profile.routeChain == RouteChain.PSIPHON_ONLY) {
+                                if (profile.isCountryIndependent) {
+                                    ProfileMetaChip(
+                                        text = stringResource(R.string.profile_independent_badge),
+                                        tint = look.success
+                                    )
+                                } else if (profile.routeChain == RouteChain.AETHER_PSIPHON || profile.routeChain == RouteChain.PSIPHON_ONLY) {
                                     ProfileMetaChip(
                                         text = "${countryCodeToFlag(profile.psiphonRegion)} ${profile.psiphonRegion}",
                                         tint = look.secondaryAccent
@@ -295,8 +303,10 @@ fun ProfilesScreen(
                                 size = 40.dp,
                                 tint = look.textSecondary,
                                 onClick = {
-                                    val (uri, bmp) = onGenerateQr(profile)
-                                    qrPreview = Triple(profile.name, uri, bmp)
+                                    scope.launch {
+                                        val (uri, bmp) = onGenerateQr(profile)
+                                        qrPreview = Triple(profile.name, uri, bmp)
+                                    }
                                 }
                             )
                             GlassCircleButton(

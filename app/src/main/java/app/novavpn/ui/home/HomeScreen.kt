@@ -60,6 +60,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,11 +106,13 @@ fun HomeScreen(
     speedHistory: List<Pair<Long, Long>>,
     settings: AppSettings,
     activeProfile: VpnProfile?,
+    lanAddresses: List<LanShareHelper.Addr> = emptyList(),
     testingTelemetry: Boolean = false,
     telemetryUpdatedAtMs: Long = 0L,
     onToggleConnect: () -> Unit,
     onFreshScanReconnect: () -> Unit,
     onRefreshTelemetry: () -> Unit = {},
+    onRefreshLanAddresses: () -> Unit = {},
     onOpenLogs: () -> Unit = {},
     onSwitchVpnMode: (VpnMode) -> Unit = {},
     onPauseResume: () -> Unit,
@@ -127,6 +130,12 @@ fun HomeScreen(
 
     val listState = rememberLazyListState()
     ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
+
+    LaunchedEffect(status.state, status.lanShareActive, status.socksPort) {
+        if (status.lanShareActive && (status.state == VpnState.CONNECTED || status.state == VpnState.RECONNECTING)) {
+            onRefreshLanAddresses()
+        }
+    }
 
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(telemetryUpdatedAtMs) {
@@ -265,6 +274,23 @@ fun HomeScreen(
                 }
 
                 AnimatedVisibility(
+                    visible = status.state == VpnState.CONNECTED,
+                    enter = fadeIn(tween(240)) + expandVertically(),
+                    exit = fadeOut(tween(180)) + shrinkVertically()
+                ) {
+                    Text(
+                        text = stringResource(R.string.home_connected_tagline),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = look.accent,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .padding(top = 8.dp, start = 16.dp, end = 16.dp)
+                            .testTag("home_connected_tagline")
+                    )
+                }
+
+                AnimatedVisibility(
                     visible = settings.glass.homeTimer && (status.state == VpnState.CONNECTED || status.state == VpnState.PAUSED),
                     enter = fadeIn(tween(240)) + expandVertically(),
                     exit = fadeOut(tween(180)) + shrinkVertically()
@@ -368,9 +394,6 @@ fun HomeScreen(
             item {
                 val bindHost = if (status.lanShareActive) "0.0.0.0" else "127.0.0.1"
                 val httpPart = status.httpPort?.let { " · HTTP :$it" } ?: ""
-                val lanAddresses = remember(status.state, status.lanShareActive, status.socksPort) {
-                    if (status.lanShareActive) LanShareHelper.addresses() else emptyList()
-                }
                 val primaryLanIp = lanAddresses.firstOrNull()?.ip ?: bindHost
                 val cardTitle = if (hasCreds) {
                     stringResource(R.string.home_proxy_creds_title)
@@ -722,10 +745,15 @@ fun HomeScreen(
             }
         }
 
-        // Zone 3B: Quick Country Flag Selector — tap any flag to switch region & connect immediately
+        // Zone 3B: Quick Country Flag Selector — respects country-independent Aether profile
         item {
-            val currentCode = activeProfile?.psiphonRegion?.uppercase()?.ifBlank { "AUTO" } ?: "AUTO"
-            val currentRegion = PsiphonRegions.find(currentCode)
+            val isIndependent = activeProfile?.isCountryIndependent == true
+            val currentCode = if (isIndependent) {
+                ""
+            } else {
+                activeProfile?.psiphonRegion?.uppercase()?.ifBlank { "AUTO" } ?: "AUTO"
+            }
+            val currentRegion = PsiphonRegions.find(currentCode.ifBlank { "AUTO" })
             val routeUsesPsiphon = activeProfile?.routeChain == RouteChain.AETHER_PSIPHON ||
                 activeProfile?.routeChain == RouteChain.PSIPHON_ONLY
 
@@ -747,31 +775,57 @@ fun HomeScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(
-                                text = countryCodeToFlag(currentRegion.code),
-                                fontSize = 22.sp
-                            )
+                            if (isIndependent) {
+                                Icon(
+                                    imageVector = GlassIcons.Shield,
+                                    contentDescription = null,
+                                    tint = look.accent,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = countryCodeToFlag(currentRegion.code),
+                                    fontSize = 22.sp
+                                )
+                            }
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
-                                Text(
-                                    text = stringResource(R.string.home_country_picker_title),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = look.textPrimary
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (isIndependent && activeProfile != null) {
+                                            activeProfile.name
+                                        } else {
+                                            stringResource(R.string.home_country_picker_title)
+                                        },
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = look.textPrimary
+                                    )
+                                    if (isIndependent) {
+                                        GlassBadge(
+                                            text = stringResource(R.string.profile_independent_badge),
+                                            color = look.success
+                                        )
+                                    }
+                                }
                                 val regionDisplay = if (faUi) currentRegion.nameFa else currentRegion.nameEn
-                                val sub = if (!routeUsesPsiphon && currentCode == "AUTO") {
-                                    "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
-                                } else if (!routeUsesPsiphon) {
-                                    "$regionDisplay · ${stringResource(R.string.home_country_active_route_hint)}"
-                                } else {
-                                    "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
+                                val sub = when {
+                                    isIndependent -> stringResource(R.string.home_aether_no_country_desc)
+                                    !routeUsesPsiphon && currentCode == "AUTO" ->
+                                        "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
+                                    !routeUsesPsiphon ->
+                                        "$regionDisplay · ${stringResource(R.string.home_country_active_route_hint)}"
+                                    else ->
+                                        "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
                                 }
                                 Text(
                                     text = sub,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = look.textSecondary,
-                                    maxLines = 2,
+                                    maxLines = 3,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -791,7 +845,7 @@ fun HomeScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(PsiphonRegions.POPULAR, key = { it.code }) { region ->
-                            val isSelected = region.code == currentCode
+                            val isSelected = !isIndependent && region.code == currentCode
                             CountryFlagPill(
                                 region = region,
                                 selected = isSelected,
@@ -806,7 +860,11 @@ fun HomeScreen(
     }
 
     if (showCountrySheet) {
-        val currentCode = activeProfile?.psiphonRegion?.uppercase()?.ifBlank { "AUTO" } ?: "AUTO"
+        val currentCode = if (activeProfile?.isCountryIndependent == true) {
+            ""
+        } else {
+            activeProfile?.psiphonRegion?.uppercase()?.ifBlank { "AUTO" } ?: "AUTO"
+        }
         CountryPickerSheet(
             selectedCode = currentCode,
             faUi = faUi,

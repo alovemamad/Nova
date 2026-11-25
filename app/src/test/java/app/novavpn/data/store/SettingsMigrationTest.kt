@@ -1,8 +1,12 @@
 package app.novavpn.data.store
 
 import app.novavpn.domain.model.AppSettings
+import app.novavpn.domain.model.RouteChain
 import app.novavpn.domain.model.VpnMode
+import app.novavpn.domain.model.VpnProfile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -59,5 +63,38 @@ class SettingsMigrationTest {
         val profiles = SettingsMigrator.migrateProfilesJson("{not valid json")
         assertTrue(profiles.isNotEmpty())
         assertEquals(AppSettings.DEFAULT_PROFILE_ID, profiles.first().id)
+    }
+
+    @Test
+    fun `defaultProfiles includes country-independent Aether preset`() {
+        val profiles = SettingsMigrator.defaultProfiles()
+        val aether = profiles.firstOrNull { it.id == VpnProfile.PRESET_AETHER_ID }
+        assertNotNull(aether)
+        assertEquals("Aether", aether!!.name)
+        assertEquals(RouteChain.AETHER, aether.routeChain)
+        assertFalse(aether.requiresCountry)
+        assertTrue(aether.isCountryIndependent)
+    }
+
+    @Test
+    fun `migrateProfilesJson backfills independent Aether preset into older user profile lists`() {
+        val legacyProfilesJson = """
+            [
+              {
+                "id": "custom-user-1",
+                "name": "My Psiphon",
+                "routeChain": "AETHER_PSIPHON",
+                "psiphonRegion": "DE"
+              }
+            ]
+        """.trimIndent()
+        val migrated = SettingsMigrator.migrateProfilesJson(legacyProfilesJson)
+        assertEquals(2, migrated.size)
+        assertTrue(migrated.any { it.id == "custom-user-1" && it.requiresCountry })
+        val aether = migrated.firstOrNull { it.id == VpnProfile.PRESET_AETHER_ID }
+        assertNotNull(aether)
+        assertEquals("Aether", aether!!.name)
+        assertFalse(aether.requiresCountry)
+        assertTrue(aether.isCountryIndependent)
     }
 }

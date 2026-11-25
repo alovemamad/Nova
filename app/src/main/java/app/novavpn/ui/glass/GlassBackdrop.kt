@@ -170,16 +170,58 @@ private const val LENS_AGSL_SRC = """
     }
 """
 
+private data class CachedBackdropState(
+    var lastSize: Size = Size.Unspecified,
+    var lastLayoutDirection: LayoutDirection? = null,
+    var outline: Outline? = null,
+    var path: Path = Path(),
+    var cornerRadiusPx: Float = 0f,
+    var lastEffectKey: BackdropEffectKey? = null,
+    var runtimeShader: RuntimeShader? = null,
+    var composeRenderEffect: androidx.compose.ui.graphics.RenderEffect? = null
+)
+
+private data class BackdropEffectKey(
+    val width: Float,
+    val height: Float,
+    val cornerRadiusPx: Float,
+    val useVibrancy: Boolean,
+    val blurRadiusPx: Float,
+    val lensHeightPx: Float,
+    val lensAmountPx: Float,
+    val lensAberration: Boolean
+)
+
+private val SHARED_VIBRANCY_FILTER: ColorMatrixColorFilter by lazy {
+    val matrix = ColorMatrix().apply { setSaturation(1.42f) }
+    ColorMatrixColorFilter(matrix)
+}
+
 private fun buildBackdropRenderEffect(
     scope: BackdropEffectScope,
-    cornerRadiusPx: Float
-): RenderEffect? {
+    cornerRadiusPx: Float,
+    cache: CachedBackdropState
+): androidx.compose.ui.graphics.RenderEffect? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+
+    val key = BackdropEffectKey(
+        width = scope.size.width,
+        height = scope.size.height,
+        cornerRadiusPx = cornerRadiusPx,
+        useVibrancy = scope.useVibrancy,
+        blurRadiusPx = scope.blurRadiusPx,
+        lensHeightPx = scope.lensHeightPx,
+        lensAmountPx = scope.lensAmountPx,
+        lensAberration = scope.lensAberration
+    )
+    if (cache.lastEffectKey == key) {
+        return cache.composeRenderEffect
+    }
+
     var effect: RenderEffect? = null
 
     if (scope.useVibrancy) {
-        val matrix = ColorMatrix().apply { setSaturation(1.42f) }
-        effect = RenderEffect.createColorFilterEffect(ColorMatrixColorFilter(matrix))
+        effect = RenderEffect.createColorFilterEffect(SHARED_VIBRANCY_FILTER)
     }
 
     if (scope.blurRadiusPx > 0.5f) {
@@ -198,13 +240,14 @@ private fun buildBackdropRenderEffect(
         scope.size.height > 4f
     ) {
         val lensEffect = runCatching {
-            val shader = RuntimeShader(LENS_AGSL_SRC).apply {
-                setFloatUniform("resolution", scope.size.width, scope.size.height)
-                setFloatUniform("cornerRadius", cornerRadiusPx)
-                setFloatUniform("refractionHeight", scope.lensHeightPx)
-                setFloatUniform("refractionAmount", scope.lensAmountPx)
-                setFloatUniform("aberration", if (scope.lensAberration) 1f else 0f)
+            val shader = cache.runtimeShader ?: RuntimeShader(LENS_AGSL_SRC).also {
+                cache.runtimeShader = it
             }
+            shader.setFloatUniform("resolution", scope.size.width, scope.size.height)
+            shader.setFloatUniform("cornerRadius", cornerRadiusPx)
+            shader.setFloatUniform("refractionHeight", scope.lensHeightPx)
+            shader.setFloatUniform("refractionAmount", scope.lensAmountPx)
+            shader.setFloatUniform("aberration", if (scope.lensAberration) 1f else 0f)
             RenderEffect.createRuntimeShaderEffect(shader, "content")
         }.getOrNull()
         if (lensEffect != null) {
@@ -212,7 +255,10 @@ private fun buildBackdropRenderEffect(
         }
     }
 
-    return effect
+    val composeEffect = effect?.asComposeRenderEffect()
+    cache.lastEffectKey = key
+    cache.composeRenderEffect = composeEffect
+    return composeEffect
 }
 
 fun Modifier.drawBackdrop(
@@ -228,11 +274,15 @@ fun Modifier.drawBackdrop(
 ): Modifier = composed {
     val blurLayer = rememberGraphicsLayer()
     val compositeLayer = rememberGraphicsLayer()
+    val cache = remember { CachedBackdropState() }
     var selfPos by remember { mutableStateOf(Offset.Zero) }
 
     this
         .onGloballyPositioned { coords ->
-            selfPos = coords.positionInRoot()
+            val pos = coords.positionInRoot()
+            if (selfPos != pos) {
+                selfPos = pos
+            }
         }
         .drawWithContent {
             val intSize = IntSize(ceil(size.width).toInt(), ceil(size.height).toInt())
@@ -241,9 +291,18 @@ fun Modifier.drawBackdrop(
                 return@drawWithContent
             }
 
-            val outline = shape.createOutline(size, layoutDirection, this)
-            val shapePath = Path().apply { addOutline(outline) }
-            val cornerRadiusPx = estimateCornerRadiusPx(outline, size)
+            if (cache.lastSize != size || cache.lastLayoutDirection != layoutDirection || cache.outline == null) {
+                val newOutline = shape.createOutline(size, layoutDirection, this)
+                cache.outline = newOutline
+                cache.path.reset()
+                cache.path.addOutline(newOutline)
+                cache.cornerRadiusPx = estimateCornerRadiusPx(newOutline, size)
+                cache.lastSize = size
+                cache.lastLayoutDirection = layoutDirection
+            }
+            val outline = cache.outline!!
+            val shapePath = cache.path
+            val cornerRadiusPx = cache.cornerRadiusPx
 
             shadow?.invoke()?.let { s ->
                 if (s.color.alpha > 0f && s.radius > 0.dp) {
@@ -253,7 +312,7 @@ fun Modifier.drawBackdrop(
 
             val effectScope = BackdropEffectScope(size, layoutDirection, density).apply(effects)
             val renderEffect = if (backdrop != null && isRenderEffectSupported()) {
-                buildBackdropRenderEffect(effectScope, cornerRadiusPx)
+                buildBackdropRenderEffect(effectScope, cornerRadiusPx, cache)
             } else {
                 null
             }
@@ -265,7 +324,7 @@ fun Modifier.drawBackdrop(
                         l != null && src !== exportedBackdrop && l.size.width > 0 && l.size.height > 0
                     }
                     if (activeSources.isNotEmpty()) {
-                        blurLayer.renderEffect = renderEffect?.asComposeRenderEffect()
+                        blurLayer.renderEffect = renderEffect
                         blurLayer.record(size = intSize) {
                             activeSources.forEach { src ->
                                 val srcLayer = src.recordedLayer ?: return@forEach

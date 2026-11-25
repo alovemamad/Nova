@@ -515,6 +515,10 @@ class NovaVpnService : VpnService() {
                 }
             }
 
+            var latestDownBps = 0L
+            var latestRxAtMs = lastRxAtMs
+            var pingProbeJob: Job? = null
+
             while (isActive && !coordinator.isPaused && !coordinator.isUserStopping) {
                 delay(1000)
                 tick++
@@ -547,6 +551,7 @@ class NovaVpnService : VpnService() {
 
                     if (downBps > 0L) {
                         lastRxAtMs = now
+                        latestRxAtMs = now
                         stallSince = 0L
                         stallTicks = 0
                     } else if (upBps > 0L && coordinator.state == VpnState.CONNECTED) {
@@ -584,8 +589,12 @@ class NovaVpnService : VpnService() {
                     lastUidTx = nowTx
                     totalDown = (nowRx - startUidRx).coerceAtLeast(0L)
                     totalUp = (nowTx - startUidTx).coerceAtLeast(0L)
-                    if (downBps > 0L) lastRxAtMs = now
+                    if (downBps > 0L) {
+                        lastRxAtMs = now
+                        latestRxAtMs = now
+                    }
                 }
+                latestDownBps = downBps
 
                 val uptime = if (sessionStartMs > 0L) (System.currentTimeMillis() - sessionStartMs) / 1000L else 0L
 
@@ -610,24 +619,27 @@ class NovaVpnService : VpnService() {
                 } else {
                     profile.pingIntervalSec.coerceIn(5, 120)
                 }
-                if (tick % effectiveInterval == 0) {
-                    val result = diagnostics.verifyRealHttpsConnectivity(socksPort, auth, probeTimeoutMs)
-                    val nowAfterProbe = SystemClock.elapsedRealtime()
-                    val recentData = downBps > 0L || (nowAfterProbe - lastRxAtMs < aliveDataWindowMs)
-                    if (result.isSuccess) {
-                        reconnectMachine.onPingSucceeded()
-                        controller.updateRuntimeStatus { it.copy(pingMs = result.getOrNull()) }
-                    } else if (recentData) {
-                        // Active tunnel traffic is flowing; probe timeout is likely link saturation rather than a dead tunnel
-                        reconnectMachine.onPingSucceeded()
-                        controller.updateRuntimeStatus { it.copy(pingMs = null) }
-                    } else {
-                        val decision = reconnectMachine.onPingFailed()
-                        if (decision.action != ReconnectActionType.NONE) {
-                            // Never run stop/reconnect inside telemetryJob (it cancels telemetryJob).
-                            // Dispatch to a sibling job on serviceScope and exit this loop cleanly.
-                            serviceScope.launch { handleReconnectDecision(decision) }
-                            break
+                if (tick % effectiveInterval == 0 && pingProbeJob?.isActive != true) {
+                    pingProbeJob = launch {
+                        val result = diagnostics.verifyRealHttpsConnectivity(socksPort, auth, probeTimeoutMs)
+                        if (coordinator.isPaused || coordinator.isUserStopping) return@launch
+                        val nowAfterProbe = SystemClock.elapsedRealtime()
+                        val recentData = latestDownBps > 0L || (nowAfterProbe - latestRxAtMs < aliveDataWindowMs)
+                        if (result.isSuccess) {
+                            reconnectMachine.onPingSucceeded()
+                            controller.updateRuntimeStatus { it.copy(pingMs = result.getOrNull()) }
+                        } else if (recentData) {
+                            // Active tunnel traffic is flowing; probe timeout is likely link saturation rather than a dead tunnel
+                            reconnectMachine.onPingSucceeded()
+                            controller.updateRuntimeStatus { it.copy(pingMs = null) }
+                        } else {
+                            val decision = reconnectMachine.onPingFailed()
+                            if (decision.action != ReconnectActionType.NONE) {
+                                // Never run stop/reconnect inside telemetryJob (it cancels telemetryJob).
+                                // Dispatch to a sibling job on serviceScope and cancel telemetry cleanly.
+                                serviceScope.launch { handleReconnectDecision(decision) }
+                                telemetryJob?.cancel()
+                            }
                         }
                     }
                 }

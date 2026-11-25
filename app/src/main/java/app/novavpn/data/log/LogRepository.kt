@@ -6,15 +6,20 @@ import app.novavpn.domain.validation.InputValidators
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 object LogRepository {
     private const val MAX_ENTRIES = 800
+    private val lock = Any()
+    private val buffer = ArrayDeque<LogEntry>(MAX_ENTRIES)
     private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
     val logs: StateFlow<List<LogEntry>> = _logs.asStateFlow()
+
+    private val timeFormatThreadLocal = ThreadLocal.withInitial {
+        SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+    }
 
     fun log(level: LogLevel, tag: String, message: String) {
         val redacted = InputValidators.redactSensitiveForLog(message)
@@ -24,10 +29,14 @@ object LogRepository {
             tag = tag,
             message = redacted
         )
-        _logs.update { current ->
-            val next = current + entry
-            if (next.size > MAX_ENTRIES) next.drop(next.size - MAX_ENTRIES) else next
+        val snapshot = synchronized(lock) {
+            if (buffer.size >= MAX_ENTRIES) {
+                buffer.removeFirst()
+            }
+            buffer.addLast(entry)
+            buffer.toList()
         }
+        _logs.value = snapshot
     }
 
     fun i(tag: String, message: String) = log(LogLevel.INFO, tag, message)
@@ -36,13 +45,26 @@ object LogRepository {
     fun d(tag: String, message: String) = log(LogLevel.DEBUG, tag, message)
 
     fun clear() {
-        _logs.update { emptyList() }
+        synchronized(lock) {
+            buffer.clear()
+        }
+        _logs.value = emptyList()
     }
 
     fun exportText(): String {
-        val fmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
-        return _logs.value.joinToString("\n") { entry ->
-            "${fmt.format(Date(entry.timestampMs))} [${entry.level.name}/${entry.tag}] ${entry.message}"
+        val fmt = timeFormatThreadLocal.get()!!
+        val snapshot = _logs.value
+        return buildString(snapshot.size * 72) {
+            snapshot.forEachIndexed { idx, entry ->
+                if (idx > 0) append('\n')
+                append(fmt.format(Date(entry.timestampMs)))
+                append(" [")
+                append(entry.level.name)
+                append('/')
+                append(entry.tag)
+                append("] ")
+                append(entry.message)
+            }
         }
     }
 }

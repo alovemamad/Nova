@@ -187,6 +187,7 @@ fun NovaVpnTheme(
             GlassThemeProvider(
                 isDark = isDark,
                 glassPrefs = settings.glass,
+                latin = !isFa,
                 content = content
             )
         }

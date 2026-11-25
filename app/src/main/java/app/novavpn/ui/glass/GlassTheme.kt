@@ -24,6 +24,9 @@ data class GlassLook(
     val cardBorder: Color,
     val pillSurface: Color,
     val moduleSurface: Color,
+    val chrome: Color,
+    val chromeSolid: Color,
+    val page: Color,
     val rimHi: Color,
     val rimMid: Color,
     val rimLo: Color,
@@ -38,8 +41,12 @@ data class GlassLook(
     val shadow: Color,
     val danger: Color,
     val warning: Color,
-    val success: Color
+    val success: Color,
+    val latin: Boolean = true
 ) {
+    val reduced: Boolean get() = prefs.reduceTransparency
+    val translucent: Boolean get() = prefs.glassLists && !prefs.reduceTransparency
+
     fun pingColor(ms: Int?): Color = when {
         ms == null -> textMuted
         ms <= 0 -> danger
@@ -63,6 +70,9 @@ val LocalGlassLook = compositionLocalOf {
         cardBorder = Color(0x42FFFFFF),
         pillSurface = Color(0x661E1E20),
         moduleSurface = Color(0x612C2C30),
+        chrome = Color(0x801C1D24),
+        chromeSolid = Color(0xFF28282C),
+        page = Color(0xFF000000),
         rimHi = Color(0x94FFFFFF),
         rimMid = Color(0x12FFFFFF),
         rimLo = Color(0x42FFFFFF),
@@ -77,7 +87,8 @@ val LocalGlassLook = compositionLocalOf {
         shadow = Color(0x80000000),
         danger = Color(0xFFFF453A),
         warning = Color(0xFFFF9F0A),
-        success = Color(0xFF30D158)
+        success = Color(0xFF30D158),
+        latin = true
     )
 }
 
@@ -88,9 +99,12 @@ fun resolveGlassTintColor(tint: GlassTint, isDark: Boolean = true): Pair<Color, 
     GlassTint.CYAN -> if (isDark) Color(0xFF3CD3FE) to Color(0xFF6D7CFF) else Color(0xFF0099CC) to Color(0xFF6155F5)
     GlassTint.MINT -> if (isDark) Color(0xFF00DAC3) to Color(0xFF3CD3FE) else Color(0xFF00A896) to Color(0xFF0088FF)
     GlassTint.INDIGO -> if (isDark) Color(0xFF6D7CFF) to Color(0xFFDB34F2) else Color(0xFF5856D6) to Color(0xFFAF52DE)
+    GlassTint.PURPLE -> if (isDark) Color(0xFFDB34F2) to Color(0xFF9E7BFF) else Color(0xFFCB30E0) to Color(0xFF7C4DFF)
     GlassTint.PINK -> if (isDark) Color(0xFFFF375F) to Color(0xFF9E7BFF) else Color(0xFFFF2D55) to Color(0xFF7C4DFF)
+    GlassTint.RED -> if (isDark) Color(0xFFFF453A) to Color(0xFFFF9F0A) else Color(0xFFFF383C) to Color(0xFFFF8D28)
     GlassTint.ORANGE -> if (isDark) Color(0xFFFF9F0A) to Color(0xFFFF375F) else Color(0xFFFF8D28) to Color(0xFFFF2D55)
     GlassTint.GREEN -> if (isDark) Color(0xFF30D158) to Color(0xFF00D2E0) else Color(0xFF28A745) to Color(0xFF00A7B5)
+    GlassTint.BROWN -> if (isDark) Color(0xFFB78A66) to Color(0xFFFF9F0A) else Color(0xFFAC7F5E) to Color(0xFFFF8D28)
     GlassTint.GRAPHITE -> if (isDark) Color(0xFF98989D) to Color(0xFF636366) else Color(0xFF636366) to Color(0xFF8E8E93)
 }
 
@@ -116,6 +130,7 @@ fun wallpaperStops(wallpaper: GlassWallpaper, isDark: Boolean): List<Color> = if
 fun GlassThemeProvider(
     isDark: Boolean,
     glassPrefs: GlassPrefs,
+    latin: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val (accent, secondary) = resolveGlassTintColor(glassPrefs.tint, isDark)
@@ -141,6 +156,7 @@ fun GlassThemeProvider(
     }
 
     val cardSurface = if (glassPrefs.glassLists && !reduced) moduleSurface else solidCell
+    val pageBg = wallpaperStops(glassPrefs.wallpaper, isDark).first()
 
     val look = GlassLook(
         isDark = isDark,
@@ -155,6 +171,9 @@ fun GlassThemeProvider(
         cardBorder = if (isDark) Color(0x42FFFFFF) else Color(0x66FFFFFF),
         pillSurface = pillSurface,
         moduleSurface = moduleSurface,
+        chrome = pillSurface,
+        chromeSolid = chromeSolid,
+        page = pageBg,
         rimHi = if (isDark) Color(0x94FFFFFF) else Color.White,
         rimMid = if (isDark) Color(0x16FFFFFF) else Color(0x47FFFFFF),
         rimLo = if (isDark) Color(0x42FFFFFF) else Color(0xCCFFFFFF),
@@ -169,7 +188,8 @@ fun GlassThemeProvider(
         shadow = if (isDark) Color(0x80000000) else Color(0x1F000000),
         danger = if (isDark) Color(0xFFFF453A) else Color(0xFFFF383C),
         warning = if (isDark) Color(0xFFFF9F0A) else Color(0xFFFF8D28),
-        success = if (isDark) Color(0xFF30D158) else Color(0xFF34C759)
+        success = if (isDark) Color(0xFF30D158) else Color(0xFF34C759),
+        latin = latin
     )
 
     CompositionLocalProvider(LocalGlassLook provides look, content = content)

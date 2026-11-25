@@ -35,12 +35,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Bolt
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PowerSettingsNew
-import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -205,9 +199,9 @@ private fun NovaOrbControl(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
                     imageVector = when {
-                        isPaused -> Icons.Rounded.Pause
-                        isConnected -> Icons.Rounded.Shield
-                        else -> Icons.Rounded.PowerSettingsNew
+                        isPaused -> GlassIcons.Pause
+                        isConnected -> GlassIcons.Shield
+                        else -> GlassIcons.Power
                     },
                     contentDescription = null,
                     tint = when {
@@ -353,9 +347,9 @@ private fun NovaZedGlassControl(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
                     imageVector = when {
-                        isPaused -> Icons.Rounded.Pause
-                        isConnected -> Icons.Rounded.Shield
-                        else -> Icons.Rounded.AutoAwesome
+                        isPaused -> GlassIcons.Pause
+                        isConnected -> GlassIcons.Shield
+                        else -> GlassIcons.Sparkles
                     },
                     contentDescription = stringResource(R.string.ctrl_toggle_vpn),
                     tint = when {
@@ -409,7 +403,7 @@ private fun NovaPillButtonControl(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(
-                imageVector = Icons.Rounded.Bolt,
+                imageVector = GlassIcons.Bolt,
                 contentDescription = null,
                 tint = if (isConnected) look.accent else look.textPrimary
             )
@@ -461,7 +455,7 @@ private fun NovaSwitchControl(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Rounded.PowerSettingsNew,
+                imageVector = GlassIcons.Power,
                 contentDescription = stringResource(R.string.ctrl_toggle_vpn),
                 tint = Color(0xFF041412)
             )
@@ -522,7 +516,7 @@ private fun NovaSlideControl(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Rounded.PowerSettingsNew,
+                imageVector = GlassIcons.Power,
                 contentDescription = stringResource(R.string.ctrl_slide_desc),
                 tint = Color(0xFF041412)
             )

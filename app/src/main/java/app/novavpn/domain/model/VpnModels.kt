@@ -118,9 +118,12 @@ enum class GlassTint {
     CYAN,
     MINT,
     INDIGO,
+    PURPLE,
     PINK,
+    RED,
     ORANGE,
     GREEN,
+    BROWN,
     GRAPHITE
 }
 

@@ -34,6 +34,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,6 +72,12 @@ class VpnController(
     // Last 30 samples of (downBps, upBps) for sparkline
     private val _speedHistory = MutableStateFlow<List<Pair<Long, Long>>>(emptyList())
     val speedHistory: StateFlow<List<Pair<Long, Long>>> = _speedHistory.asStateFlow()
+
+    private val _testingTelemetry = MutableStateFlow(false)
+    val testingTelemetry: StateFlow<Boolean> = _testingTelemetry.asStateFlow()
+
+    private val _telemetryUpdatedAtMs = MutableStateFlow(0L)
+    val telemetryUpdatedAtMs: StateFlow<Long> = _telemetryUpdatedAtMs.asStateFlow()
 
     @Volatile
     private var currentSessionAuth: SessionProxyAuth? = null
@@ -172,6 +180,37 @@ class VpnController(
             }
         }
         notifySystemSurfaces()
+    }
+
+    fun refreshTelemetry() {
+        if (!_testingTelemetry.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                val st = _status.value
+                if (st.state != VpnState.CONNECTED) return@launch
+                val auth = currentSessionAuth
+                coroutineScope {
+                    val pingDeferred = async { diagnostics.verifyRealHttpsConnectivity(st.socksPort, auth) }
+                    val geoDeferred = async { diagnostics.fetchExitIpInfo(st.socksPort, auth) }
+                    val pingMs = pingDeferred.await().getOrNull()
+                    val geo = geoDeferred.await()
+                    if (_status.value.state == VpnState.CONNECTED) {
+                        _status.update { cur ->
+                            cur.copy(
+                                pingMs = pingMs ?: cur.pingMs,
+                                exitIp = geo?.ip ?: cur.exitIp,
+                                exitCountryCode = geo?.countryCode ?: cur.exitCountryCode,
+                                exitCity = geo?.city ?: cur.exitCity
+                            )
+                        }
+                        _telemetryUpdatedAtMs.value = System.currentTimeMillis()
+                        notifySystemSurfaces()
+                    }
+                }
+            } finally {
+                _testingTelemetry.value = false
+            }
+        }
     }
 
     fun needsVpnPermission(settings: AppSettings? = null): Boolean {
@@ -300,6 +339,7 @@ class VpnController(
                     _status.update {
                         it.copy(exitIp = geo.ip, exitCountryCode = geo.countryCode, exitCity = geo.city)
                     }
+                    _telemetryUpdatedAtMs.value = System.currentTimeMillis()
                 }
             }
 
@@ -330,6 +370,9 @@ class VpnController(
                 if (tick % profile.pingIntervalSec.coerceIn(5, 120) == 0) {
                     val ping = diagnostics.verifyRealHttpsConnectivity(socksPort, auth).getOrNull()
                     _status.update { it.copy(pingMs = ping) }
+                    if (ping != null) {
+                        _telemetryUpdatedAtMs.value = System.currentTimeMillis()
+                    }
                 }
             }
         }
@@ -382,7 +425,14 @@ class VpnController(
     }
 
     internal fun updateRuntimeStatus(transform: (VpnRuntimeStatus) -> VpnRuntimeStatus) {
-        _status.update(transform)
+        val before = _status.value
+        val after = transform(before)
+        _status.value = after
+        if ((after.exitIp != null && after.exitIp != before.exitIp) ||
+            (after.pingMs != null && after.pingMs != before.pingMs)
+        ) {
+            _telemetryUpdatedAtMs.value = System.currentTimeMillis()
+        }
         notifySystemSurfaces()
     }
 

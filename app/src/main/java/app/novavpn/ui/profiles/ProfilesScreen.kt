@@ -26,18 +26,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.ContentPaste
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.PhotoLibrary
-import androidx.compose.material.icons.rounded.QrCode2
-import androidx.compose.material.icons.rounded.Route
-import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -68,8 +58,10 @@ import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassCircleButton
 import app.novavpn.ui.glass.GlassDivider
+import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.glassHighlight
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
@@ -87,10 +79,13 @@ fun ProfilesScreen(
     onImportText: (String) -> Unit,
     onImportQrImage: (Uri) -> Unit,
     onGenerateQr: (VpnProfile) -> Pair<String, android.graphics.Bitmap?>,
-    onNotify: (String) -> Unit
+    onNotify: (String) -> Unit,
+    onTabBarShrinkChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
+    val listState = rememberLazyListState()
+    ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
 
     var editingProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -108,6 +103,7 @@ fun ProfilesScreen(
     }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding(),
@@ -138,7 +134,7 @@ fun ProfilesScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GlassCircleButton(
-                        icon = Icons.Rounded.PhotoLibrary,
+                        icon = GlassIcons.Qr,
                         contentDescription = stringResource(R.string.profiles_import),
                         onClick = {
                             qrImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -146,13 +142,13 @@ fun ProfilesScreen(
                         modifier = Modifier.testTag("import_qr_gallery_button")
                     )
                     GlassCircleButton(
-                        icon = Icons.Rounded.ContentPaste,
+                        icon = GlassIcons.Clipboard,
                         contentDescription = stringResource(R.string.profiles_import_title),
                         onClick = { showImportTextDialog = true },
                         modifier = Modifier.testTag("import_text_button")
                     )
                     GlassCircleButton(
-                        icon = Icons.Rounded.Add,
+                        icon = GlassIcons.Plus,
                         contentDescription = stringResource(R.string.profiles_new),
                         onClick = { showCreateDialog = true },
                         tint = look.accent,
@@ -204,7 +200,7 @@ fun ProfilesScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (profile.routeChain == RouteChain.SMART_AUTO) Icons.Rounded.Shield else Icons.Rounded.Route,
+                                imageVector = if (profile.routeChain == RouteChain.SMART_AUTO) GlassIcons.Shield else GlassIcons.Routing,
                                 contentDescription = null,
                                 tint = Color.White,
                                 modifier = Modifier.size(22.dp)
@@ -227,7 +223,7 @@ fun ProfilesScreen(
                                 )
                                 if (isActive) {
                                     Icon(
-                                        imageVector = Icons.Rounded.CheckCircle,
+                                        imageVector = GlassIcons.CheckCircle,
                                         contentDescription = stringResource(R.string.profiles_active),
                                         tint = look.accent,
                                         modifier = Modifier.size(18.dp)
@@ -294,7 +290,7 @@ fun ProfilesScreen(
 
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             GlassCircleButton(
-                                icon = Icons.Rounded.QrCode2,
+                                icon = GlassIcons.QrFill,
                                 contentDescription = stringResource(R.string.profiles_copy_link),
                                 size = 40.dp,
                                 tint = look.textSecondary,
@@ -304,14 +300,14 @@ fun ProfilesScreen(
                                 }
                             )
                             GlassCircleButton(
-                                icon = Icons.Rounded.ContentCopy,
+                                icon = GlassIcons.Copy,
                                 contentDescription = stringResource(R.string.common_copy),
                                 size = 40.dp,
                                 tint = look.textSecondary,
                                 onClick = { onDuplicateProfile(profile.id) }
                             )
                             GlassCircleButton(
-                                icon = Icons.Rounded.Edit,
+                                icon = GlassIcons.Pencil,
                                 contentDescription = stringResource(R.string.profiles_edit),
                                 size = 40.dp,
                                 tint = look.accent,
@@ -319,7 +315,7 @@ fun ProfilesScreen(
                             )
                             if (profiles.size > 1) {
                                 GlassCircleButton(
-                                    icon = Icons.Rounded.Delete,
+                                    icon = GlassIcons.Trash,
                                     contentDescription = stringResource(R.string.common_clear),
                                     size = 40.dp,
                                     tint = look.danger,
@@ -352,7 +348,7 @@ fun ProfilesScreen(
         GlassModalDialog(
             onDismissRequest = { showImportTextDialog = false },
             title = stringResource(R.string.profiles_import_title),
-            icon = Icons.Rounded.ContentPaste
+            icon = GlassIcons.Clipboard
         ) {
             OutlinedTextField(
                 value = importInputText,

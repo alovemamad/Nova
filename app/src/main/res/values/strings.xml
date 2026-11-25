@@ -246,4 +246,16 @@
     <string name="profiles_section_tuning">Tunnel Tuning</string>
     <string name="profiles_section_dns">DNS &amp; Upstream</string>
     <string name="profiles_section_rules">Split Rules</string>
+
+    <!-- Liquid Glass Telemetry & Chrome -->
+    <string name="home_logs">Diagnostic Logs</string>
+    <string name="home_refresh_telemetry">Refresh Telemetry</string>
+    <string name="home_probing">Probing…</string>
+    <string name="home_updated_just_now">Just now</string>
+    <string name="home_updated_ago_sec">%1$ds ago</string>
+    <string name="home_updated_ago_min">%1$dm ago</string>
+    <string name="home_mode_vpn_short">VPN</string>
+    <string name="home_mode_proxy_short">Proxy</string>
+    <string name="settings_glass_lists">Glass Cards &amp; Groups</string>
+    <string name="settings_shrink_tab_bar">Compact Tab Bar on Scroll</string>
 </resources>

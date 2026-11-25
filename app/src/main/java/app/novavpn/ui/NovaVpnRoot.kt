@@ -19,8 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -47,18 +45,25 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import app.novavpn.domain.model.SuggestedFixAction
 import app.novavpn.ui.glass.GlassCapsuleButton
+import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.GlassNavigationRail
 import app.novavpn.ui.glass.GlassTabBar
 import app.novavpn.ui.glass.GlassTopEdge
 import app.novavpn.ui.glass.GlassWallpaperLayer
+import app.novavpn.ui.glass.LocalGlassChrome
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.LocalGlassTiltAngle
 import app.novavpn.ui.glass.LocalGlassTiltOffset
 import app.novavpn.ui.glass.NovaDestination
+import app.novavpn.ui.glass.glassTiltAngleDegrees
+import app.novavpn.ui.glass.layerBackdrop
+import app.novavpn.ui.glass.rememberGlassChromeBackdrops
 import app.novavpn.ui.glass.rememberGlassTilt
 import app.novavpn.ui.home.HomeScreen
 import app.novavpn.ui.onboarding.OnboardingScreen
 import app.novavpn.ui.profiles.ProfilesScreen
+import app.novavpn.ui.settings.LogsViewerDialog
 import app.novavpn.ui.settings.SettingsScreen
 import app.novavpn.ui.stats.StatsScreen
 import app.novavpn.ui.theme.NovaVpnTheme
@@ -79,6 +84,8 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
     val activeProfile by viewModel.activeProfile.collectAsStateWithLifecycle()
     val status by viewModel.runtimeStatus.collectAsStateWithLifecycle()
     val speedHistory by viewModel.speedHistory.collectAsStateWithLifecycle()
+    val testingTelemetry by viewModel.testingTelemetry.collectAsStateWithLifecycle()
+    val telemetryUpdatedAtMs by viewModel.telemetryUpdatedAtMs.collectAsStateWithLifecycle()
     val dailyUsage by viewModel.dailyUsage.collectAsStateWithLifecycle()
     val sessions by viewModel.sessionHistory.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
@@ -99,6 +106,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
 
     var pendingStartAfterPermission by remember { mutableStateOf(false) }
     var pendingRegionConnect by remember { mutableStateOf<String?>(null) }
+    var showLogsDialog by remember { mutableStateOf(false) }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -140,10 +148,17 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
 
     NovaVpnTheme(settings = settings) {
         val look = LocalGlassLook.current
+        val chrome = rememberGlassChromeBackdrops()
         val tilt by rememberGlassTilt(settings.glass.motionHighlights)
-        CompositionLocalProvider(LocalGlassTiltOffset provides tilt) {
+        val tiltAngle = glassTiltAngleDegrees(tilt)
+
+        CompositionLocalProvider(
+            LocalGlassChrome provides chrome,
+            LocalGlassTiltOffset provides tilt,
+            LocalGlassTiltAngle provides tiltAngle
+        ) {
             Box(modifier = Modifier.fillMaxSize()) {
-                GlassWallpaperLayer()
+                GlassWallpaperLayer(backdrop = chrome.wall)
 
                 AnimatedContent(
                     targetState = settings.onboardingCompleted,
@@ -167,6 +182,11 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                             backStack?.destination?.hasRoute<NovaDestination.Stats>() == true -> NovaDestination.Stats
                             backStack?.destination?.hasRoute<NovaDestination.Settings>() == true -> NovaDestination.Settings
                             else -> NovaDestination.Home
+                        }
+
+                        var tabBarShrunk by remember { mutableStateOf(false) }
+                        LaunchedEffect(currentDest, settings.glass.shrinkTabBar) {
+                            tabBarShrunk = false
                         }
 
                         val navigateTo: (NovaDestination) -> Unit = { target ->
@@ -198,118 +218,139 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                     }
 
                                     Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                                        NavHost(
-                                            navController = navController,
-                                            startDestination = NovaDestination.Home,
-                                            enterTransition = {
-                                                val fromIdx = destinationIndex(initialState.destination.route)
-                                                val toIdx = destinationIndex(targetState.destination.route)
-                                                val dir = if (toIdx >= fromIdx) {
-                                                    AnimatedContentTransitionScope.SlideDirection.Start
-                                                } else {
-                                                    AnimatedContentTransitionScope.SlideDirection.End
-                                                }
-                                                slideIntoContainer(dir, tween(280)) + fadeIn(tween(260))
-                                            },
-                                            exitTransition = {
-                                                val fromIdx = destinationIndex(initialState.destination.route)
-                                                val toIdx = destinationIndex(targetState.destination.route)
-                                                val dir = if (toIdx >= fromIdx) {
-                                                    AnimatedContentTransitionScope.SlideDirection.Start
-                                                } else {
-                                                    AnimatedContentTransitionScope.SlideDirection.End
-                                                }
-                                                slideOutOfContainer(dir, tween(260)) + fadeOut(tween(200))
-                                            },
-                                            popEnterTransition = {
-                                                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(280)) + fadeIn(tween(260))
-                                            },
-                                            popExitTransition = {
-                                                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(260)) + fadeOut(tween(200))
-                                            }
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .layerBackdrop(chrome.content)
                                         ) {
-                                            composable<NovaDestination.Home> {
-                                                HomeScreen(
-                                                    status = status,
-                                                    speedHistory = speedHistory,
-                                                    settings = settings,
-                                                    activeProfile = activeProfile,
-                                                    onToggleConnect = handleConnectOrFix,
-                                                    onFreshScanReconnect = { viewModel.connectWithFreshScan() },
-                                                    onPauseResume = { viewModel.pauseOrResume() },
-                                                    onSelectProfileClick = { navigateTo(NovaDestination.Profiles) },
-                                                    onSelectCountryAndConnect = handleSelectCountryAndConnect,
-                                                    onSuggestedFixClick = { action ->
-                                                        when (action) {
-                                                            SuggestedFixAction.GRANT_VPN_PERMISSION -> handleConnectOrFix()
-                                                            SuggestedFixAction.OPEN_BATTERY_SETTINGS -> viewModel.openBatteryOptimizationSettings()
-                                                            SuggestedFixAction.OPEN_VPN_SETTINGS -> viewModel.openVpnSystemSettings()
-                                                            SuggestedFixAction.RUN_DIAGNOSTICS -> {
-                                                                viewModel.runDiagnostics()
-                                                                navigateTo(NovaDestination.Stats)
+                                            NavHost(
+                                                navController = navController,
+                                                startDestination = NovaDestination.Home,
+                                                enterTransition = {
+                                                    val fromIdx = destinationIndex(initialState.destination.route)
+                                                    val toIdx = destinationIndex(targetState.destination.route)
+                                                    val dir = if (toIdx >= fromIdx) {
+                                                        AnimatedContentTransitionScope.SlideDirection.Start
+                                                    } else {
+                                                        AnimatedContentTransitionScope.SlideDirection.End
+                                                    }
+                                                    slideIntoContainer(dir, tween(280)) + fadeIn(tween(260))
+                                                },
+                                                exitTransition = {
+                                                    val fromIdx = destinationIndex(initialState.destination.route)
+                                                    val toIdx = destinationIndex(targetState.destination.route)
+                                                    val dir = if (toIdx >= fromIdx) {
+                                                        AnimatedContentTransitionScope.SlideDirection.Start
+                                                    } else {
+                                                        AnimatedContentTransitionScope.SlideDirection.End
+                                                    }
+                                                    slideOutOfContainer(dir, tween(260)) + fadeOut(tween(200))
+                                                },
+                                                popEnterTransition = {
+                                                    slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(280)) + fadeIn(tween(260))
+                                                },
+                                                popExitTransition = {
+                                                    slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(260)) + fadeOut(tween(200))
+                                                }
+                                            ) {
+                                                composable<NovaDestination.Home> {
+                                                    HomeScreen(
+                                                        status = status,
+                                                        speedHistory = speedHistory,
+                                                        settings = settings,
+                                                        activeProfile = activeProfile,
+                                                        testingTelemetry = testingTelemetry,
+                                                        telemetryUpdatedAtMs = telemetryUpdatedAtMs,
+                                                        onToggleConnect = handleConnectOrFix,
+                                                        onFreshScanReconnect = { viewModel.connectWithFreshScan() },
+                                                        onRefreshTelemetry = { viewModel.refreshTelemetry() },
+                                                        onOpenLogs = { showLogsDialog = true },
+                                                        onSwitchVpnMode = { mode ->
+                                                            viewModel.updateSettings { it.copy(vpnMode = mode) }
+                                                        },
+                                                        onPauseResume = { viewModel.pauseOrResume() },
+                                                        onSelectProfileClick = { navigateTo(NovaDestination.Profiles) },
+                                                        onSelectCountryAndConnect = handleSelectCountryAndConnect,
+                                                        onSuggestedFixClick = { action ->
+                                                            when (action) {
+                                                                SuggestedFixAction.GRANT_VPN_PERMISSION -> handleConnectOrFix()
+                                                                SuggestedFixAction.OPEN_BATTERY_SETTINGS -> viewModel.openBatteryOptimizationSettings()
+                                                                SuggestedFixAction.OPEN_VPN_SETTINGS -> viewModel.openVpnSystemSettings()
+                                                                SuggestedFixAction.RUN_DIAGNOSTICS -> {
+                                                                    viewModel.runDiagnostics()
+                                                                    navigateTo(NovaDestination.Stats)
+                                                                }
+                                                                SuggestedFixAction.APPLY_SAFE_FIX -> viewModel.applySafeConnectionFix()
+                                                                SuggestedFixAction.SWITCH_TO_HEV_TUN -> viewModel.switchToHevTunFallback()
+                                                                SuggestedFixAction.RESET_PORTS -> viewModel.resetLocalPorts()
+                                                                SuggestedFixAction.FRESH_SCAN -> viewModel.connectWithFreshScan()
+                                                                else -> Unit
                                                             }
-                                                            SuggestedFixAction.APPLY_SAFE_FIX -> viewModel.applySafeConnectionFix()
-                                                            SuggestedFixAction.SWITCH_TO_HEV_TUN -> viewModel.switchToHevTunFallback()
-                                                            SuggestedFixAction.RESET_PORTS -> viewModel.resetLocalPorts()
-                                                            SuggestedFixAction.FRESH_SCAN -> viewModel.connectWithFreshScan()
-                                                            else -> Unit
-                                                        }
-                                                    },
-                                                    onDismissError = { viewModel.clearVpnError() },
-                                                    onPostMessage = { msg -> viewModel.postMessage(msg) }
-                                                )
-                                            }
-                                            composable<NovaDestination.Profiles> {
-                                                ProfilesScreen(
-                                                    profiles = profiles,
-                                                    activeProfileId = settings.activeProfileId,
-                                                    onSelectProfile = { id -> viewModel.selectProfile(id) },
-                                                    onSaveProfile = { prof, setActive -> viewModel.saveProfile(prof, setActive) },
-                                                    onDuplicateProfile = { id -> viewModel.duplicateProfile(id) },
-                                                    onDeleteProfile = { id -> viewModel.deleteProfile(id) },
-                                                    onImportText = { raw -> viewModel.importProfileFromText(raw) },
-                                                    onImportQrImage = { uri -> viewModel.importProfileFromQrImage(uri) },
-                                                    onGenerateQr = { prof -> viewModel.exportProfileQrBitmap(prof) },
-                                                    onNotify = { msg -> viewModel.postMessage(msg) }
-                                                )
-                                            }
-                                            composable<NovaDestination.Stats> {
-                                                StatsScreen(
-                                                    dailyUsage = dailyUsage,
-                                                    sessions = sessions,
-                                                    diagnosticReport = diagReport,
-                                                    onRunDiagnostics = { viewModel.runDiagnostics() },
-                                                    onApplySafeFix = { viewModel.applySafeConnectionFix() },
-                                                    onClearStats = { viewModel.clearUsageStats() }
-                                                )
-                                            }
-                                            composable<NovaDestination.Settings> {
-                                                SettingsScreen(
-                                                    settings = settings,
-                                                    installedApps = installedApps,
-                                                    logs = logs,
-                                                    updateInfo = updateInfo,
-                                                    isBatteryOptimizationIgnored = { viewModel.isBatteryOptimizationIgnored() },
-                                                    onUpdateSettings = { t -> viewModel.updateSettings(t) },
-                                                    onLoadApps = { viewModel.loadInstalledApps() },
-                                                    onExportBackup = { cb -> viewModel.exportBackupJson(cb) },
-                                                    onImportBackup = { raw -> viewModel.importBackupJson(raw) },
-                                                    onClearLogs = { viewModel.clearLogs() },
-                                                    onCheckUpdates = { ver -> viewModel.checkForUpdates(ver) },
-                                                    onDownloadUpdate = { viewModel.downloadAndInstallUpdate() },
-                                                    onRetryInstallUpdate = { viewModel.retryInstallDownloadedApk() },
-                                                    onOpenVpnSettings = { viewModel.openVpnSystemSettings() },
-                                                    onOpenBatterySettings = { viewModel.openBatteryOptimizationSettings() }
-                                                )
+                                                        },
+                                                        onDismissError = { viewModel.clearVpnError() },
+                                                        onPostMessage = { msg -> viewModel.postMessage(msg) },
+                                                        onTabBarShrinkChanged = { tabBarShrunk = it }
+                                                    )
+                                                }
+                                                composable<NovaDestination.Profiles> {
+                                                    ProfilesScreen(
+                                                        profiles = profiles,
+                                                        activeProfileId = settings.activeProfileId,
+                                                        onSelectProfile = { id -> viewModel.selectProfile(id) },
+                                                        onSaveProfile = { prof, setActive -> viewModel.saveProfile(prof, setActive) },
+                                                        onDuplicateProfile = { id -> viewModel.duplicateProfile(id) },
+                                                        onDeleteProfile = { id -> viewModel.deleteProfile(id) },
+                                                        onImportText = { raw -> viewModel.importProfileFromText(raw) },
+                                                        onImportQrImage = { uri -> viewModel.importProfileFromQrImage(uri) },
+                                                        onGenerateQr = { prof -> viewModel.exportProfileQrBitmap(prof) },
+                                                        onNotify = { msg -> viewModel.postMessage(msg) },
+                                                        onTabBarShrinkChanged = { tabBarShrunk = it }
+                                                    )
+                                                }
+                                                composable<NovaDestination.Stats> {
+                                                    StatsScreen(
+                                                        dailyUsage = dailyUsage,
+                                                        sessions = sessions,
+                                                        diagnosticReport = diagReport,
+                                                        onRunDiagnostics = { viewModel.runDiagnostics() },
+                                                        onApplySafeFix = { viewModel.applySafeConnectionFix() },
+                                                        onClearStats = { viewModel.clearUsageStats() },
+                                                        onTabBarShrinkChanged = { tabBarShrunk = it }
+                                                    )
+                                                }
+                                                composable<NovaDestination.Settings> {
+                                                    SettingsScreen(
+                                                        settings = settings,
+                                                        installedApps = installedApps,
+                                                        logs = logs,
+                                                        updateInfo = updateInfo,
+                                                        isBatteryOptimizationIgnored = { viewModel.isBatteryOptimizationIgnored() },
+                                                        onUpdateSettings = { t -> viewModel.updateSettings(t) },
+                                                        onLoadApps = { viewModel.loadInstalledApps() },
+                                                        onExportBackup = { cb -> viewModel.exportBackupJson(cb) },
+                                                        onImportBackup = { raw -> viewModel.importBackupJson(raw) },
+                                                        onClearLogs = { viewModel.clearLogs() },
+                                                        onCheckUpdates = { ver -> viewModel.checkForUpdates(ver) },
+                                                        onDownloadUpdate = { viewModel.downloadAndInstallUpdate() },
+                                                        onRetryInstallUpdate = { viewModel.retryInstallDownloadedApk() },
+                                                        onOpenVpnSettings = { viewModel.openVpnSystemSettings() },
+                                                        onOpenBatterySettings = { viewModel.openBatteryOptimizationSettings() },
+                                                        onTabBarShrinkChanged = { tabBarShrunk = it }
+                                                    )
+                                                }
                                             }
                                         }
 
-                                        GlassTopEdge(modifier = Modifier.align(Alignment.TopCenter))
+                                        GlassTopEdge(
+                                            backdrop = chrome.combined,
+                                            modifier = Modifier.align(Alignment.TopCenter)
+                                        )
 
                                         if (!useRail) {
                                             GlassTabBar(
                                                 current = currentDest,
                                                 onSelect = navigateTo,
+                                                shrunk = tabBarShrunk && settings.glass.shrinkTabBar,
                                                 modifier = Modifier.align(Alignment.BottomCenter)
                                             )
                                         }
@@ -318,11 +359,19 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                             }
                         }
 
+                        if (showLogsDialog) {
+                            LogsViewerDialog(
+                                logs = logs,
+                                onClear = { viewModel.clearLogs() },
+                                onDismiss = { showLogsDialog = false }
+                            )
+                        }
+
                         pendingDeepLinkProfile?.let { incoming ->
                             GlassModalDialog(
                                 onDismissRequest = { viewModel.dismissDeepLinkImport() },
                                 title = stringResource(R.string.deeplink_import_title),
-                                icon = Icons.Rounded.Download
+                                icon = GlassIcons.Download
                             ) {
                                 Text(
                                     text = stringResource(

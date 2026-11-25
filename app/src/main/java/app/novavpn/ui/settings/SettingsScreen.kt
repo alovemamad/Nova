@@ -24,32 +24,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.OpenInNew
-import androidx.compose.material.icons.rounded.Apps
-import androidx.compose.material.icons.rounded.AutoMode
-import androidx.compose.material.icons.rounded.BatterySaver
-import androidx.compose.material.icons.rounded.BugReport
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.CloudDownload
-import androidx.compose.material.icons.rounded.Code
-import androidx.compose.material.icons.rounded.Dns
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.GppGood
-import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.InstallMobile
-import androidx.compose.material.icons.rounded.Lan
-import androidx.compose.material.icons.rounded.Palette
-import androidx.compose.material.icons.rounded.Restore
-import androidx.compose.material.icons.rounded.Security
-import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.Timer
-import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.Verified
-import androidx.compose.material.icons.rounded.VpnLock
-import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -92,11 +69,13 @@ import app.novavpn.ui.glass.GlassBadge
 import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassDivider
 import app.novavpn.ui.glass.GlassGroup
+import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.GlassSegmented
 import app.novavpn.ui.glass.GlassSwitchRow
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.resolveGlassTintColor
 import app.novavpn.ui.theme.fmtDigits
 import app.novavpn.ui.theme.formatBytes
@@ -120,11 +99,14 @@ fun SettingsScreen(
     onDownloadUpdate: () -> Unit,
     onRetryInstallUpdate: () -> Unit,
     onOpenVpnSettings: () -> Unit,
-    onOpenBatterySettings: () -> Unit
+    onOpenBatterySettings: () -> Unit,
+    onTabBarShrinkChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val listState = rememberLazyListState()
+    ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
 
     var batteryExempted by remember { mutableStateOf(isBatteryOptimizationIgnored()) }
     DisposableEffect(lifecycleOwner) {
@@ -146,6 +128,7 @@ fun SettingsScreen(
     var showSystemKillSwitchDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding(),
@@ -205,7 +188,7 @@ fun SettingsScreen(
                 GlassSwitchRow(
                     title = stringResource(R.string.settings_prefer_last),
                     subtitle = stringResource(R.string.settings_prefer_last_desc),
-                    icon = Icons.Rounded.Speed,
+                    icon = GlassIcons.Speed,
                     checked = settings.preferLastGoodGateway,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(preferLastGoodGateway = checked) } }
                 )
@@ -213,7 +196,7 @@ fun SettingsScreen(
                 GlassRow(
                     title = stringResource(R.string.settings_local_ports),
                     subtitle = fmtDigits("SOCKS5 :${settings.localSocksPort} · HTTP :${settings.localHttpPort}"),
-                    icon = Icons.Rounded.Dns,
+                    icon = GlassIcons.Server,
                     onClick = { showPortsDialog = true }
                 )
                 GlassDivider()
@@ -226,7 +209,7 @@ fun SettingsScreen(
                         if (settings.autoConnect.onAppLaunchEnabled) append("${settings.autoConnect.triggerPackages.size} apps")
                         if (isEmpty()) append(disabledLabel)
                     },
-                    icon = Icons.Rounded.AutoMode,
+                    icon = GlassIcons.Bolt,
                     onClick = { showAutoConnect = true }
                 )
             }
@@ -241,7 +224,7 @@ fun SettingsScreen(
                 GlassRow(
                     title = stringResource(R.string.settings_split_tunnel),
                     subtitle = fmtDigits(stringResource(R.string.settings_apps_count, settings.splitTunnelMode.name, settings.splitTunnelPackages.size)),
-                    icon = Icons.Rounded.Apps,
+                    icon = GlassIcons.Apps,
                     onClick = { showSplitPicker = true },
                     modifier = Modifier.testTag("settings_split_tunnel_row")
                 )
@@ -249,7 +232,7 @@ fun SettingsScreen(
                 GlassSwitchRow(
                     title = stringResource(R.string.settings_lan_share),
                     subtitle = stringResource(R.string.settings_lan_share_desc),
-                    icon = Icons.Rounded.Lan,
+                    icon = GlassIcons.Antenna,
                     checked = settings.shareProxyOnLan,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(shareProxyOnLan = checked) } }
                 )
@@ -260,15 +243,16 @@ fun SettingsScreen(
                         if (batteryExempted) R.string.settings_battery_exempted
                         else R.string.settings_battery_not_exempted
                     ),
-                    icon = Icons.Rounded.BatterySaver,
+                    icon = GlassIcons.Shield,
                     iconTint = if (batteryExempted) look.success else look.warning,
                     onClick = onOpenBatterySettings,
                     modifier = Modifier.testTag("settings_battery_opt_row")
                 ) {
                     Icon(
-                        imageVector = if (batteryExempted) Icons.Rounded.CheckCircle else Icons.Rounded.WarningAmber,
+                        imageVector = if (batteryExempted) GlassIcons.CheckCircle else GlassIcons.Warning,
                         contentDescription = null,
-                        tint = if (batteryExempted) look.success else look.warning
+                        tint = if (batteryExempted) look.success else look.warning,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -362,7 +346,7 @@ fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         GlassTint.entries.forEach { tint ->
-                            val (primaryTint, _) = resolveGlassTintColor(tint)
+                            val (primaryTint, _) = resolveGlassTintColor(tint, look.isDark)
                             val selected = settings.glass.tint == tint
                             Box(
                                 modifier = Modifier
@@ -384,41 +368,57 @@ fun SettingsScreen(
                     GlassDivider()
                     GlassSwitchRow(
                         title = stringResource(R.string.settings_dynamic_color),
-                        icon = Icons.Rounded.Palette,
+                        icon = GlassIcons.Palette,
                         checked = settings.dynamicColor,
                         onCheckedChange = { checked -> onUpdateSettings { it.copy(dynamicColor = checked) } }
                     )
                 }
                 GlassDivider()
                 GlassSwitchRow(
+                    title = stringResource(R.string.settings_glass_lists),
+                    icon = GlassIcons.Layers,
+                    checked = settings.glass.glassLists,
+                    onCheckedChange = { checked -> onUpdateSettings { it.copy(glass = it.glass.copy(glassLists = checked)) } }
+                )
+                GlassDivider()
+                GlassSwitchRow(
+                    title = stringResource(R.string.settings_shrink_tab_bar),
+                    icon = GlassIcons.Dock,
+                    checked = settings.glass.shrinkTabBar,
+                    onCheckedChange = { checked -> onUpdateSettings { it.copy(glass = it.glass.copy(shrinkTabBar = checked)) } }
+                )
+                GlassDivider()
+                GlassSwitchRow(
                     title = stringResource(R.string.settings_motion_tilt),
-                    icon = Icons.Rounded.Tune,
+                    icon = GlassIcons.Sliders,
                     checked = settings.glass.motionHighlights,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(glass = it.glass.copy(motionHighlights = checked)) } }
                 )
                 GlassDivider()
                 GlassSwitchRow(
                     title = stringResource(R.string.settings_reduce_transparency),
+                    icon = GlassIcons.Sparkles,
                     checked = settings.glass.reduceTransparency,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(glass = it.glass.copy(reduceTransparency = checked)) } }
                 )
                 GlassDivider()
                 GlassSwitchRow(
                     title = stringResource(R.string.settings_home_speed),
-                    icon = Icons.Rounded.Speed,
+                    icon = GlassIcons.Speed,
                     checked = settings.glass.homeSpeed,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(glass = it.glass.copy(homeSpeed = checked)) } }
                 )
                 GlassDivider()
                 GlassSwitchRow(
                     title = stringResource(R.string.settings_home_timer),
-                    icon = Icons.Rounded.Timer,
+                    icon = GlassIcons.Timer,
                     checked = settings.glass.homeTimer,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(glass = it.glass.copy(homeTimer = checked)) } }
                 )
                 GlassDivider()
                 GlassSwitchRow(
                     title = stringResource(R.string.settings_home_card),
+                    icon = GlassIcons.Routing,
                     checked = settings.glass.homeCard,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(glass = it.glass.copy(homeCard = checked)) } }
                 )
@@ -434,7 +434,7 @@ fun SettingsScreen(
                 GlassSwitchRow(
                     title = stringResource(R.string.settings_keep_tun_reconnect),
                     subtitle = stringResource(R.string.settings_keep_tun_reconnect_desc),
-                    icon = Icons.Rounded.GppGood,
+                    icon = GlassIcons.LockShield,
                     checked = settings.keepTunOnReconnect,
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(keepTunOnReconnect = checked) } },
                     modifier = Modifier.testTag("settings_keep_tun_switch")
@@ -443,7 +443,7 @@ fun SettingsScreen(
                 GlassRow(
                     title = stringResource(R.string.settings_always_on),
                     subtitle = stringResource(R.string.settings_always_on_desc),
-                    icon = Icons.Rounded.VpnLock,
+                    icon = GlassIcons.Lock,
                     onClick = { showSystemKillSwitchDialog = true },
                     modifier = Modifier.testTag("settings_system_killswitch_row")
                 )
@@ -451,7 +451,7 @@ fun SettingsScreen(
                 GlassRow(
                     title = stringResource(R.string.settings_backup_restore),
                     subtitle = stringResource(R.string.settings_backup_desc),
-                    icon = Icons.Rounded.Restore,
+                    icon = GlassIcons.Archive,
                     onClick = {
                         onExportBackup { raw ->
                             exportedJson = raw
@@ -463,7 +463,7 @@ fun SettingsScreen(
                 GlassRow(
                     title = stringResource(R.string.settings_view_logs),
                     subtitle = fmtDigits(stringResource(R.string.settings_logs_count, logs.size)),
-                    icon = Icons.Rounded.BugReport,
+                    icon = GlassIcons.Logs,
                     onClick = { showLogs = true },
                     modifier = Modifier.testTag("settings_logs_row")
                 )
@@ -492,7 +492,7 @@ fun SettingsScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.CloudDownload,
+                                imageVector = GlassIcons.Cloud,
                                 contentDescription = null,
                                 tint = look.accent,
                                 modifier = Modifier.size(22.dp)
@@ -589,7 +589,7 @@ fun SettingsScreen(
                                                 updateInfo.needsInstallPermission && updateInfo.downloadedApkPath != null -> {
                                                     GlassCapsuleButton(
                                                         text = stringResource(R.string.updates_grant_install_perm),
-                                                        icon = Icons.Rounded.Security,
+                                                        icon = GlassIcons.Shield,
                                                         prominent = true,
                                                         tint = look.warning,
                                                         onClick = onRetryInstallUpdate
@@ -598,7 +598,7 @@ fun SettingsScreen(
                                                 updateInfo.downloadedApkPath != null -> {
                                                     GlassCapsuleButton(
                                                         text = stringResource(R.string.updates_install_now),
-                                                        icon = Icons.Rounded.InstallMobile,
+                                                        icon = GlassIcons.Box,
                                                         prominent = true,
                                                         onClick = onRetryInstallUpdate
                                                     )
@@ -610,7 +610,7 @@ fun SettingsScreen(
                                                         ?: "APK"
                                                     GlassCapsuleButton(
                                                         text = stringResource(R.string.updates_download_install, sizeLabel),
-                                                        icon = Icons.Rounded.Download,
+                                                        icon = GlassIcons.Download,
                                                         prominent = true,
                                                         onClick = onDownloadUpdate,
                                                         modifier = Modifier.testTag("settings_download_update_button")
@@ -620,7 +620,7 @@ fun SettingsScreen(
                                             if (!updateInfo.releaseUrl.isNullOrBlank()) {
                                                 GlassCapsuleButton(
                                                     text = stringResource(R.string.updates_open_github),
-                                                    icon = Icons.AutoMirrored.Rounded.OpenInNew,
+                                                    icon = GlassIcons.Link,
                                                     onClick = {
                                                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.releaseUrl))
                                                         runCatching { context.startActivity(intent) }
@@ -633,7 +633,7 @@ fun SettingsScreen(
                                 else -> {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(
-                                            imageVector = Icons.Rounded.Verified,
+                                            imageVector = GlassIcons.CheckCircle,
                                             contentDescription = null,
                                             tint = look.success,
                                             modifier = Modifier.size(18.dp)
@@ -662,19 +662,19 @@ fun SettingsScreen(
                 GlassRow(
                     title = stringResource(R.string.about_version),
                     subtitle = fmtDigits("v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"),
-                    icon = Icons.Rounded.Info
+                    icon = GlassIcons.Info
                 )
                 GlassDivider()
                 GlassRow(
                     title = stringResource(R.string.about_engines),
                     subtitle = stringResource(R.string.about_engines_list),
-                    icon = Icons.Rounded.Code
+                    icon = GlassIcons.Code
                 )
                 GlassDivider()
                 GlassRow(
                     title = stringResource(R.string.about_github),
                     subtitle = stringResource(R.string.about_github_url),
-                    icon = Icons.AutoMirrored.Rounded.OpenInNew,
+                    icon = GlassIcons.Link,
                     onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(GitHubUpdater.REPO_HTML_URL))
                         runCatching { context.startActivity(intent) }
@@ -688,7 +688,7 @@ fun SettingsScreen(
         GlassModalDialog(
             onDismissRequest = { showSystemKillSwitchDialog = false },
             title = stringResource(R.string.settings_always_on_dialog_title),
-            icon = Icons.Rounded.VpnLock
+            icon = GlassIcons.Lock
         ) {
             Text(
                 text = stringResource(R.string.settings_always_on_dialog_body),

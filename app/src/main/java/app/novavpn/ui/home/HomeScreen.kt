@@ -34,25 +34,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowDownward
-import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.Build
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.Flag
-import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Route
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.Timer
-import androidx.compose.material.icons.rounded.WarningAmber
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -60,7 +44,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -93,13 +79,16 @@ import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassCircleButton
 import app.novavpn.ui.glass.GlassDivider
+import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.GlassSheet
 import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.NovaConnectControl
+import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.SpeedSparkline
 import app.novavpn.ui.glass.glassHighlight
 import app.novavpn.ui.glass.glassPress
+import app.novavpn.ui.glass.liquidGlass
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
@@ -108,6 +97,7 @@ import app.novavpn.ui.theme.formatDurationHms
 import app.novavpn.ui.theme.formatSpeedRate
 import app.novavpn.ui.theme.isPersianUi
 import com.example.R
+import kotlinx.coroutines.delay
 
 @Composable
 fun HomeScreen(
@@ -115,19 +105,38 @@ fun HomeScreen(
     speedHistory: List<Pair<Long, Long>>,
     settings: AppSettings,
     activeProfile: VpnProfile?,
+    testingTelemetry: Boolean = false,
+    telemetryUpdatedAtMs: Long = 0L,
     onToggleConnect: () -> Unit,
     onFreshScanReconnect: () -> Unit,
+    onRefreshTelemetry: () -> Unit = {},
+    onOpenLogs: () -> Unit = {},
+    onSwitchVpnMode: (VpnMode) -> Unit = {},
     onPauseResume: () -> Unit,
     onSelectProfileClick: () -> Unit,
     onSelectCountryAndConnect: (String) -> Unit,
     onSuggestedFixClick: (SuggestedFixAction) -> Unit,
     onDismissError: () -> Unit,
-    onPostMessage: (String) -> Unit
+    onPostMessage: (String) -> Unit,
+    onTabBarShrinkChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
     val faUi = isPersianUi()
     var showCountrySheet by remember { mutableStateOf(false) }
+
+    val listState = rememberLazyListState()
+    ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
+
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(telemetryUpdatedAtMs) {
+        if (telemetryUpdatedAtMs > 0L) {
+            while (true) {
+                nowMs = System.currentTimeMillis()
+                delay(5_000L)
+            }
+        }
+    }
 
     val stateColor = when (status.state) {
         VpnState.CONNECTED -> look.accent
@@ -147,6 +156,7 @@ fun HomeScreen(
     }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding(),
@@ -154,7 +164,7 @@ fun HomeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Header row
+        // Zone 1: ZedSecure Header (App name + Mode pill + Logs & Refresh circular controls)
         item {
             Row(
                 modifier = Modifier
@@ -163,11 +173,14 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = stringResource(R.string.app_name),
                         style = MaterialTheme.typography.headlineMedium,
-                        color = look.textPrimary
+                        fontWeight = FontWeight.Bold,
+                        color = look.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = if (settings.vpnMode == VpnMode.VPN) {
@@ -176,46 +189,47 @@ fun HomeScreen(
                             fmtDigits(stringResource(R.string.home_local_proxy_only, status.socksPort))
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = look.textSecondary
+                        color = look.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                AnimatedContent(
-                    targetState = stateLabel to stateColor,
-                    transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
-                    label = "home_status_badge_anim"
-                ) { (label, color) ->
-                    GlassBadge(
-                        text = label,
-                        color = color,
-                        modifier = Modifier.testTag("home_status_badge")
-                    )
-                }
-            }
-        }
-
-        // Smart probe pill if probing
-        if (!status.smartProbeStatus.isNullOrBlank()) {
-            item {
-                AnimatedVisibility(
-                    visible = true,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
+                Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    GlassBadge(
-                        text = status.smartProbeStatus,
-                        color = look.secondaryAccent
+                    HeaderModeTogglePill(
+                        mode = settings.vpnMode,
+                        onSelect = onSwitchVpnMode
+                    )
+                    GlassCircleButton(
+                        icon = GlassIcons.Logs,
+                        contentDescription = stringResource(R.string.home_logs),
+                        onClick = onOpenLogs,
+                        size = 42.dp,
+                        tint = look.textPrimary,
+                        modifier = Modifier.testTag("home_logs_button")
+                    )
+                    GlassCircleButton(
+                        icon = GlassIcons.Refresh,
+                        contentDescription = stringResource(R.string.home_refresh_telemetry),
+                        onClick = onRefreshTelemetry,
+                        size = 42.dp,
+                        tint = if (testingTelemetry) look.accent else look.textPrimary,
+                        modifier = Modifier.testTag("home_refresh_telemetry_button")
                     )
                 }
             }
         }
 
-        // Main Connect Orb / Selected Control
+        // Zone 2: Hero Connect Control + Status Badge + Uptime + Quick Action Pills
         item {
             Column(
                 modifier = Modifier
                     .widthIn(max = 600.dp)
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(top = 4.dp, bottom = 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 NovaConnectControl(
@@ -223,6 +237,32 @@ fun HomeScreen(
                     vpnState = status.state,
                     onToggle = onToggleConnect
                 )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AnimatedContent(
+                        targetState = stateLabel to stateColor,
+                        transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+                        label = "home_status_badge_anim"
+                    ) { (label, color) ->
+                        GlassBadge(
+                            text = label,
+                            color = color,
+                            modifier = Modifier.testTag("home_status_badge")
+                        )
+                    }
+
+                    if (!status.smartProbeStatus.isNullOrBlank()) {
+                        GlassBadge(
+                            text = status.smartProbeStatus,
+                            color = look.secondaryAccent
+                        )
+                    }
+                }
 
                 AnimatedVisibility(
                     visible = settings.glass.homeTimer && (status.state == VpnState.CONNECTED || status.state == VpnState.PAUSED),
@@ -233,7 +273,7 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Rounded.Timer,
+                                imageVector = GlassIcons.Timer,
                                 contentDescription = null,
                                 tint = look.textSecondary,
                                 modifier = Modifier.size(16.dp)
@@ -265,14 +305,14 @@ fun HomeScreen(
                                         if (status.state == VpnState.PAUSED) R.string.notif_action_resume
                                         else R.string.notif_action_pause
                                     ),
-                                    icon = if (status.state == VpnState.PAUSED) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                                    icon = if (status.state == VpnState.PAUSED) GlassIcons.Play else GlassIcons.Pause,
                                     prominent = status.state == VpnState.PAUSED,
                                     onClick = onPauseResume,
                                     modifier = Modifier.testTag("pause_resume_button")
                                 )
                             }
                             GlassCircleButton(
-                                icon = Icons.Rounded.Refresh,
+                                icon = GlassIcons.Bolt,
                                 contentDescription = stringResource(R.string.home_fresh_scan),
                                 onClick = onFreshScanReconnect,
                                 tint = look.accent,
@@ -284,89 +324,7 @@ fun HomeScreen(
             }
         }
 
-        // Quick Country Flag Selector — tap any flag to switch region & connect immediately
-        item {
-            val currentCode = activeProfile?.psiphonRegion?.uppercase()?.ifBlank { "AUTO" } ?: "AUTO"
-            val currentRegion = PsiphonRegions.find(currentCode)
-            val routeUsesPsiphon = activeProfile?.routeChain == RouteChain.AETHER_PSIPHON ||
-                activeProfile?.routeChain == RouteChain.PSIPHON_ONLY
-
-            GlassCard(
-                modifier = Modifier
-                    .widthIn(max = 600.dp)
-                    .fillMaxWidth()
-                    .testTag("home_country_picker_card")
-            ) {
-                Column(modifier = Modifier.padding(vertical = 14.dp)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                text = countryCodeToFlag(currentRegion.code),
-                                fontSize = 22.sp
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    text = stringResource(R.string.home_country_picker_title),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = look.textPrimary
-                                )
-                                val regionDisplay = if (faUi) currentRegion.nameFa else currentRegion.nameEn
-                                val sub = if (!routeUsesPsiphon && currentCode == "AUTO") {
-                                    "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
-                                } else if (!routeUsesPsiphon) {
-                                    "$regionDisplay · ${stringResource(R.string.home_country_active_route_hint)}"
-                                } else {
-                                    "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
-                                }
-                                Text(
-                                    text = sub,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = look.textSecondary,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        GlassCapsuleButton(
-                            text = stringResource(R.string.home_country_all),
-                            icon = Icons.Rounded.Flag,
-                            onClick = { showCountrySheet = true },
-                            modifier = Modifier.testTag("home_country_all_button")
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(PsiphonRegions.POPULAR, key = { it.code }) { region ->
-                            val isSelected = region.code == currentCode
-                            CountryFlagPill(
-                                region = region,
-                                selected = isSelected,
-                                faUi = faUi,
-                                onClick = { onSelectCountryAndConnect(region.code) }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Explicit bypass warning banner when paused
+        // Pause bypass warning banner
         if (status.state == VpnState.PAUSED) {
             item {
                 GlassCard(
@@ -380,7 +338,7 @@ fun HomeScreen(
                         modifier = Modifier.padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Rounded.WarningAmber, contentDescription = null, tint = look.warning)
+                        Icon(GlassIcons.Warning, contentDescription = null, tint = look.warning, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -466,7 +424,7 @@ fun HomeScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.Lock, contentDescription = null, tint = look.accent, modifier = Modifier.size(18.dp))
+                                Icon(GlassIcons.Lock, contentDescription = null, tint = look.accent, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = cardTitle,
@@ -479,7 +437,7 @@ fun HomeScreen(
                                 cm?.setPrimaryClip(ClipData.newPlainText("Nova Proxy", clipValue))
                                 onPostMessage(copiedMsg)
                             }) {
-                                Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(GlassIcons.Copy, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(copyLabel)
                             }
@@ -524,7 +482,7 @@ fun HomeScreen(
                                             color = look.textPrimary
                                         )
                                         Icon(
-                                            imageVector = Icons.Rounded.ContentCopy,
+                                            imageVector = GlassIcons.Copy,
                                             contentDescription = copyLabel,
                                             tint = look.textMuted,
                                             modifier = Modifier.size(14.dp)
@@ -556,7 +514,7 @@ fun HomeScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.ErrorOutline, contentDescription = null, tint = look.danger)
+                            Icon(GlassIcons.Warning, contentDescription = null, tint = look.danger, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = stringResource(R.string.home_connection_failure),
@@ -584,7 +542,7 @@ fun HomeScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 GlassCapsuleButton(
                                     text = suggestedFixLabel(status.suggestedFix),
-                                    icon = Icons.Rounded.Build,
+                                    icon = GlassIcons.Wand,
                                     prominent = true,
                                     onClick = { onSuggestedFixClick(status.suggestedFix) }
                                 )
@@ -595,87 +553,8 @@ fun HomeScreen(
             }
         }
 
-        // Live Speed & Telemetry Card
-        if (settings.glass.homeSpeed) {
-            item {
-                GlassCard(
-                    modifier = Modifier
-                        .widthIn(max = 600.dp)
-                        .fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Rounded.ArrowDownward, contentDescription = null, tint = look.accent, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(stringResource(R.string.home_download_tunnel), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
-                                }
-                                Text(
-                                    text = fmtDigits(formatSpeedRate(status.downSpeedBps)),
-                                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFamily),
-                                    color = look.textPrimary
-                                )
-                                Text(
-                                    text = fmtDigits(formatBytes(status.sessionDownBytes)),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = look.textMuted
-                                )
-                            }
-
-                            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Rounded.Speed, contentDescription = null, tint = look.textSecondary, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(stringResource(R.string.home_ping), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
-                                }
-                                Text(
-                                    text = status.pingMs?.let { fmtDigits("${it} ms") } ?: "—",
-                                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFamily),
-                                    color = look.pingColor(status.pingMs)
-                                )
-                                Text(
-                                    text = status.activeTunEngine.name.replace("_", " "),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = look.textMuted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-
-                            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Rounded.ArrowUpward, contentDescription = null, tint = look.secondaryAccent, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(stringResource(R.string.home_upload_tunnel), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
-                                }
-                                Text(
-                                    text = fmtDigits(formatSpeedRate(status.upSpeedBps)),
-                                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFamily),
-                                    color = look.textPrimary
-                                )
-                                Text(
-                                    text = fmtDigits(formatBytes(status.sessionUpBytes)),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = look.textMuted
-                                )
-                            }
-                        }
-
-                        if (speedHistory.size >= 2) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            SpeedSparkline(samples = speedHistory)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Route & Exit IP Card
-        if (settings.glass.homeCard) {
+        // Zone 3A: Unified Live Telemetry & Active Route Card
+        if (settings.glass.homeSpeed || settings.glass.homeCard) {
             item {
                 GlassCard(
                     modifier = Modifier
@@ -683,45 +562,243 @@ fun HomeScreen(
                         .fillMaxWidth()
                 ) {
                     Column {
-                        GlassRow(
-                            title = activeProfile?.name ?: status.activeProfileName,
-                            subtitle = "${status.activeRoute.name} · ${status.activeProtocol.name}",
-                            icon = Icons.Rounded.Route,
-                            onClick = onSelectProfileClick,
-                            modifier = Modifier.testTag("home_profile_row")
+                        if (settings.glass.homeCard) {
+                            GlassRow(
+                                title = activeProfile?.name ?: status.activeProfileName,
+                                subtitle = "${status.activeRoute.name.replace("_", " ")} · ${status.activeProtocol.name.replace("_", "-")}",
+                                icon = GlassIcons.Routing,
+                                iconTint = look.accent,
+                                onClick = onSelectProfileClick,
+                                modifier = Modifier.testTag("home_profile_row")
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = stringResource(R.string.home_switch),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = look.accent
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = GlassIcons.ChevronRight,
+                                        contentDescription = null,
+                                        tint = look.textMuted,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        if (settings.glass.homeCard && settings.glass.homeSpeed) {
+                            GlassDivider()
+                        }
+
+                        if (settings.glass.homeSpeed) {
+                            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(GlassIcons.Down, contentDescription = null, tint = look.accent, modifier = Modifier.size(15.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(stringResource(R.string.home_download_tunnel), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
+                                        }
+                                        Text(
+                                            text = fmtDigits(formatSpeedRate(status.downSpeedBps)),
+                                            style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFamily),
+                                            color = look.textPrimary
+                                        )
+                                        Text(
+                                            text = fmtDigits(formatBytes(status.sessionDownBytes)),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = look.textMuted
+                                        )
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(GlassIcons.Speed, contentDescription = null, tint = look.textSecondary, modifier = Modifier.size(15.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(stringResource(R.string.home_ping), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
+                                        }
+                                        Text(
+                                            text = status.pingMs?.let { fmtDigits("${it} ms") } ?: "—",
+                                            style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFamily),
+                                            color = look.pingColor(status.pingMs)
+                                        )
+                                        Text(
+                                            text = status.activeTunEngine.name.replace("_", " "),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = look.textMuted,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(GlassIcons.Up, contentDescription = null, tint = look.secondaryAccent, modifier = Modifier.size(15.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(stringResource(R.string.home_upload_tunnel), style = MaterialTheme.typography.labelMedium, color = look.textSecondary)
+                                        }
+                                        Text(
+                                            text = fmtDigits(formatSpeedRate(status.upSpeedBps)),
+                                            style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFamily),
+                                            color = look.textPrimary
+                                        )
+                                        Text(
+                                            text = fmtDigits(formatBytes(status.sessionUpBytes)),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = look.textMuted
+                                        )
+                                    }
+                                }
+
+                                if (speedHistory.size >= 2) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    SpeedSparkline(samples = speedHistory)
+                                }
+                            }
+                        }
+
+                        if (settings.glass.homeCard) {
+                            GlassDivider()
+                            val exitTitle = if (!status.exitIp.isNullOrBlank()) {
+                                "${countryCodeToFlag(status.exitCountryCode)} ${status.exitIp}"
+                            } else {
+                                stringResource(R.string.home_exit_ip_unknown)
+                            }
+                            val lastDropPrefix = if (status.lastDropReason != DropReason.NONE && status.lastDropReason != DropReason.USER_DISCONNECTED) {
+                                stringResource(R.string.home_last_drop, status.lastDropReason.name)
+                            } else null
+                            val exitSub = buildString {
+                                status.exitCity?.let { append("$it · ") }
+                                if (lastDropPrefix != null) {
+                                    append(lastDropPrefix)
+                                } else {
+                                    append(
+                                        if (status.lanShareActive) "LAN Proxy: 0.0.0.0:${status.socksPort}"
+                                        else "SOCKS5 127.0.0.1:${status.socksPort}"
+                                    )
+                                }
+                            }
+                            val agoText = if (telemetryUpdatedAtMs > 0L) {
+                                val diffSec = ((nowMs - telemetryUpdatedAtMs) / 1000L).coerceAtLeast(0L)
+                                when {
+                                    diffSec < 10L -> stringResource(R.string.home_updated_just_now)
+                                    diffSec < 60L -> fmtDigits(stringResource(R.string.home_updated_ago_sec, diffSec.toInt()))
+                                    else -> fmtDigits(stringResource(R.string.home_updated_ago_min, (diffSec / 60L).toInt()))
+                                }
+                            } else null
+
+                            GlassRow(
+                                title = exitTitle,
+                                subtitle = exitSub,
+                                icon = GlassIcons.Globe,
+                                iconTint = look.secondaryAccent,
+                                onClick = onRefreshTelemetry
+                            ) {
+                                when {
+                                    testingTelemetry -> {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp,
+                                            color = look.accent
+                                        )
+                                    }
+                                    agoText != null -> {
+                                        Text(
+                                            text = agoText,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = look.textMuted
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Zone 3B: Quick Country Flag Selector — tap any flag to switch region & connect immediately
+        item {
+            val currentCode = activeProfile?.psiphonRegion?.uppercase()?.ifBlank { "AUTO" } ?: "AUTO"
+            val currentRegion = PsiphonRegions.find(currentCode)
+            val routeUsesPsiphon = activeProfile?.routeChain == RouteChain.AETHER_PSIPHON ||
+                activeProfile?.routeChain == RouteChain.PSIPHON_ONLY
+
+            GlassCard(
+                modifier = Modifier
+                    .widthIn(max = 600.dp)
+                    .fillMaxWidth()
+                    .testTag("home_country_picker_card")
+            ) {
+                Column(modifier = Modifier.padding(vertical = 14.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
                         ) {
                             Text(
-                                text = stringResource(R.string.home_switch),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = look.accent
+                                text = countryCodeToFlag(currentRegion.code),
+                                fontSize = 22.sp
                             )
-                        }
-                        GlassDivider()
-                        val exitTitle = if (!status.exitIp.isNullOrBlank()) {
-                            "${countryCodeToFlag(status.exitCountryCode)} ${status.exitIp}"
-                        } else {
-                            stringResource(R.string.home_exit_ip_unknown)
-                        }
-                        val lastDropPrefix = if (status.lastDropReason != DropReason.NONE && status.lastDropReason != DropReason.USER_DISCONNECTED) {
-                            stringResource(R.string.home_last_drop, status.lastDropReason.name)
-                        } else null
-                        val exitSub = buildString {
-                            status.exitCity?.let { append("$it · ") }
-                            if (lastDropPrefix != null) {
-                                append(lastDropPrefix)
-                            } else {
-                                append(
-                                    if (status.lanShareActive) "LAN Proxy: 0.0.0.0:${status.socksPort}"
-                                    else "SOCKS5 127.0.0.1:${status.socksPort}"
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = stringResource(R.string.home_country_picker_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = look.textPrimary
+                                )
+                                val regionDisplay = if (faUi) currentRegion.nameFa else currentRegion.nameEn
+                                val sub = if (!routeUsesPsiphon && currentCode == "AUTO") {
+                                    "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
+                                } else if (!routeUsesPsiphon) {
+                                    "$regionDisplay · ${stringResource(R.string.home_country_active_route_hint)}"
+                                } else {
+                                    "$regionDisplay · ${stringResource(R.string.home_country_picker_sub)}"
+                                }
+                                Text(
+                                    text = sub,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = look.textSecondary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
-                        GlassRow(
-                            title = exitTitle,
-                            subtitle = exitSub,
-                            icon = Icons.Rounded.Public,
-                            iconTint = look.secondaryAccent
+                        Spacer(modifier = Modifier.width(8.dp))
+                        GlassCapsuleButton(
+                            text = stringResource(R.string.home_country_all),
+                            icon = GlassIcons.Flag,
+                            onClick = { showCountrySheet = true },
+                            modifier = Modifier.testTag("home_country_all_button")
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(PsiphonRegions.POPULAR, key = { it.code }) { region ->
+                            val isSelected = region.code == currentCode
+                            CountryFlagPill(
+                                region = region,
+                                selected = isSelected,
+                                faUi = faUi,
+                                onClick = { onSelectCountryAndConnect(region.code) }
+                            )
+                        }
                     }
                 }
             }
@@ -739,6 +816,58 @@ fun HomeScreen(
             },
             onDismiss = { showCountrySheet = false }
         )
+    }
+}
+
+@Composable
+private fun HeaderModeTogglePill(
+    mode: VpnMode,
+    onSelect: (VpnMode) -> Unit
+) {
+    val look = LocalGlassLook.current
+    val haptic = LocalHapticFeedback.current
+    val capsule = RoundedCornerShape(50)
+    Row(
+        modifier = Modifier
+            .liquidGlass(shape = capsule, elevated = true)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        listOf(
+            VpnMode.VPN to R.string.home_mode_vpn_short,
+            VpnMode.PROXY_ONLY to R.string.home_mode_proxy_short
+        ).forEach { (itemMode, resId) ->
+            val selected = mode == itemMode
+            Box(
+                modifier = Modifier
+                    .defaultMinSize(minHeight = 34.dp)
+                    .clip(capsule)
+                    .background(
+                        if (selected) look.accent.copy(alpha = 0.28f)
+                        else look.fill2.copy(alpha = 0f)
+                    )
+                    .clickable(
+                        role = Role.Tab,
+                        onClick = {
+                            if (!selected) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelect(itemMode)
+                            }
+                        }
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(resId),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (selected) look.textPrimary else look.textSecondary,
+                    maxLines = 1
+                )
+            }
+        }
     }
 }
 
@@ -817,7 +946,7 @@ private fun CountryPickerSheet(
     GlassSheet(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.home_country_picker_title),
-        icon = Icons.Rounded.Public
+        icon = GlassIcons.Globe
     ) {
         Text(
             text = stringResource(R.string.home_country_picker_sub),
@@ -829,7 +958,7 @@ private fun CountryPickerSheet(
             value = query,
             onValueChange = { query = it },
             label = { Text(stringResource(R.string.home_country_search)) },
-            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+            leadingIcon = { Icon(GlassIcons.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
             singleLine = true,
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth()
@@ -886,9 +1015,10 @@ private fun CountryPickerSheet(
                     }
                     if (isSelected) {
                         Icon(
-                            imageVector = Icons.Rounded.CheckCircle,
+                            imageVector = GlassIcons.CheckCircle,
                             contentDescription = null,
-                            tint = look.accent
+                            tint = look.accent,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }

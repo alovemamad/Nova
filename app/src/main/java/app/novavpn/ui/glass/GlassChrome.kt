@@ -16,12 +16,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.scale
@@ -29,10 +35,30 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import app.novavpn.domain.model.GlassWallpaper
 
+@Immutable
+class GlassChromeBackdrops(
+    val wall: LayerBackdrop,
+    val content: LayerBackdrop,
+    val combined: CombinedBackdrop
+)
+
+val LocalGlassChrome = compositionLocalOf<GlassChromeBackdrops?> { null }
 val LocalGlassTiltOffset = compositionLocalOf { Offset.Zero }
+val LocalGlassTiltAngle = compositionLocalOf { 45f }
+
+@Composable
+fun rememberGlassChromeBackdrops(): GlassChromeBackdrops {
+    val wall = rememberLayerBackdrop()
+    val content = rememberLayerBackdrop()
+    val combined = rememberCombinedBackdrop(wall, content)
+    return remember(wall, content, combined) {
+        GlassChromeBackdrops(wall = wall, content = content, combined = combined)
+    }
+}
 
 @Composable
 fun GlassWallpaperLayer(
+    backdrop: LayerBackdrop? = null,
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
@@ -61,6 +87,7 @@ fun GlassWallpaperLayer(
     Box(
         modifier = modifier
             .fillMaxSize()
+            .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
             .background(Brush.verticalGradient(colors = stops))
     ) {
         if (look.prefs.wallpaper != GlassWallpaper.PLAIN) {
@@ -136,17 +163,57 @@ private fun DrawScope.ellipseGlow(cx: Float, cy: Float, rx: Float, ry: Float, co
 }
 
 @Composable
-fun GlassTopEdge(modifier: Modifier = Modifier) {
+fun GlassTopEdge(
+    backdrop: GlassBackdrop? = null,
+    modifier: Modifier = Modifier
+) {
     val look = LocalGlassLook.current
     val base = wallpaperStops(look.prefs.wallpaper, look.isDark).first()
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(24.dp)
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(base.copy(alpha = 0.65f), Color.Transparent)
+
+    if (backdrop != null && !look.reduced && isRenderEffectSupported()) {
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(34.dp)
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Black,
+                            0.55f to Color.Black.copy(alpha = 0.6f),
+                            1f to Color.Transparent
+                        ),
+                        blendMode = BlendMode.DstIn
+                    )
+                }
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = RectangleShape,
+                    effects = {
+                        vibrancy()
+                        blur(16f * density)
+                    },
+                    onDrawSurface = {
+                        drawRect(
+                            Brush.verticalGradient(
+                                0f to base.copy(alpha = 0.62f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    }
                 )
-            )
-    )
+        )
+    } else {
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(28.dp)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(base.copy(alpha = 0.72f), Color.Transparent)
+                    )
+                )
+        )
+    }
 }

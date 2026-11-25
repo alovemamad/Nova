@@ -60,6 +60,8 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
 
     val runtimeStatus: StateFlow<VpnRuntimeStatus> = vpnController.status
     val speedHistory: StateFlow<List<Pair<Long, Long>>> = vpnController.speedHistory
+    val testingTelemetry: StateFlow<Boolean> = vpnController.testingTelemetry
+    val telemetryUpdatedAtMs: StateFlow<Long> = vpnController.telemetryUpdatedAtMs
     val dailyUsage: StateFlow<List<DataUsageDay>> = statsRepo.dailyUsageFlow
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
     val sessionHistory: StateFlow<List<SessionRecord>> = statsRepo.sessionsFlow
@@ -163,6 +165,10 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearVpnError() {
         vpnController.clearError()
+    }
+
+    fun refreshTelemetry() {
+        vpnController.refreshTelemetry()
     }
 
     fun selectProfile(id: String) {

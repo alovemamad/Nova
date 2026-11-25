@@ -45,8 +45,6 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -84,6 +82,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -138,23 +137,80 @@ fun Modifier.glassPress(source: InteractionSource, scale: Float = 0.965f): Modif
 fun Modifier.liquidGlass(
     shape: Shape = RoundedCornerShape(26.dp),
     elevated: Boolean = false,
-    tintOverride: Color? = null
+    tintOverride: Color? = null,
+    backdrop: GlassBackdrop? = null
 ): Modifier {
     val look = LocalGlassLook.current
     val tilt = LocalGlassTiltOffset.current
+    val tiltAngle = LocalGlassTiltAngle.current
+    val chrome = LocalGlassChrome.current
+    val effectiveBackdrop = backdrop ?: chrome?.wall
     val surfaceColor = tintOverride ?: if (elevated) look.pillSurface else look.cardSurface
 
-    if (look.prefs.reduceTransparency) {
+    if (look.reduced) {
         return this
             .clip(shape)
             .background(surfaceColor, shape)
             .border(0.75.dp, look.separator, shape)
     }
 
-    val specularAlpha = if (look.isDark) 0.12f else 0.36f
-    val bottomAlpha = if (look.isDark) 0.04f else 0.10f
-    val shadowElevation = if (elevated) 14.dp else 6.dp
+    if (!look.translucent && tintOverride == null && !elevated) {
+        return this
+            .clip(shape)
+            .background(look.solidSurface, shape)
+            .border(0.6.dp, look.separator, shape)
+    }
 
+    val specularAlpha = if (look.isDark) 0.12f else 0.34f
+    val bottomAlpha = if (look.isDark) 0.04f else 0.10f
+
+    if (effectiveBackdrop != null && isRenderEffectSupported()) {
+        return this.drawBackdrop(
+            backdrop = effectiveBackdrop,
+            shape = shape,
+            effects = {
+                vibrancy()
+                blur(if (elevated) 22f * density else 16f * density)
+                if (elevated) {
+                    lens(14f * density, 22f * density, chromaticAberration = true)
+                } else {
+                    lens(10f * density, 14f * density, chromaticAberration = false)
+                }
+            },
+            highlight = {
+                GlassHighlightSpec(
+                    width = 1.dp,
+                    alpha = if (look.isDark) 0.85f else 1f,
+                    style = HighlightStyle.Default(tiltAngle)
+                )
+            },
+            shadow = {
+                GlassShadowSpec(
+                    radius = if (elevated) 18.dp else 10.dp,
+                    offset = DpOffset(0.dp, if (elevated) 6.dp else 3.dp),
+                    color = look.shadow
+                )
+            },
+            onDrawSurface = {
+                drawRect(surfaceColor)
+                val shiftX = tilt.x * size.width * 0.22f
+                val shiftY = tilt.y * size.height * 0.18f
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = specularAlpha),
+                            Color.Transparent,
+                            look.accent.copy(alpha = bottomAlpha)
+                        ),
+                        start = Offset(shiftX, shiftY),
+                        end = Offset(size.width + shiftX, size.height + shiftY)
+                    )
+                )
+            }
+        )
+    }
+
+    val shadowElevation = if (elevated) 14.dp else 6.dp
     return this
         .shadow(
             elevation = shadowElevation,
@@ -190,13 +246,15 @@ fun GlassCard(
     cornerRadius: Dp = 26.dp,
     elevated: Boolean = false,
     tintOverride: Color? = null,
+    backdrop: GlassBackdrop? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
         modifier = modifier.liquidGlass(
             shape = RoundedCornerShape(cornerRadius),
             elevated = elevated,
-            tintOverride = tintOverride
+            tintOverride = tintOverride,
+            backdrop = backdrop
         ),
         content = content
     )
@@ -345,11 +403,11 @@ fun GlassRow(
 }
 
 @Composable
-fun GlassDivider() {
+fun GlassDivider(insetStart: Dp = 16.dp) {
     val look = LocalGlassLook.current
     HorizontalDivider(
-        modifier = Modifier.padding(horizontal = 16.dp),
-        thickness = 0.6.dp,
+        modifier = Modifier.padding(start = insetStart, end = 16.dp),
+        thickness = 0.5.dp,
         color = look.separator
     )
 }
@@ -546,7 +604,8 @@ fun GlassCircleButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Dp = 48.dp,
-    tint: Color? = null
+    tint: Color? = null,
+    backdrop: GlassBackdrop? = null
 ) {
     val look = LocalGlassLook.current
     val source = remember { MutableInteractionSource() }
@@ -555,7 +614,7 @@ fun GlassCircleButton(
         modifier = modifier
             .glassPress(source, scale = 0.92f)
             .size(size)
-            .liquidGlass(shape = CircleShape, elevated = true)
+            .liquidGlass(shape = CircleShape, elevated = true, backdrop = backdrop)
             .clickable(
                 interactionSource = source,
                 indication = ripple(bounded = true, color = look.accent),
@@ -584,7 +643,8 @@ fun GlassCapsuleButton(
     icon: ImageVector? = null,
     prominent: Boolean = false,
     enabled: Boolean = true,
-    tint: Color? = null
+    tint: Color? = null,
+    backdrop: GlassBackdrop? = null
 ) {
     val look = LocalGlassLook.current
     val source = remember { MutableInteractionSource() }
@@ -597,7 +657,7 @@ fun GlassCapsuleButton(
         modifier = modifier
             .glassPress(source, scale = 0.96f)
             .defaultMinSize(minHeight = 48.dp)
-            .liquidGlass(shape = capsule, elevated = prominent, tintOverride = bgOverride)
+            .liquidGlass(shape = capsule, elevated = prominent, tintOverride = bgOverride, backdrop = backdrop)
             .clickable(
                 interactionSource = source,
                 indication = ripple(bounded = true, color = accent),
@@ -731,12 +791,12 @@ fun GlassModalDialog(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        GlassCircleButton(
-                            icon = Icons.Rounded.Close,
-                            contentDescription = stringResource(R.string.common_close),
-                            onClick = onDismissRequest,
-                            size = 40.dp
-                        )
+                            GlassCircleButton(
+                                icon = GlassIcons.Close,
+                                contentDescription = stringResource(R.string.common_close),
+                                onClick = onDismissRequest,
+                                size = 40.dp
+                            )
                     }
                     Spacer(modifier = Modifier.height(14.dp))
                     content()
@@ -841,7 +901,7 @@ fun GlassSheet(
                                 )
                             }
                             GlassCircleButton(
-                                icon = Icons.Rounded.Close,
+                                icon = GlassIcons.Close,
                                 contentDescription = stringResource(R.string.common_close),
                                 onClick = onDismissRequest,
                                 size = 40.dp

@@ -246,4 +246,16 @@
     <string name="profiles_section_tuning">تنظیمات تونل و پینگ</string>
     <string name="profiles_section_dns">تنظیمات DNS و بالادستی</string>
     <string name="profiles_section_rules">قوانین مسیریابی</string>
+
+    <!-- Liquid Glass Telemetry & Chrome -->
+    <string name="home_logs">لاگ‌های سیستم</string>
+    <string name="home_refresh_telemetry">بروزرسانی وضعیت</string>
+    <string name="home_probing">در حال بررسی…</string>
+    <string name="home_updated_just_now">هم‌اکنون</string>
+    <string name="home_updated_ago_sec">%1$d ثانیه پیش</string>
+    <string name="home_updated_ago_min">%1$d دقیقه پیش</string>
+    <string name="home_mode_vpn_short">VPN</string>
+    <string name="home_mode_proxy_short">پروکسی</string>
+    <string name="settings_glass_lists">کارت‌ها و لیست‌های شیشه‌ای</string>
+    <string name="settings_shrink_tab_bar">جمع‌شدن نوار پایین هنگام اسکرول</string>
 </resources>

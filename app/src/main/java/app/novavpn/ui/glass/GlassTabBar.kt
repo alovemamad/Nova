@@ -1,11 +1,16 @@
 package app.novavpn.ui.glass
 
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,16 +31,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Analytics
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Layers
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.rounded.Analytics
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Layers
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
@@ -43,13 +40,15 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -78,36 +77,53 @@ data class NovaTabSpec(
 )
 
 val novaTabs = listOf(
-    NovaTabSpec(NovaDestination.Home, "tab_home", R.string.nav_home, Icons.Rounded.Home, Icons.Outlined.Home),
-    NovaTabSpec(NovaDestination.Profiles, "tab_profiles", R.string.nav_profiles, Icons.Rounded.Layers, Icons.Outlined.Layers),
-    NovaTabSpec(NovaDestination.Stats, "tab_stats", R.string.nav_stats, Icons.Rounded.Analytics, Icons.Outlined.Analytics),
-    NovaTabSpec(NovaDestination.Settings, "tab_settings", R.string.nav_settings, Icons.Rounded.Settings, Icons.Outlined.Settings)
+    NovaTabSpec(NovaDestination.Home, "tab_home", R.string.nav_home, GlassIcons.House, GlassIcons.House),
+    NovaTabSpec(NovaDestination.Profiles, "tab_profiles", R.string.nav_profiles, GlassIcons.Layers, GlassIcons.Layers),
+    NovaTabSpec(NovaDestination.Stats, "tab_stats", R.string.nav_stats, GlassIcons.Gauge, GlassIcons.Gauge),
+    NovaTabSpec(NovaDestination.Settings, "tab_settings", R.string.nav_settings, GlassIcons.Gear, GlassIcons.Gear)
 )
 
 @Composable
 fun GlassTabBar(
     current: NovaDestination,
     onSelect: (NovaDestination) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    shrunk: Boolean = false
 ) {
     val look = LocalGlassLook.current
+    val chrome = LocalGlassChrome.current
     val haptic = LocalHapticFeedback.current
     val currentIndex = novaTabs.indexOfFirst { it.dest == current }.coerceAtLeast(0)
     val capsule = RoundedCornerShape(32.dp)
+
+    val horizontalPad by animateDpAsState(
+        targetValue = if (shrunk) 44.dp else 16.dp,
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow),
+        label = "tab_pad"
+    )
+    val barHeight by animateDpAsState(
+        targetValue = if (shrunk) 50.dp else 64.dp,
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow),
+        label = "tab_height"
+    )
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = horizontalPad, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
         BoxWithConstraints(
             modifier = Modifier
                 .widthIn(max = 520.dp)
                 .fillMaxWidth()
-                .height(64.dp)
-                .liquidGlass(shape = capsule, elevated = true)
+                .height(barHeight)
+                .liquidGlass(
+                    shape = capsule,
+                    elevated = true,
+                    backdrop = chrome?.combined
+                )
                 .padding(5.dp)
         ) {
             val slotWidth = maxWidth / novaTabs.size
@@ -153,7 +169,7 @@ fun GlassTabBar(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .defaultMinSize(minHeight = 48.dp)
+                            .defaultMinSize(minHeight = 40.dp)
                             .glassPress(source, scale = 0.94f)
                             .clip(RoundedCornerShape(26.dp))
                             .clickable(
@@ -174,17 +190,25 @@ fun GlassTabBar(
                             imageVector = if (selected) tab.iconSelected else tab.iconUnselected,
                             contentDescription = label,
                             tint = itemColor,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(if (shrunk) 20.dp else 22.dp)
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (selected) look.textPrimary else look.textSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        AnimatedVisibility(
+                            visible = !shrunk,
+                            enter = fadeIn(tween(150)) + expandVertically(),
+                            exit = fadeOut(tween(120)) + shrinkVertically()
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (selected) look.textPrimary else look.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -213,7 +237,8 @@ fun GlassNavigationRail(
                 icon = {
                     Icon(
                         imageVector = if (selected) tab.iconSelected else tab.iconUnselected,
-                        contentDescription = label
+                        contentDescription = label,
+                        modifier = Modifier.size(22.dp)
                     )
                 },
                 label = { Text(label, maxLines = 1) },
@@ -227,5 +252,29 @@ fun GlassNavigationRail(
                 modifier = Modifier.testTag(tab.tag)
             )
         }
+    }
+}
+
+@Composable
+fun ReportScrollShrink(
+    listState: LazyListState,
+    onShrinkChanged: (Boolean) -> Unit
+) {
+    val currentCallback by rememberUpdatedState(onShrinkChanged)
+    LaunchedEffect(listState) {
+        var lastIndex = 0
+        var lastOffset = 0
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                if (index == 0 && offset < 24) {
+                    currentCallback(false)
+                } else {
+                    val delta = (index - lastIndex) * 500 + (offset - lastOffset)
+                    if (delta > 16) currentCallback(true)
+                    else if (delta < -16) currentCallback(false)
+                }
+                lastIndex = index
+                lastOffset = offset
+            }
     }
 }

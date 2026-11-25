@@ -21,14 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Build
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.DeleteSweep
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.NetworkCheck
-import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -55,9 +48,11 @@ import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassCircleButton
 import app.novavpn.ui.glass.GlassDivider
+import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.GlassSegmented
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
@@ -78,7 +73,8 @@ fun StatsScreen(
     diagnosticReport: DiagnosticReport,
     onRunDiagnostics: () -> Unit,
     onApplySafeFix: () -> Unit,
-    onClearStats: () -> Unit
+    onClearStats: () -> Unit,
+    onTabBarShrinkChanged: (Boolean) -> Unit = {}
 ) {
     val look = LocalGlassLook.current
     var subTab by remember { mutableStateOf(StatsSubTab.USAGE) }
@@ -106,7 +102,7 @@ fun StatsScreen(
             )
             if (subTab == StatsSubTab.USAGE && (dailyUsage.isNotEmpty() || sessions.isNotEmpty())) {
                 GlassCircleButton(
-                    icon = Icons.Rounded.DeleteSweep,
+                    icon = GlassIcons.Trash,
                     contentDescription = stringResource(R.string.common_clear),
                     onClick = onClearStats,
                     size = 42.dp,
@@ -135,7 +131,10 @@ fun StatsScreen(
             label = "stats_subtab_anim",
             modifier = Modifier.fillMaxSize()
         ) { activeTab ->
+            val listState = rememberLazyListState()
+            ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 112.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -204,7 +203,7 @@ fun StatsScreen(
                                 GlassRow(
                                     title = stringResource(R.string.stats_no_sessions),
                                     subtitle = stringResource(R.string.stats_no_sessions_sub),
-                                    icon = Icons.Rounded.History
+                                    icon = GlassIcons.Timer
                                 )
                             }
                         }
@@ -219,7 +218,7 @@ fun StatsScreen(
                                 GlassRow(
                                     title = "${countryCodeToFlag(session.exitCountryCode)} ${session.profileName}",
                                     subtitle = fmtDigits("$timeStr · ${formatDurationHms(session.durationSec)} · ↓ ${formatBytes(session.downloadBytes)} / ↑ ${formatBytes(session.uploadBytes)}"),
-                                    icon = Icons.Rounded.History
+                                    icon = GlassIcons.Timer
                                 ) {
                                     GlassBadge(text = session.routeChain.name, color = look.accent)
                                 }
@@ -253,7 +252,7 @@ fun StatsScreen(
                                     } else {
                                         GlassCapsuleButton(
                                             text = stringResource(R.string.stats_run_test),
-                                            icon = Icons.Rounded.PlayArrow,
+                                            icon = GlassIcons.Play,
                                             prominent = true,
                                             onClick = onRunDiagnostics,
                                             modifier = Modifier.testTag("run_diagnostics_button")
@@ -271,7 +270,7 @@ fun StatsScreen(
                                     GlassRow(
                                         title = stringResource(R.string.stats_exit_ip),
                                         subtitle = exitLabel,
-                                        icon = Icons.Rounded.NetworkCheck
+                                        icon = GlassIcons.Globe
                                     )
                                     GlassDivider()
                                     DiagnosticStatusRow(
@@ -310,7 +309,7 @@ fun StatsScreen(
 
                                     GlassCapsuleButton(
                                         text = stringResource(R.string.stats_fix_conn),
-                                        icon = Icons.Rounded.Build,
+                                        icon = GlassIcons.Wand,
                                         prominent = true,
                                         onClick = onApplySafeFix,
                                         modifier = Modifier.fillMaxWidth().testTag("fix_connection_button")
@@ -334,7 +333,7 @@ private fun DiagnosticStatusRow(title: String, summary: String, safe: Boolean?) 
     GlassRow(
         title = title,
         subtitle = summary,
-        icon = if (safe == true) Icons.Rounded.CheckCircle else Icons.Rounded.ErrorOutline,
+        icon = if (safe == true) GlassIcons.CheckCircle else GlassIcons.Warning,
         iconTint = if (safe == true) look.success else look.warning
     )
 }

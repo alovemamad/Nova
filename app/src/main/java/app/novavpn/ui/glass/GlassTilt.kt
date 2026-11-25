@@ -56,3 +56,7 @@ fun rememberGlassTilt(enabled: Boolean): State<Offset> {
     }
     return tiltState
 }
+
+fun glassTiltAngleDegrees(tilt: Offset): Float =
+    45f + (tilt.x * 35f - tilt.y * 20f).coerceIn(-55f, 55f)
+

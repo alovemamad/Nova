@@ -78,4 +78,3 @@ This cross-compiles `arm64-v8a`, `armeabi-v7a`, and `x86_64` artifacts:
 - دو موتور TUN: موتور پیش‌فرض `sing-box` (gVisor) همراه با جایگزینی خودکار `hev-socks5-tunnel` در صورت خطا
 - نگهداری TUN هنگام اتصال مجدد + میان‌بر **Always-on VPN / Block connections without VPN** اندروید
 - عیب‌یابی داخلی (نشت DNS/IPv6، تست تاخیر، بررسی MTU و دکمه اصلاح خودکار اتصال)
-- قفل برنامه با PBKDF2 + Keystore و اثرانگشت، مخفی‌سازی از برنامه‌های اخیر، اشتراک‌گذاری پروفایل با QR Code و پشتیبان‌گیری JSON

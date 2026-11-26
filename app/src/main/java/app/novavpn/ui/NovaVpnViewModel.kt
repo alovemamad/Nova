@@ -44,7 +44,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 class NovaVpnViewModel(application: Application) : AndroidViewModel(application) {
@@ -107,7 +106,6 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
 
     private val appsLoading = AtomicBoolean(false)
     private val updateCheckInFlight = AtomicBoolean(false)
-    private val updateDownloadInFlight = AtomicBoolean(false)
     private val autoUpdateCheckedThisLaunch = AtomicBoolean(false)
 
     private val startupExceptionHandler = CoroutineExceptionHandler { _, throwable ->
@@ -581,75 +579,6 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
         _updateInfo.value = _updateInfo.value.copy(isAutoPrompt = false)
     }
 
-    fun downloadAndInstallUpdate() {
-        val current = _updateInfo.value
-        val url = current.apkDownloadUrl ?: return
-        val name = current.apkAssetName ?: "nova-update.apk"
-        if (!updateDownloadInFlight.compareAndSet(false, true)) return
-        viewModelScope.launch {
-            try {
-                _updateInfo.value = _updateInfo.value.copy(
-                    downloading = true,
-                    downloadProgress = 0f,
-                    downloadError = null,
-                    needsInstallPermission = false
-                )
-                val result = GitHubUpdater.downloadApk(
-                    context = appCtx,
-                    downloadUrl = url,
-                    assetName = name,
-                    expectedSizeBytes = current.apkSizeBytes,
-                    expectedSha256 = current.expectedSha256,
-                    onProgress = { pct ->
-                        _updateInfo.value = _updateInfo.value.copy(downloadProgress = pct)
-                    }
-                )
-                result.onSuccess { file ->
-                    val launched = runCatching {
-                        GitHubUpdater.launchInstallOrRequestPermission(appCtx, file)
-                    }.getOrElse { err ->
-                        _updateInfo.value = _updateInfo.value.copy(
-                            downloading = false,
-                            downloadedApkPath = file.absolutePath,
-                            downloadError = err.message ?: "Failed to launch installer"
-                        )
-                        return@launch
-                    }
-                    _updateInfo.value = _updateInfo.value.copy(
-                        downloading = false,
-                        downloadProgress = 1f,
-                        downloadedApkPath = file.absolutePath,
-                        needsInstallPermission = !launched,
-                        downloadError = null
-                    )
-                }.onFailure { err ->
-                    _updateInfo.value = _updateInfo.value.copy(
-                        downloading = false,
-                        downloadError = err.message ?: "Download failed"
-                    )
-                }
-            } finally {
-                updateDownloadInFlight.set(false)
-            }
-        }
-    }
-
-    fun retryInstallDownloadedApk() {
-        val path = _updateInfo.value.downloadedApkPath ?: return
-        val file = File(path)
-        if (!file.exists()) {
-            _updateInfo.value = _updateInfo.value.copy(downloadedApkPath = null)
-            return
-        }
-        val launched = runCatching {
-            GitHubUpdater.launchInstallOrRequestPermission(appCtx, file)
-        }.getOrElse { err ->
-            _updateInfo.value = _updateInfo.value.copy(downloadError = err.message)
-            return
-        }
-        _updateInfo.value = _updateInfo.value.copy(needsInstallPermission = !launched)
-    }
-
     fun clearLogs() {
         LogRepository.clear()
     }
@@ -673,7 +602,6 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
     fun openBatteryOptimizationSettings() {
         val pkgUri = Uri.parse("package:${appCtx.packageName}")
         val candidates = listOf(
-            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkgUri),
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri),
             Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
         )

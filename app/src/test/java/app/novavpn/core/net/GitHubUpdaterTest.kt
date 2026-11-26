@@ -1,7 +1,5 @@
 package app.novavpn.core.net
 
-import java.io.File
-import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -84,27 +82,6 @@ class GitHubUpdaterTest {
             ReleaseApkAsset("Nova-armeabi-v7a-release.apk", "https://example.com/v7a.apk", 10L)
         )
         assertNull(GitHubUpdater.selectBestApkAsset(mismatchedOnly, listOf("arm64-v8a")))
-    }
-
-    @Test
-    fun `hasZipMagicHeader rejects non-APK HTML or tiny files`() {
-        val dir = createTempDirectory("apk_header_test").toFile()
-        try {
-            val htmlFile = File(dir, "fake.apk").apply {
-                writeBytes(("<html>404 Not Found</html>".repeat(5)).toByteArray())
-            }
-            assertFalse(GitHubUpdater.hasZipMagicHeader(htmlFile))
-
-            val zipFile = File(dir, "valid.apk").apply {
-                val bytes = ByteArray(128)
-                bytes[0] = 0x50 // 'P'
-                bytes[1] = 0x4B // 'K'
-                writeBytes(bytes)
-            }
-            assertTrue(GitHubUpdater.hasZipMagicHeader(zipFile))
-        } finally {
-            dir.deleteRecursively()
-        }
     }
 
     @Test

@@ -29,7 +29,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -80,7 +79,6 @@ import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.resolveGlassTintColor
 import app.novavpn.ui.theme.fmtDigits
-import app.novavpn.ui.theme.formatBytes
 import com.example.BuildConfig
 import com.example.R
 
@@ -103,8 +101,6 @@ fun SettingsScreen(
     onImportBackup: (String) -> Unit,
     onClearLogs: () -> Unit,
     onCheckUpdates: (String) -> Unit,
-    onDownloadUpdate: () -> Unit,
-    onRetryInstallUpdate: () -> Unit,
     onOpenVpnSettings: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onClearGeoError: () -> Unit = {},
@@ -604,78 +600,19 @@ fun SettingsScreen(
                                             color = look.textSecondary
                                         )
                                     }
-                                    if (updateInfo.downloading) {
-                                        val pct = (updateInfo.downloadProgress * 100f).toInt().coerceIn(0, 100)
-                                        Text(
-                                            text = fmtDigits(stringResource(R.string.updates_downloading, pct)),
-                                            style = MaterialTheme.typography.labelLarge,
-                                            color = look.accent
-                                        )
-                                        LinearProgressIndicator(
-                                            progress = { updateInfo.downloadProgress.coerceIn(0f, 1f) },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(6.dp)
-                                                .clip(RoundedCornerShape(3.dp)),
-                                            color = look.accent,
-                                            trackColor = look.fill2
-                                        )
-                                    } else {
-                                        if (updateInfo.downloadError != null) {
-                                            Text(
-                                                text = updateInfo.downloadError,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = look.danger
-                                            )
-                                        }
-                                        FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            when {
-                                                updateInfo.needsInstallPermission && updateInfo.downloadedApkPath != null -> {
-                                                    GlassCapsuleButton(
-                                                        text = stringResource(R.string.updates_grant_install_perm),
-                                                        icon = GlassIcons.Shield,
-                                                        prominent = true,
-                                                        tint = look.warning,
-                                                        onClick = onRetryInstallUpdate
-                                                    )
-                                                }
-                                                updateInfo.downloadedApkPath != null -> {
-                                                    GlassCapsuleButton(
-                                                        text = stringResource(R.string.updates_install_now),
-                                                        icon = GlassIcons.Box,
-                                                        prominent = true,
-                                                        onClick = onRetryInstallUpdate
-                                                    )
-                                                }
-                                                !updateInfo.apkDownloadUrl.isNullOrBlank() -> {
-                                                    val sizeLabel = updateInfo.apkSizeBytes
-                                                        ?.takeIf { it > 0L }
-                                                        ?.let { fmtDigits(formatBytes(it)) }
-                                                        ?: "APK"
-                                                    GlassCapsuleButton(
-                                                        text = stringResource(R.string.updates_download_install, sizeLabel),
-                                                        icon = GlassIcons.Download,
-                                                        prominent = true,
-                                                        onClick = onDownloadUpdate,
-                                                        modifier = Modifier.testTag("settings_download_update_button")
-                                                    )
-                                                }
-                                            }
-                                            if (!updateInfo.releaseUrl.isNullOrBlank()) {
-                                                GlassCapsuleButton(
-                                                    text = stringResource(R.string.updates_open_github),
-                                                    icon = GlassIcons.Link,
-                                                    onClick = {
-                                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.releaseUrl))
-                                                        runCatching { context.startActivity(intent) }
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
+                                    val targetUrl = updateInfo.releaseUrl
+                                        ?.takeIf { it.isNotBlank() }
+                                        ?: GitHubUpdater.REPO_HTML_URL
+                                    GlassCapsuleButton(
+                                        text = stringResource(R.string.updates_open_github),
+                                        icon = GlassIcons.Link,
+                                        prominent = true,
+                                        onClick = {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
+                                            runCatching { context.startActivity(intent) }
+                                        },
+                                        modifier = Modifier.testTag("settings_open_release_button")
+                                    )
                                 }
                                 else -> {
                                     Row(verticalAlignment = Alignment.CenterVertically) {

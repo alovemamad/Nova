@@ -357,12 +357,7 @@ data class UpdateInfo(
     val apkAssetName: String? = null,
     val apkSizeBytes: Long? = null,
     val expectedSha256: String? = null,
-    val isAutoPrompt: Boolean = false,
-    val downloading: Boolean = false,
-    val downloadProgress: Float = 0f,
-    val downloadedApkPath: String? = null,
-    val downloadError: String? = null,
-    val needsInstallPermission: Boolean = false
+    val isAutoPrompt: Boolean = false
 )
 
 data class InstalledAppInfo(

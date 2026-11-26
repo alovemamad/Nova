@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.novavpn.data.store.GeoResourceRepository
+import app.novavpn.domain.model.GeoResourceFormat
 import app.novavpn.domain.model.GeoResourceItem
 import app.novavpn.domain.model.GeoResourceStatus
 import app.novavpn.domain.model.GeoSourceType
@@ -51,6 +52,7 @@ import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.GlassSheet
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.novaOutlinedTextFieldColors
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.fmtDigits
 import app.novavpn.ui.theme.formatBytes
@@ -288,6 +290,36 @@ fun GeoResourcesDialog(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = look.textSecondary
                                 )
+                                val formatLabel = when (item.format) {
+                                    GeoResourceFormat.V2RAY_GEOIP -> "V2Ray GeoIP (.dat)"
+                                    GeoResourceFormat.V2RAY_GEOSITE -> "V2Ray GeoSite (.dat)"
+                                    GeoResourceFormat.TEXT_RULES -> "Rule List"
+                                    GeoResourceFormat.UNKNOWN -> "Raw"
+                                }
+                                val sampleSuffix = if (item.sampleTags.isNotEmpty()) {
+                                    " (${item.sampleTags.take(3).joinToString(", ")})"
+                                } else ""
+                                Text(
+                                    text = fmtDigits(
+                                        stringResource(
+                                            R.string.geo_format_info,
+                                            formatLabel,
+                                            item.entryCount,
+                                            sampleSuffix
+                                        )
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = look.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = stringResource(R.string.geo_core_compat),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = look.accent,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                                 Text(
                                     text = stringResource(R.string.geo_last_updated, formattedTime),
                                     style = MaterialTheme.typography.labelSmall,
@@ -352,6 +384,7 @@ fun GeoResourcesDialog(
                 label = { Text(stringResource(R.string.geo_url_hint)) },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
+                colors = novaOutlinedTextFieldColors(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("geo_url_input")
@@ -363,6 +396,7 @@ fun GeoResourcesDialog(
                 label = { Text(stringResource(R.string.geo_name_hint)) },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
+                colors = novaOutlinedTextFieldColors(),
                 modifier = Modifier.fillMaxWidth()
             )
             if (!urlValidationError.isNullOrBlank()) {

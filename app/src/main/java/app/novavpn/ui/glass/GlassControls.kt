@@ -113,25 +113,34 @@ private fun NovaOrbControl(
         label = "orb_color"
     )
 
-    val inf = rememberInfiniteTransition(label = "orb_pulse")
-    val pulse by inf.animateFloat(
-        initialValue = 1f,
-        targetValue = if (isConnected || isBusy) 1.12f else 1.03f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(if (isBusy) 900 else 2200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse"
-    )
-    val sweep by inf.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(if (isBusy) 1500 else 5000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "sweep"
-    )
+    val pulse: Float
+    val sweep: Float
+    if (isConnected || isBusy) {
+        val inf = rememberInfiniteTransition(label = "orb_pulse")
+        val animPulse by inf.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.12f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(if (isBusy) 900 else 2200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulse"
+        )
+        val animSweep by inf.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(if (isBusy) 1500 else 5000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "sweep"
+        )
+        pulse = animPulse
+        sweep = animSweep
+    } else {
+        pulse = 1f
+        sweep = 0f
+    }
 
     val btnScale by animateFloatAsState(
         targetValue = if (isConnected) 1.03f else 1f,
@@ -253,25 +262,34 @@ private fun NovaZedGlassControl(
         label = "zed_glow"
     )
 
-    val inf = rememberInfiniteTransition(label = "zed_motion")
-    val shinePhase by inf.animateFloat(
-        initialValue = -0.35f,
-        targetValue = 1.35f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isBusy) 1300 else 3200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "zed_shine"
-    )
-    val breathe by inf.animateFloat(
-        initialValue = 0.72f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "zed_breathe"
-    )
+    val shinePhase: Float
+    val breathe: Float
+    if (isConnected || isBusy) {
+        val inf = rememberInfiniteTransition(label = "zed_motion")
+        val animShine by inf.animateFloat(
+            initialValue = -0.35f,
+            targetValue = 1.35f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = if (isBusy) 1300 else 3200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "zed_shine"
+        )
+        val animBreathe by inf.animateFloat(
+            initialValue = 0.72f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1900, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "zed_breathe"
+        )
+        shinePhase = animShine
+        breathe = animBreathe
+    } else {
+        shinePhase = -0.35f
+        breathe = 0.85f
+    }
 
     val source = remember { MutableInteractionSource() }
 
@@ -314,24 +332,25 @@ private fun NovaZedGlassControl(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(shape)
-            ) {
-                // Caustic sheen sweep across the glass crest
-                val cx = size.width * shinePhase
-                drawRect(
-                    brush = Brush.linearGradient(
-                        0f to Color.Transparent,
-                        0.42f to Color.Transparent,
-                        0.5f to Color.White.copy(alpha = if (isBusy) 0.34f else 0.16f),
-                        0.58f to Color.Transparent,
-                        1f to Color.Transparent,
-                        start = Offset(cx - size.width * 0.4f, 0f),
-                        end = Offset(cx + size.width * 0.4f, size.height)
+            if (isConnected || isBusy) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(shape)
+                ) {
+                    val cx = size.width * shinePhase
+                    drawRect(
+                        brush = Brush.linearGradient(
+                            0f to Color.Transparent,
+                            0.42f to Color.Transparent,
+                            0.5f to Color.White.copy(alpha = if (isBusy) 0.34f else 0.16f),
+                            0.58f to Color.Transparent,
+                            1f to Color.Transparent,
+                            start = Offset(cx - size.width * 0.4f, 0f),
+                            end = Offset(cx + size.width * 0.4f, size.height)
+                        )
                     )
-                )
+                }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
@@ -519,6 +538,8 @@ fun SpeedSparkline(
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
+    val downPath = remember { Path() }
+    val upPath = remember { Path() }
     Canvas(
         modifier = modifier
             .fillMaxWidth()
@@ -528,8 +549,8 @@ fun SpeedSparkline(
         val maxVal = samples.maxOf { maxOf(it.first, it.second) }.coerceAtLeast(1024L).toFloat()
         val stepX = size.width / (samples.size - 1).coerceAtLeast(1)
 
-        val downPath = Path()
-        val upPath = Path()
+        downPath.reset()
+        upPath.reset()
         samples.forEachIndexed { idx, (down, up) ->
             val x = idx * stepX
             val yDown = size.height - (down / maxVal) * (size.height * 0.85f) - 4f

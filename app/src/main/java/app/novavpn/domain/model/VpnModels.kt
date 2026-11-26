@@ -181,6 +181,12 @@ enum class SuggestedFixAction {
 }
 
 @Serializable
+data class CarrierHint(
+    val masqueOverH2: Boolean = true,
+    val tlsFragment: Boolean = false
+)
+
+@Serializable
 data class VpnProfile(
     val id: String,
     val name: String,
@@ -190,6 +196,7 @@ data class VpnProfile(
     val tlsFragment: Boolean = false,
     val customEndpoint: String = "",
     val scanLevel: Int = 2, // 1 = Fast, 2 = Balanced, 3 = Deep
+    val validateSecs: Int = 5,
     val obfuscation: ObfuscationProfile = ObfuscationProfile.AUTO,
     val ipv4Enabled: Boolean = true,
     val ipv6Enabled: Boolean = false,
@@ -249,11 +256,19 @@ data class AppSettings(
     val digitMode: DigitMode = DigitMode.LOCALE,
     val glass: GlassPrefs = GlassPrefs(),
     val bestRoutePerNetwork: Map<String, RouteChain> = emptyMap(),
+    val bestCarrierPerNetwork: Map<String, CarrierHint> = emptyMap(),
     val lastKnownGoodEndpoint: String = "",
+    val lastKnownGoodEndpointProtocol: AetherProtocol? = null,
+    val lastKnownGoodEndpointNetworkKey: String = "",
+    val lastSuccessfulNetworkKey: String = "",
+    val lastConnectFailed: Boolean = false,
+    val lastAutoUpdateCheckMs: Long = 0L,
+    val snoozedUpdateTag: String? = null,
+    val snoozedUpdateUntilMs: Long = 0L,
     val wasVpnActiveBeforeKill: Boolean = false
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 5
+        const val CURRENT_SCHEMA_VERSION = 6
         const val DEFAULT_PROFILE_ID = "default-smart-auto"
     }
 }
@@ -338,6 +353,8 @@ data class UpdateInfo(
     val apkDownloadUrl: String? = null,
     val apkAssetName: String? = null,
     val apkSizeBytes: Long? = null,
+    val expectedSha256: String? = null,
+    val isAutoPrompt: Boolean = false,
     val downloading: Boolean = false,
     val downloadProgress: Float = 0f,
     val downloadedApkPath: String? = null,

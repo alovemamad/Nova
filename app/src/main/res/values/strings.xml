@@ -295,6 +295,14 @@
     <string name="geo_name_hint">Custom filename (optional, .dat)</string>
     <string name="geo_refresh_single">Update</string>
     <string name="geo_delete">Delete</string>
+    <string name="geo_format_info">%1$s · %2$d entries%3$s</string>
+    <string name="geo_core_compat">Compatible: Aether Core &amp; Sing-box</string>
+
+    <!-- 3-Day Auto Update Prompt -->
+    <string name="update_modal_title">Update Available</string>
+    <string name="update_modal_body">Version %1$s is ready to download and install.</string>
+    <string name="update_modal_download">Update</string>
+    <string name="update_modal_later">Later</string>
 
     <!-- About Notice & Telegram Support -->
     <string name="about_notice_text">برای این برنامه توسط توسعه‌دهنده زحمت زیادی کشیده شده است. شرعاً استفاده از آن برای کوچکی مجاز نمی‌باشد. اگر یک کوچکی هستید فوراً برنامه را ترک کنید.</string>

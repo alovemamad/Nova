@@ -284,4 +284,60 @@ class AetherCommandBuilderTest {
         ).getOrThrow()
         assertTrue(thoroughMasque.stages.single().readinessTimeoutMs >= 165_000L)
     }
+
+    @Test
+    fun `exports validation timeout env vars, bounds forceQuickReconnect timeout, and merges compiled geo rules`() {
+        val nativeDir = tempFolder.newFolder("jni_geo")
+        val workDir = tempFolder.newFolder("work_geo")
+        val profile = VpnProfile(
+            id = "geo-test",
+            name = "GeoTest",
+            routeChain = RouteChain.AETHER,
+            aetherProtocol = AetherProtocol.MASQUE,
+            validateSecs = 3,
+            directRules = "*.ir\ngeoip:ir",
+            blockRules = "geosite:category-ads-all"
+        )
+        val quickPlan = AetherCommandBuilder.build(
+            nativeDir = nativeDir,
+            workDir = workDir,
+            profile = profile,
+            settings = AppSettings(),
+            resolvedRoute = RouteChain.AETHER,
+            useFreshScan = false,
+            extraCompiledDirectRules = listOf("185.143.232.0/22"),
+            extraCompiledBlockRules = listOf("*.doubleclick.net"),
+            forceQuickReconnect = true
+        ).getOrThrow()
+
+        val stage = quickPlan.stages.single()
+        assertEquals("3", stage.envVars["AETHER_MASQUE_VALIDATE_SECS"])
+        assertEquals("3", stage.envVars["AETHER_WG_VALIDATE_SECS"])
+        assertEquals(12_000L, stage.readinessTimeoutMs)
+        assertTrue(stage.args.contains("--quick-reconnect"))
+        assertFalse(stage.args.contains("--no-quick-reconnect"))
+        val directArgIdx = stage.args.indexOf("--route-direct")
+        assertTrue(directArgIdx >= 0)
+        val directArgVal = stage.args[directArgIdx + 1]
+        assertTrue(directArgVal.contains("*.ir"))
+        assertTrue(directArgVal.contains("185.143.232.0/22"))
+        assertFalse(directArgVal.contains("geoip:ir"))
+
+        val blockArgIdx = stage.args.indexOf("--route-block")
+        assertTrue(blockArgIdx >= 0)
+        val blockArgVal = stage.args[blockArgIdx + 1]
+        assertTrue(blockArgVal.contains("*.doubleclick.net"))
+        assertFalse(blockArgVal.contains("geosite:category-ads-all"))
+
+        val pinnedPlan = AetherCommandBuilder.build(
+            nativeDir = nativeDir,
+            workDir = workDir,
+            profile = profile,
+            settings = AppSettings(),
+            resolvedRoute = RouteChain.AETHER,
+            useFreshScan = false,
+            endpointOverride = "162.159.193.5:443"
+        ).getOrThrow()
+        assertTrue(pinnedPlan.stages.single().args.containsAll(listOf("--peer", "162.159.193.5:443")))
+    }
 }

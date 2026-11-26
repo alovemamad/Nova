@@ -8,11 +8,17 @@ import app.novavpn.domain.model.EndpointLatencyResult
 import app.novavpn.domain.model.ObfuscationProfile
 import app.novavpn.domain.model.UpdateInfo
 import app.novavpn.domain.model.VpnProfile
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Call
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,7 +27,9 @@ import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.Collections
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.SocketFactory
 import kotlin.system.measureTimeMillis
 
@@ -156,35 +164,74 @@ class DiagnosticsEngine {
     suspend fun verifyRealHttpsConnectivity(
         socksPort: Int?,
         auth: SessionProxyAuth? = null,
-        timeoutMs: Long = 9_000L
+        timeoutMs: Long = 9_000L,
+        probeUrls: List<String> = DEFAULT_HTTPS_PROBE_URLS
     ): Result<Int> = withContext(Dispatchers.IO) {
-        val probeUrls = listOf(
+        if (probeUrls.isEmpty()) {
+            return@withContext Result.failure(IOException("No HTTPS probe URLs configured"))
+        }
+        val client = createClient(socksPort, auth, timeoutMs)
+        val firstSuccess = CompletableDeferred<Result<Int>>()
+        val remaining = AtomicInteger(probeUrls.size)
+        val errors = Collections.synchronizedList(mutableListOf<Throwable>())
+        val activeCalls = Collections.synchronizedList(mutableListOf<Call>())
+
+        coroutineScope {
+            for (url in probeUrls) {
+                async {
+                    val attempt = app.novavpn.core.runCatchingCancellable {
+                        val req = Request.Builder()
+                            .url(url)
+                            .header("User-Agent", "NovaVPN/1.0")
+                            .build()
+                        val call = client.newCall(req)
+                        activeCalls.add(call)
+                        try {
+                            var code = 0
+                            val ms = measureTimeMillis {
+                                call.execute().use { resp ->
+                                    code = resp.code
+                                }
+                            }
+                            if (code !in 200..299) {
+                                error("HTTPS probe ($url) returned HTTP $code")
+                            }
+                            ms.toInt().coerceAtLeast(1)
+                        } finally {
+                            activeCalls.remove(call)
+                        }
+                    }
+                    if (attempt.isSuccess) {
+                        if (firstSuccess.complete(attempt)) {
+                            // Cancel losing in-flight probe calls immediately so sockets don't linger
+                            activeCalls.toList().forEach { runCatching { it.cancel() } }
+                        }
+                    } else {
+                        val err = attempt.exceptionOrNull()
+                        if (err != null && err !is CancellationException) {
+                            errors.add(err)
+                        }
+                        if (remaining.decrementAndGet() == 0) {
+                            firstSuccess.complete(Result.failure(errors.firstOrNull() ?: IOException("HTTPS probe failed")))
+                        }
+                    }
+                }
+            }
+            val result = try {
+                firstSuccess.await()
+            } finally {
+                activeCalls.toList().forEach { runCatching { it.cancel() } }
+                coroutineContext.cancelChildren()
+            }
+            result
+        }
+    }
+
+    companion object {
+        val DEFAULT_HTTPS_PROBE_URLS = listOf(
             "https://cp.cloudflare.com/generate_204",
             "https://www.gstatic.com/generate_204"
         )
-        var lastError: Throwable? = null
-        val client = createClient(socksPort, auth, timeoutMs)
-        for (url in probeUrls) {
-            val attempt = app.novavpn.core.runCatchingCancellable {
-                val req = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", "NovaVPN/1.0")
-                    .build()
-                var code = 0
-                val ms = measureTimeMillis {
-                    client.newCall(req).execute().use { resp ->
-                        code = resp.code
-                    }
-                }
-                if (code !in 200..299) {
-                    error("HTTPS probe ($url) returned HTTP $code")
-                }
-                ms.toInt().coerceAtLeast(1)
-            }
-            if (attempt.isSuccess) return@withContext attempt
-            lastError = attempt.exceptionOrNull()
-        }
-        Result.failure(lastError ?: IOException("HTTPS probe failed"))
     }
 
     suspend fun fetchExitIpInfo(socksPort: Int?, auth: SessionProxyAuth? = null): ExitGeoInfo? = withContext(Dispatchers.IO) {

@@ -39,6 +39,7 @@ import app.novavpn.domain.model.SuggestedFixAction
 import app.novavpn.domain.model.TunEngineType
 import app.novavpn.domain.model.VpnProfile
 import app.novavpn.domain.model.VpnState
+import app.novavpn.domain.routing.GeoDatParser
 import com.example.MainActivity
 import com.example.R
 import kotlinx.coroutines.CoroutineScope
@@ -68,6 +69,12 @@ class NovaVpnService : VpnService() {
     @Volatile
     private var sessionStartMs: Long = 0L
 
+    @Volatile
+    private var connectStartedElapsedMs: Long = 0L
+
+    @Volatile
+    private var latestCompiledGeo: GeoDatParser.CompiledProfileGeoRules = GeoDatParser.CompiledProfileGeoRules()
+
     private var telemetryJob: Job? = null
     private var reconnectJob: Job? = null
     private var networkDebounceJob: Job? = null
@@ -75,18 +82,65 @@ class NovaVpnService : VpnService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
+    private val openPendingIntent: PendingIntent by lazy {
+        PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private val disconnectPendingIntent: PendingIntent by lazy {
+        PendingIntent.getService(
+            this,
+            1,
+            Intent(this, NovaVpnService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private val pausePendingIntent: PendingIntent by lazy {
+        PendingIntent.getService(
+            this,
+            2,
+            Intent(this, NovaVpnService::class.java).setAction(ACTION_PAUSE),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private val resumePendingIntent: PendingIntent by lazy {
+        PendingIntent.getService(
+            this,
+            3,
+            Intent(this, NovaVpnService::class.java).setAction(ACTION_RESUME),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         ServiceLocator.init(applicationContext)
         NovaVpnApplication.createNotificationChannels(this)
         tunManager = TunEngineManager(applicationContext)
-        coreManager = CoreProcessManager(applicationContext, serviceScope) { exitCode, binaryName ->
-            if (!coordinator.isUserStopping && !coordinator.isPaused && coordinator.state == VpnState.CONNECTED) {
-                LogRepository.w("NovaVpnService", "Unexpected exit of $binaryName ($exitCode)")
-                val decision = reconnectMachine.onCoreDied()
-                serviceScope.launch { handleReconnectDecision(decision) }
+        coreManager = CoreProcessManager(
+            context = applicationContext,
+            scope = serviceScope,
+            onUnexpectedExit = { exitCode, binaryName ->
+                if (!coordinator.isUserStopping && !coordinator.isPaused && coordinator.state == VpnState.CONNECTED) {
+                    LogRepository.w("NovaVpnService", "Unexpected exit of $binaryName ($exitCode)")
+                    val decision = reconnectMachine.onCoreDied()
+                    serviceScope.launch { handleReconnectDecision(decision) }
+                }
+            },
+            onFatalTunnelError = { summary ->
+                if (!coordinator.isUserStopping && !coordinator.isPaused && coordinator.state == VpnState.CONNECTED) {
+                    LogRepository.w("NovaVpnService", "Fatal tunnel error ($summary); triggering immediate reconnect")
+                    val decision = reconnectMachine.onCoreDied()
+                    serviceScope.launch { handleReconnectDecision(decision) }
+                }
             }
-        }
+        )
         coordinator = TunnelLifecycleCoordinator(createLifecycleOps())
         registerDefaultPhysicalNetworkCallback()
     }
@@ -179,21 +233,26 @@ class NovaVpnService : VpnService() {
         super.onDestroy()
     }
 
-    private fun acquireLocks() {
+    private fun acquireConnectingLocks() {
         if (wakeLock?.isHeld != true) {
             runCatching {
                 val pm = getSystemService(PowerManager::class.java)
                 wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NovaVpn:CoreWakeLock")?.apply {
                     setReferenceCounted(false)
-                    acquire()
+                    acquire(120_000L)
                 }
             }
         }
         if (wifiLock?.isHeld != true) {
             runCatching {
                 val wm = applicationContext.getSystemService(WifiManager::class.java)
-                @Suppress("DEPRECATION")
-                wifiLock = wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "NovaVpn:WifiLock")?.apply {
+                val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                } else {
+                    @Suppress("DEPRECATION")
+                    WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                }
+                wifiLock = wm?.createWifiLock(mode, "NovaVpn:WifiLock")?.apply {
                     setReferenceCounted(false)
                     acquire()
                 }
@@ -201,11 +260,15 @@ class NovaVpnService : VpnService() {
         }
     }
 
-    private fun releaseLocks() {
+    private fun releaseWakeLockOnly() {
         runCatching {
             wakeLock?.let { if (it.isHeld) it.release() }
         }
         wakeLock = null
+    }
+
+    private fun releaseLocks() {
+        releaseWakeLockOnly()
         runCatching {
             wifiLock?.let { if (it.isHeld) it.release() }
         }
@@ -230,7 +293,8 @@ class NovaVpnService : VpnService() {
             override suspend fun onConnecting() {
                 telemetryJob?.cancel()
                 telemetryJob = null
-                acquireLocks()
+                connectStartedElapsedMs = SystemClock.elapsedRealtime()
+                acquireConnectingLocks()
                 val settings = settingsRepo.getSettings()
                 val profile = settingsRepo.getActiveProfile()
                 reconnectMachine.updateConfig(settings.preferLastGoodGateway, profile.pingFailureLimit)
@@ -271,18 +335,24 @@ class NovaVpnService : VpnService() {
                 )
 
                 return when (outcome) {
-                    is CoreProbeOutcome.Ready -> TunnelLifecycleCoordinator.CoreStepResult.Ready(
-                        route = outcome.route,
-                        socksPort = outcome.socksPort,
-                        httpPort = outcome.httpPort,
-                        auth = outcome.auth,
-                        pingMs = outcome.initialPingMs
-                    )
-                    is CoreProbeOutcome.Failure -> TunnelLifecycleCoordinator.CoreStepResult.Failed(
-                        reason = outcome.dropReason,
-                        errorMessage = outcome.errorMessage,
-                        suggestedFix = outcome.suggestedFix
-                    )
+                    is CoreProbeOutcome.Ready -> {
+                        latestCompiledGeo = outcome.compiledGeoRules
+                        TunnelLifecycleCoordinator.CoreStepResult.Ready(
+                            route = outcome.route,
+                            socksPort = outcome.socksPort,
+                            httpPort = outcome.httpPort,
+                            auth = outcome.auth,
+                            pingMs = outcome.initialPingMs
+                        )
+                    }
+                    is CoreProbeOutcome.Failure -> {
+                        latestCompiledGeo = GeoDatParser.CompiledProfileGeoRules()
+                        TunnelLifecycleCoordinator.CoreStepResult.Failed(
+                            reason = outcome.dropReason,
+                            errorMessage = outcome.errorMessage,
+                            suggestedFix = outcome.suggestedFix
+                        )
+                    }
                 }
             }
 
@@ -314,12 +384,18 @@ class NovaVpnService : VpnService() {
                     createdHere = true
                 }
 
+                val tunStartMs = SystemClock.elapsedRealtime()
+                val geo = latestCompiledGeo
                 val tunRes = tunManager.startTun(
                     tunInterface = pfd,
                     socksPort = socksPort,
                     auth = auth,
                     profile = profile,
                     preference = settings.tunEnginePreference,
+                    extraDirectCidrs = geo.directCidrs,
+                    extraDirectDomains = geo.directDomains,
+                    extraBlockCidrs = geo.blockCidrs,
+                    extraBlockDomains = geo.blockDomains,
                     protectFd = ::protect
                 )
                 if (tunRes.isFailure) {
@@ -334,7 +410,9 @@ class NovaVpnService : VpnService() {
                     )
                 }
 
-                return TunnelLifecycleCoordinator.TunStepResult.Ready(tunRes.getOrThrow())
+                val tunEngine = tunRes.getOrThrow()
+                LogRepository.i("Timing", "TUN ($tunEngine) started in ${SystemClock.elapsedRealtime() - tunStartMs}ms")
+                return TunnelLifecycleCoordinator.TunStepResult.Ready(tunEngine)
             }
 
             override suspend fun stopTunOnly(closeTunFd: Boolean) {
@@ -363,6 +441,12 @@ class NovaVpnService : VpnService() {
                 pingMs: Int?,
                 resumed: Boolean
             ) {
+                releaseWakeLockOnly()
+                val totalStart = connectStartedElapsedMs
+                if (totalStart > 0L) {
+                    LogRepository.i("Timing", "Total connect elapsed: ${SystemClock.elapsedRealtime() - totalStart}ms")
+                    connectStartedElapsedMs = 0L
+                }
                 val settings = settingsRepo.getSettings()
                 val profile = settingsRepo.getActiveProfile()
                 settingsRepo.setVpnActiveState(true)
@@ -404,6 +488,7 @@ class NovaVpnService : VpnService() {
             }
 
             override suspend fun onPaused() {
+                releaseLocks()
                 controller.updateRuntimeStatus {
                     it.copy(
                         state = VpnState.PAUSED,
@@ -423,6 +508,8 @@ class NovaVpnService : VpnService() {
                 stopService: Boolean
             ) {
                 releaseLocks()
+                connectStartedElapsedMs = 0L
+                latestCompiledGeo = GeoDatParser.CompiledProfileGeoRules()
                 settingsRepo.setVpnActiveState(false)
                 controller.updateSessionProxyAuth(null)
 
@@ -518,6 +605,7 @@ class NovaVpnService : VpnService() {
             var latestDownBps = 0L
             var latestRxAtMs = lastRxAtMs
             var pingProbeJob: Job? = null
+            val powerManager = getSystemService(PowerManager::class.java)
 
             while (isActive && !coordinator.isPaused && !coordinator.isUserStopping) {
                 delay(1000)
@@ -609,7 +697,7 @@ class NovaVpnService : VpnService() {
                     )
                 }
 
-                if (tick % 2 == 0) {
+                if (tick % 4 == 0 && powerManager?.isInteractive != false) {
                     val speedSummary = "↓ ${formatCompactRate(downBps)} · ↑ ${formatCompactRate(upBps)}"
                     updateNotification(speedSummary, isPaused = false)
                 }
@@ -818,26 +906,7 @@ class NovaVpnService : VpnService() {
     }
 
     private fun buildNotification(text: String, isPaused: Boolean): Notification {
-        val openIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val disconnectIntent = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, NovaVpnService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val pauseOrResumeIntent = PendingIntent.getService(
-            this,
-            2,
-            Intent(this, NovaVpnService::class.java).setAction(if (isPaused) ACTION_RESUME else ACTION_PAUSE),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pauseOrResumeIntent = if (isPaused) resumePendingIntent else pausePendingIntent
 
         return NotificationCompat.Builder(this, NovaVpnApplication.CHANNEL_VPN_STATUS)
             .setSmallIcon(R.drawable.ic_vpn_key)
@@ -846,13 +915,13 @@ class NovaVpnService : VpnService() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setContentIntent(openIntent)
+            .setContentIntent(openPendingIntent)
             .addAction(
                 0,
                 getString(if (isPaused) R.string.notif_action_resume else R.string.notif_action_pause),
                 pauseOrResumeIntent
             )
-            .addAction(0, getString(R.string.notif_action_disconnect), disconnectIntent)
+            .addAction(0, getString(R.string.notif_action_disconnect), disconnectPendingIntent)
             .build()
     }
 

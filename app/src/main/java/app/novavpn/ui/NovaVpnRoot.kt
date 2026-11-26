@@ -1,6 +1,8 @@
 package app.novavpn.ui
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -21,6 +23,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -35,9 +39,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -70,6 +76,8 @@ import app.novavpn.ui.settings.LogsViewerDialog
 import app.novavpn.ui.settings.SettingsScreen
 import app.novavpn.ui.stats.StatsScreen
 import app.novavpn.ui.theme.NovaVpnTheme
+import app.novavpn.ui.theme.fmtDigits
+import com.example.BuildConfig
 import com.example.R
 
 private fun destinationIndex(route: String?): Int = when {
@@ -154,25 +162,33 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
         }
     }
 
-    val handleConnectOrFix = {
-        val prep = viewModel.prepareVpnIntent()
-        if (prep != null) {
-            pendingRegionConnect = null
-            pendingStartAfterPermission = true
-            vpnPermissionLauncher.launch(prep)
-        } else {
-            viewModel.toggleConnect()
+    LaunchedEffect(Unit) {
+        viewModel.maybeAutoCheckUpdates3Days(BuildConfig.VERSION_NAME)
+    }
+
+    val handleConnectOrFix = remember(viewModel, vpnPermissionLauncher) {
+        {
+            val prep = viewModel.prepareVpnIntent()
+            if (prep != null) {
+                pendingRegionConnect = null
+                pendingStartAfterPermission = true
+                vpnPermissionLauncher.launch(prep)
+            } else {
+                viewModel.toggleConnect()
+            }
         }
     }
 
-    val handleSelectCountryAndConnect: (String) -> Unit = { regionCode ->
-        val prep = viewModel.prepareVpnIntent()
-        if (prep != null) {
-            pendingRegionConnect = regionCode
-            pendingStartAfterPermission = true
-            vpnPermissionLauncher.launch(prep)
-        } else {
-            viewModel.selectCountryAndConnect(regionCode)
+    val handleSelectCountryAndConnect: (String) -> Unit = remember(viewModel, vpnPermissionLauncher) {
+        { regionCode ->
+            val prep = viewModel.prepareVpnIntent()
+            if (prep != null) {
+                pendingRegionConnect = regionCode
+                pendingStartAfterPermission = true
+                vpnPermissionLauncher.launch(prep)
+            } else {
+                viewModel.selectCountryAndConnect(regionCode)
+            }
         }
     }
 
@@ -219,11 +235,13 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                             tabBarShrunk = false
                         }
 
-                        val navigateTo: (NovaDestination) -> Unit = { target ->
-                            navController.navigate(target) {
-                                popUpTo<NovaDestination.Home> { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
+                        val navigateTo: (NovaDestination) -> Unit = remember(navController) {
+                            { target ->
+                                navController.navigate(target) {
+                                    popUpTo<NovaDestination.Home> { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
                         }
 
@@ -441,6 +459,118 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                         onClick = { viewModel.confirmDeepLinkImport() },
                                         prominent = true
                                     )
+                                }
+                            }
+                        }
+
+                        if (updateInfo.isAutoPrompt && updateInfo.updateAvailable) {
+                            GlassModalDialog(
+                                onDismissRequest = {
+                                    if (!updateInfo.downloading) viewModel.snoozeUpdatePrompt()
+                                },
+                                title = stringResource(R.string.update_modal_title),
+                                icon = GlassIcons.Download
+                            ) {
+                                Text(
+                                    text = fmtDigits(
+                                        stringResource(
+                                            R.string.update_modal_body,
+                                            updateInfo.latestTag.orEmpty()
+                                        )
+                                    ),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = look.textPrimary
+                                )
+                                if (!updateInfo.releaseNotes.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = updateInfo.releaseNotes.orEmpty(),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = look.textSecondary,
+                                        maxLines = 6,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (updateInfo.downloading) {
+                                    val pct = (updateInfo.downloadProgress * 100f).toInt().coerceIn(0, 100)
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = fmtDigits(stringResource(R.string.updates_downloading, pct)),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = look.accent
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { updateInfo.downloadProgress.coerceIn(0f, 1f) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp)
+                                            .clip(RoundedCornerShape(3.dp)),
+                                        color = look.accent,
+                                        trackColor = look.fill2
+                                    )
+                                } else {
+                                    if (updateInfo.downloadError != null) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = updateInfo.downloadError.orEmpty(),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = look.danger
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End
+                                    ) {
+                                        GlassCapsuleButton(
+                                            text = stringResource(R.string.update_modal_later),
+                                            onClick = { viewModel.snoozeUpdatePrompt() }
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        when {
+                                            updateInfo.needsInstallPermission && updateInfo.downloadedApkPath != null -> {
+                                                GlassCapsuleButton(
+                                                    text = stringResource(R.string.updates_grant_install_perm),
+                                                    icon = GlassIcons.Shield,
+                                                    prominent = true,
+                                                    tint = look.warning,
+                                                    onClick = { viewModel.retryInstallDownloadedApk() }
+                                                )
+                                            }
+                                            updateInfo.downloadedApkPath != null -> {
+                                                GlassCapsuleButton(
+                                                    text = stringResource(R.string.updates_install_now),
+                                                    icon = GlassIcons.Box,
+                                                    prominent = true,
+                                                    onClick = { viewModel.retryInstallDownloadedApk() }
+                                                )
+                                            }
+                                            !updateInfo.apkDownloadUrl.isNullOrBlank() -> {
+                                                GlassCapsuleButton(
+                                                    text = stringResource(R.string.update_modal_download),
+                                                    icon = GlassIcons.Download,
+                                                    prominent = true,
+                                                    onClick = { viewModel.downloadAndInstallUpdate() }
+                                                )
+                                            }
+                                            !updateInfo.releaseUrl.isNullOrBlank() -> {
+                                                GlassCapsuleButton(
+                                                    text = stringResource(R.string.update_modal_download),
+                                                    icon = GlassIcons.Link,
+                                                    prominent = true,
+                                                    onClick = {
+                                                        val intent = Intent(
+                                                            Intent.ACTION_VIEW,
+                                                            Uri.parse(updateInfo.releaseUrl)
+                                                        )
+                                                        runCatching { context.startActivity(intent) }
+                                                        viewModel.dismissUpdatePrompt()
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

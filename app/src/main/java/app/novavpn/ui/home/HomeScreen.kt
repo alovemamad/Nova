@@ -88,6 +88,7 @@ import app.novavpn.ui.glass.NovaConnectControl
 import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.SpeedSparkline
 import app.novavpn.ui.glass.glassHighlight
+import app.novavpn.ui.glass.novaOutlinedTextFieldColors
 import app.novavpn.ui.glass.glassPress
 import app.novavpn.ui.glass.liquidGlass
 import app.novavpn.ui.theme.JetBrainsMonoFamily
@@ -1019,6 +1020,7 @@ private fun CountryPickerSheet(
             leadingIcon = { Icon(GlassIcons.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
             singleLine = true,
             shape = RoundedCornerShape(16.dp),
+            colors = novaOutlinedTextFieldColors(),
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(10.dp))

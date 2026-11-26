@@ -85,16 +85,34 @@ class VpnController(
     @Volatile
     private var proxyUserCancelled: Boolean = false
 
-    private val proxyProcessManager: CoreProcessManager = CoreProcessManager(context, scope) { code, bin ->
-        scope.launch {
-            if (!proxyUserCancelled && _status.value.state == VpnState.CONNECTED) {
-                LogRepository.w("ProxyMode", "$bin exited ($code), disconnecting proxy mode")
-                stateMutex.withLock {
-                    handleProxyStopLocked(DropReason.CORE_EXITED, "Core exited (code $code)", SuggestedFixAction.RUN_DIAGNOSTICS)
+    private val proxyProcessManager: CoreProcessManager = CoreProcessManager(
+        context = context,
+        scope = scope,
+        onUnexpectedExit = { code, bin ->
+            scope.launch {
+                if (!proxyUserCancelled && _status.value.state == VpnState.CONNECTED) {
+                    LogRepository.w("ProxyMode", "$bin exited ($code), disconnecting proxy mode")
+                    stateMutex.withLock {
+                        handleProxyStopLocked(DropReason.CORE_EXITED, "Core exited (code $code)", SuggestedFixAction.RUN_DIAGNOSTICS)
+                    }
+                }
+            }
+        },
+        onFatalTunnelError = { summary ->
+            scope.launch {
+                if (!proxyUserCancelled && _status.value.state == VpnState.CONNECTED) {
+                    LogRepository.w("ProxyMode", "Fatal tunnel error ($summary), stopping proxy mode")
+                    stateMutex.withLock {
+                        handleProxyStopLocked(
+                            DropReason.CORE_EXITED,
+                            "Tunnel connection lost: $summary",
+                            SuggestedFixAction.FRESH_SCAN
+                        )
+                    }
                 }
             }
         }
-    }
+    )
 
     private var proxyMonitorJob: Job? = null
     private var proxySessionStartMs: Long = 0L

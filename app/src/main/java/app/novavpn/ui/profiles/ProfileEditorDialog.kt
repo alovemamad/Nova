@@ -21,8 +21,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -52,11 +50,13 @@ import app.novavpn.domain.validation.ValidationResult
 import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassDivider
+import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassSectionHeader
 import app.novavpn.ui.glass.GlassSegmented
 import app.novavpn.ui.glass.GlassSheet
 import app.novavpn.ui.glass.GlassSwitch
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.novaOutlinedTextFieldColors
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.isPersianUi
 import app.novavpn.ui.theme.tr
@@ -202,7 +202,7 @@ fun ProfileEditorDialog(
     GlassSheet(
         onDismissRequest = onDismiss,
         title = stringResource(if (isNew) R.string.profiles_new else R.string.profiles_edit),
-        icon = Icons.Rounded.Edit
+        icon = GlassIcons.Pencil
     ) {
         Column(
             modifier = Modifier
@@ -224,6 +224,7 @@ fun ProfileEditorDialog(
                         label = { Text(tr("Profile Name", "نام پروفایل")) },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
+                        colors = novaOutlinedTextFieldColors(),
                         modifier = Modifier.fillMaxWidth().testTag("profile_name_input")
                     )
 
@@ -406,6 +407,7 @@ fun ProfileEditorDialog(
                         label = { Text(tr("Custom Endpoint (ip:port, optional)", "سرور دلخواه (ip:port اختیاری)")) },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
+                        colors = novaOutlinedTextFieldColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -440,6 +442,7 @@ fun ProfileEditorDialog(
                             label = { Text("MTU (576-1500)") },
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
+                            colors = novaOutlinedTextFieldColors(),
                             modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
@@ -448,6 +451,7 @@ fun ProfileEditorDialog(
                             label = { Text("TCP Buf KB") },
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
+                            colors = novaOutlinedTextFieldColors(),
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -459,6 +463,7 @@ fun ProfileEditorDialog(
                             label = { Text("Ping (s)") },
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
+                            colors = novaOutlinedTextFieldColors(),
                             modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
@@ -467,6 +472,7 @@ fun ProfileEditorDialog(
                             label = { Text("Ping Limit") },
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
+                            colors = novaOutlinedTextFieldColors(),
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -503,6 +509,7 @@ fun ProfileEditorDialog(
                             minLines = 2,
                             maxLines = 4,
                             shape = RoundedCornerShape(14.dp),
+                            colors = novaOutlinedTextFieldColors(),
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -528,6 +535,7 @@ fun ProfileEditorDialog(
                         label = { Text(tr("Primary DNS (DoH / DoT / IP)", "DNS اصلی")) },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
+                        colors = novaOutlinedTextFieldColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -536,6 +544,7 @@ fun ProfileEditorDialog(
                         label = { Text(tr("Fallback DNS IP", "DNS دوم")) },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
+                        colors = novaOutlinedTextFieldColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -544,6 +553,7 @@ fun ProfileEditorDialog(
                         label = { Text(tr("Upstream Proxy URI (optional)", "پروکسی بالادستی (اختیاری)")) },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
+                        colors = novaOutlinedTextFieldColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -552,6 +562,7 @@ fun ProfileEditorDialog(
                         label = { Text(tr("Extra Core Args (validated)", "پارامترهای اضافی هسته")) },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
+                        colors = novaOutlinedTextFieldColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -571,6 +582,7 @@ fun ProfileEditorDialog(
                         minLines = 2,
                         maxLines = 4,
                         shape = RoundedCornerShape(14.dp),
+                        colors = novaOutlinedTextFieldColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -580,6 +592,7 @@ fun ProfileEditorDialog(
                         minLines = 2,
                         maxLines = 4,
                         shape = RoundedCornerShape(14.dp),
+                        colors = novaOutlinedTextFieldColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

@@ -24,6 +24,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 sealed class CoreStartResult {
@@ -36,10 +37,12 @@ sealed class CoreStartResult {
 class CoreProcessManager(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val onUnexpectedExit: (Int, String) -> Unit
+    private val onUnexpectedExit: (Int, String) -> Unit,
+    private val onFatalTunnelError: ((String) -> Unit)? = null
 ) {
     private data class ManagedProcess(
         val proc: Process,
+        val generation: Long,
         val intentionalStop: AtomicBoolean = AtomicBoolean(false)
     )
 
@@ -47,6 +50,7 @@ class CoreProcessManager(
     private val procLock = Any()
     private val activeProcesses = mutableListOf<ManagedProcess>()
     private val readerJobs = mutableListOf<Job>()
+    private val activeGeneration = AtomicLong(0L)
 
     @Volatile
     private var currentReadyDeferred: CompletableDeferred<Result<String?>>? = null
@@ -70,10 +74,14 @@ class CoreProcessManager(
      */
     fun forceAbort() {
         shuttingDown = true
+        activeGeneration.incrementAndGet()
         currentReadyDeferred?.complete(Result.failure(CancellationException("Aborted by user")))
         val snapshot = synchronized(procLock) { activeProcesses.toList() }
         snapshot.forEach { managed ->
             managed.intentionalStop.set(true)
+            runCatching { managed.proc.inputStream.close() }
+            runCatching { managed.proc.errorStream.close() }
+            runCatching { managed.proc.outputStream.close() }
             runCatching {
                 if (managed.proc.isAlive) {
                     managed.proc.destroy()
@@ -109,11 +117,12 @@ class CoreProcessManager(
             }
         }
 
+        val myGeneration = activeGeneration.incrementAndGet()
         shuttingDown = false
         val lastDetectedEndpoint = AtomicReference<String?>(null)
 
         for (stage in plan.stages) {
-            if (shuttingDown) {
+            if (shuttingDown || activeGeneration.get() != myGeneration) {
                 stopInternal()
                 return@withLock CoreStartResult.Failed("Cancelled before starting ${stage.adapter.id}")
             }
@@ -138,12 +147,12 @@ class CoreProcessManager(
                 return@withLock CoreStartResult.Failed("Failed to launch $stageName: ${e.message}")
             }
 
-            val managed = ManagedProcess(proc)
+            val managed = ManagedProcess(proc, myGeneration)
             synchronized(procLock) {
                 activeProcesses.add(managed)
             }
 
-            if (shuttingDown) {
+            if (shuttingDown || activeGeneration.get() != myGeneration) {
                 currentReadyDeferred = null
                 stopInternal()
                 return@withLock CoreStartResult.Failed("Aborted during launch of $stageName")
@@ -151,6 +160,7 @@ class CoreProcessManager(
 
             val job = scope.launch(Dispatchers.IO) {
                 var readySignaled = false
+                var fatalSignaled = false
                 try {
                     BufferedReader(InputStreamReader(proc.inputStream)).use { reader ->
                         var line: String?
@@ -174,11 +184,26 @@ class CoreProcessManager(
                             if (!readySignaled && isReadyLine(line)) {
                                 readySignaled = true
                                 readyDeferred.complete(Result.success(lastDetectedEndpoint.get()))
+                            } else if (readySignaled &&
+                                !fatalSignaled &&
+                                !managed.intentionalStop.get() &&
+                                !shuttingDown &&
+                                managed.generation == activeGeneration.get() &&
+                                AetherCoreAdapter.isFatalTunnelLine(line)
+                            ) {
+                                fatalSignaled = true
+                                val summary = InputValidators.redactSensitiveForLog(line.trim())
+                                LogRepository.w("CoreProcess", "Detected fatal tunnel error: $summary")
+                                onFatalTunnelError?.invoke(summary)
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    if (!managed.intentionalStop.get() && !shuttingDown && !readySignaled) {
+                    if (!managed.intentionalStop.get() &&
+                        !shuttingDown &&
+                        managed.generation == activeGeneration.get() &&
+                        !readySignaled
+                    ) {
                         readyDeferred.complete(Result.failure(e))
                     }
                 }
@@ -191,12 +216,15 @@ class CoreProcessManager(
                     143 -> " (SIGTERM)"
                     else -> ""
                 }
+                val isCurrentGeneration = !managed.intentionalStop.get() &&
+                    !shuttingDown &&
+                    managed.generation == activeGeneration.get()
                 if (!readySignaled) {
                     val detail = lastErrorLine.get()?.let { ": $it" } ?: ""
                     readyDeferred.complete(
                         Result.failure(IllegalStateException("$stageName exited before ready (code=$code$why)$detail"))
                     )
-                } else if (!managed.intentionalStop.get() && !shuttingDown) {
+                } else if (isCurrentGeneration) {
                     LogRepository.w("CoreProcess", "$stageName exited unexpectedly with code $code$why")
                     onUnexpectedExit(code, stageName)
                 }
@@ -223,12 +251,14 @@ class CoreProcessManager(
 
     suspend fun stopAll() = mutex.withLock {
         shuttingDown = true
+        activeGeneration.incrementAndGet()
         currentReadyDeferred?.complete(Result.failure(CancellationException("Stopped")))
         stopInternal()
         killOrphanedHelpers()
     }
 
     private suspend fun stopInternal() = withContext(Dispatchers.IO) {
+        activeGeneration.incrementAndGet()
         val (procs, jobs) = synchronized(procLock) {
             val p = activeProcesses.toList()
             val j = readerJobs.toList()
@@ -238,6 +268,9 @@ class CoreProcessManager(
         }
         procs.forEach { managed ->
             managed.intentionalStop.set(true)
+            runCatching { managed.proc.inputStream.close() }
+            runCatching { managed.proc.errorStream.close() }
+            runCatching { managed.proc.outputStream.close() }
             runCatching {
                 if (managed.proc.isAlive) {
                     managed.proc.destroy()
@@ -250,6 +283,9 @@ class CoreProcessManager(
             }
         }
         jobs.forEach { it.cancel() }
+        withTimeoutOrNull(1500L) {
+            jobs.forEach { it.join() }
+        }
     }
 
     /**

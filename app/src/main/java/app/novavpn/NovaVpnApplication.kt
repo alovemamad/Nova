@@ -121,7 +121,7 @@ object ServiceLocator {
             statsRepository = StatsRepository(appCtx)
             geoResourceRepository = GeoResourceRepository(appCtx)
             diagnosticsEngine = DiagnosticsEngine()
-            tunnelOrchestrator = TunnelStartOrchestrator(settingsRepository, diagnosticsEngine)
+            tunnelOrchestrator = TunnelStartOrchestrator(settingsRepository, diagnosticsEngine, geoResourceRepository)
             vpnController = VpnController(appCtx, settingsRepository, statsRepository, diagnosticsEngine, tunnelOrchestrator)
             initError = null
             initialized = true

@@ -64,6 +64,7 @@ import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.glassHighlight
+import app.novavpn.ui.glass.novaOutlinedTextFieldColors
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
 import com.example.R
@@ -367,6 +368,7 @@ fun ProfilesScreen(
                 minLines = 3,
                 maxLines = 6,
                 shape = RoundedCornerShape(16.dp),
+                colors = novaOutlinedTextFieldColors(),
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(8.dp))

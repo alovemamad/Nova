@@ -30,13 +30,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material.icons.rounded.Route
-import androidx.compose.material.icons.rounded.Security
-import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -58,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassDivider
+import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.LocalGlassLook
 import com.example.R
@@ -130,9 +124,9 @@ fun OnboardingScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         val icon = when (activePage) {
-                            0 -> Icons.Rounded.AutoAwesome
-                            1 -> Icons.Rounded.Route
-                            else -> Icons.Rounded.Security
+                            0 -> GlassIcons.Sparkles
+                            1 -> GlassIcons.Routing
+                            else -> GlassIcons.Shield
                         }
                         Box(
                             modifier = Modifier
@@ -193,13 +187,13 @@ fun OnboardingScreen(
                                 GlassRow(
                                     title = stringResource(R.string.onb_vpn_perm),
                                     subtitle = stringResource(if (vpnGranted) R.string.onb_vpn_granted else R.string.onb_vpn_required),
-                                    icon = Icons.Rounded.VpnKey,
+                                    icon = GlassIcons.Lock,
                                     onClick = {
                                         prepareVpnIntent()?.let { vpnLauncher.launch(it) }
                                     }
                                 ) {
                                     if (vpnGranted) {
-                                        Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = look.success)
+                                        Icon(GlassIcons.CheckCircle, contentDescription = null, tint = look.success)
                                     } else {
                                         Text(stringResource(R.string.onb_grant), color = look.accent, fontWeight = FontWeight.Bold)
                                     }
@@ -209,11 +203,11 @@ fun OnboardingScreen(
                                     GlassRow(
                                         title = stringResource(R.string.onb_notif_perm),
                                         subtitle = stringResource(if (notifGranted) R.string.onb_notif_allowed else R.string.onb_notif_desc),
-                                        icon = Icons.Rounded.NotificationsActive,
+                                        icon = GlassIcons.Bell,
                                         onClick = { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
                                     ) {
                                         if (notifGranted) {
-                                            Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = look.success)
+                                            Icon(GlassIcons.CheckCircle, contentDescription = null, tint = look.success)
                                         } else {
                                             Text(stringResource(R.string.onb_allow), color = look.accent, fontWeight = FontWeight.Bold)
                                         }

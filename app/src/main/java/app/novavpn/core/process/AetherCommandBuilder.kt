@@ -43,7 +43,13 @@ object AetherCommandBuilder {
         useFreshScan: Boolean,
         sessionAuth: SessionProxyAuth? = null,
         nonVpnDnsServers: List<String> = emptyList(),
-        psiphonSlot: Int = 0
+        psiphonSlot: Int = 0,
+        extraCompiledDirectRules: List<String> = emptyList(),
+        extraCompiledBlockRules: List<String> = emptyList(),
+        forceQuickReconnect: Boolean? = null,
+        endpointOverride: String? = null,
+        scanLevelOverride: Int? = null,
+        readinessTimeoutOverrideMs: Long? = null
     ): Result<BuiltLaunchPlan> = runCatching {
         val socksPort = settings.localSocksPort
         require(InputValidators.validatePort(socksPort).isValid) { "Invalid local SOCKS5 port: $socksPort" }
@@ -54,8 +60,9 @@ object AetherCommandBuilder {
             require(httpPort != socksPort) { "SOCKS5 and HTTP ports must be distinct" }
         }
 
-        if (profile.customEndpoint.isNotBlank()) {
-            val check = InputValidators.validateEndpoint(profile.customEndpoint, allowEmpty = false)
+        val effectiveCustomEndpoint = endpointOverride?.trim()?.takeIf { it.isNotBlank() } ?: profile.customEndpoint
+        if (effectiveCustomEndpoint.isNotBlank()) {
+            val check = InputValidators.validateEndpoint(effectiveCustomEndpoint, allowEmpty = false)
             require(check.isValid) { (check as? ValidationResult.Invalid)?.reason ?: "Invalid endpoint" }
         }
 
@@ -73,6 +80,7 @@ object AetherCommandBuilder {
         val bindHost = if (settings.shareProxyOnLan) "0.0.0.0" else "127.0.0.1"
         val aetherInternalPort = if (socksPort + 20 <= 65535) socksPort + 20 else socksPort - 20
         val mtuValue = profile.mtu.coerceIn(576, 1500).toString()
+        val validateSecsValue = profile.validateSecs.coerceIn(2, 30).toString()
 
         val aetherBin = File(nativeDir, "libaether.so")
         val psiphonBin = File(nativeDir, "libpsiphon.so")
@@ -83,13 +91,22 @@ object AetherCommandBuilder {
             put("AETHER_TOR_PT", "obfs4=${lyrebirdBin.absolutePath};webtunnel=${lyrebirdBin.absolutePath}")
             putAll(extraEnvVars)
         }
-        val aetherEnv = baseEnv + ("AETHER_MASQUE_MTU" to mtuValue)
+        val aetherEnv = baseEnv + mapOf(
+            "AETHER_MASQUE_MTU" to mtuValue,
+            "AETHER_MASQUE_VALIDATE_SECS" to validateSecsValue,
+            "AETHER_WG_VALIDATE_SECS" to validateSecsValue
+        )
 
         val isMasqueFamily = profile.aetherProtocol == AetherProtocol.MASQUE ||
             profile.aetherProtocol == AetherProtocol.WARP_IN_MASQUE ||
             profile.aetherProtocol == AetherProtocol.MASQUE_IN_MASQUE
+        val effectiveScanLevel = (scanLevelOverride ?: profile.scanLevel).coerceIn(1, 3)
         val baseAetherTimeoutMs = if (isMasqueFamily) 135_000L else 95_000L
-        val aetherTimeoutMs = if (profile.scanLevel >= 3) baseAetherTimeoutMs + 30_000L else baseAetherTimeoutMs
+        val computedAetherTimeoutMs = readinessTimeoutOverrideMs ?: when {
+            forceQuickReconnect == true -> 12_000L
+            effectiveScanLevel >= 3 -> baseAetherTimeoutMs + 30_000L
+            else -> baseAetherTimeoutMs
+        }
 
         val stage: LaunchStage = when (resolvedRoute) {
             RouteChain.AETHER, RouteChain.SMART_AUTO -> {
@@ -104,14 +121,19 @@ object AetherCommandBuilder {
                     extraArgs = extraCliArgs,
                     routeChain = resolvedRoute,
                     nonVpnDnsServers = nonVpnDnsServers,
-                    psiphonSlot = psiphonSlot
+                    psiphonSlot = psiphonSlot,
+                    extraCompiledDirectRules = extraCompiledDirectRules,
+                    extraCompiledBlockRules = extraCompiledBlockRules,
+                    forceQuickReconnect = forceQuickReconnect,
+                    endpointOverride = endpointOverride,
+                    scanLevelOverride = scanLevelOverride
                 )
                 LaunchStage(
                     adapter = AetherCoreAdapter,
                     args = args,
                     preflightBinaries = listOf(aetherBin),
                     envVars = aetherEnv,
-                    readinessTimeoutMs = aetherTimeoutMs,
+                    readinessTimeoutMs = computedAetherTimeoutMs,
                     readinessMatcher = AetherCoreAdapter::isReadinessLine
                 )
             }
@@ -135,7 +157,7 @@ object AetherCommandBuilder {
                     args = args,
                     preflightBinaries = listOf(aetherBin, psiphonBin),
                     envVars = baseEnv,
-                    readinessTimeoutMs = 95_000L,
+                    readinessTimeoutMs = readinessTimeoutOverrideMs ?: 95_000L,
                     readinessMatcher = AetherCoreAdapter::isPsiphonReadinessLine
                 )
             }
@@ -154,14 +176,19 @@ object AetherCommandBuilder {
                     chainExitSocksBind = "$bindHost:$socksPort",
                     chainExitHttpBind = httpPort?.let { "$bindHost:$it" },
                     nonVpnDnsServers = nonVpnDnsServers,
-                    psiphonSlot = psiphonSlot
+                    psiphonSlot = psiphonSlot,
+                    extraCompiledDirectRules = extraCompiledDirectRules,
+                    extraCompiledBlockRules = extraCompiledBlockRules,
+                    forceQuickReconnect = forceQuickReconnect,
+                    endpointOverride = endpointOverride,
+                    scanLevelOverride = scanLevelOverride
                 )
                 LaunchStage(
                     adapter = AetherCoreAdapter,
                     args = args,
                     preflightBinaries = listOf(aetherBin, psiphonBin),
                     envVars = aetherEnv,
-                    readinessTimeoutMs = aetherTimeoutMs + 35_000L,
+                    readinessTimeoutMs = computedAetherTimeoutMs + 35_000L,
                     readinessMatcher = AetherCoreAdapter::isPsiphonReadinessLine
                 )
             }
@@ -185,7 +212,7 @@ object AetherCommandBuilder {
                     args = args,
                     preflightBinaries = listOf(aetherBin, lyrebirdBin),
                     envVars = baseEnv,
-                    readinessTimeoutMs = 150_000L,
+                    readinessTimeoutMs = readinessTimeoutOverrideMs ?: 150_000L,
                     readinessMatcher = AetherCoreAdapter::isTorReadinessLine
                 )
             }
@@ -204,14 +231,19 @@ object AetherCommandBuilder {
                     chainExitSocksBind = "$bindHost:$socksPort",
                     chainExitHttpBind = httpPort?.let { "$bindHost:$it" },
                     nonVpnDnsServers = nonVpnDnsServers,
-                    psiphonSlot = psiphonSlot
+                    psiphonSlot = psiphonSlot,
+                    extraCompiledDirectRules = extraCompiledDirectRules,
+                    extraCompiledBlockRules = extraCompiledBlockRules,
+                    forceQuickReconnect = forceQuickReconnect,
+                    endpointOverride = endpointOverride,
+                    scanLevelOverride = scanLevelOverride
                 )
                 LaunchStage(
                     adapter = AetherCoreAdapter,
                     args = args,
                     preflightBinaries = listOf(aetherBin, lyrebirdBin),
                     envVars = aetherEnv,
-                    readinessTimeoutMs = aetherTimeoutMs + 50_000L,
+                    readinessTimeoutMs = computedAetherTimeoutMs + 50_000L,
                     readinessMatcher = AetherCoreAdapter::isTorReadinessLine
                 )
             }

@@ -6,9 +6,14 @@ import android.provider.OpenableColumns
 import app.novavpn.core.net.SharedHttpClient
 import app.novavpn.data.log.LogRepository
 import app.novavpn.domain.model.GeoBatchUpdateSummary
+import app.novavpn.domain.model.GeoResourceFormat
 import app.novavpn.domain.model.GeoResourceItem
 import app.novavpn.domain.model.GeoResourceStatus
 import app.novavpn.domain.model.GeoSourceType
+import app.novavpn.domain.model.VpnProfile
+import app.novavpn.domain.routing.GeoDatParser
+import app.novavpn.domain.routing.RoutingRuleParser
+import app.novavpn.domain.routing.RuleKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.Request
@@ -55,13 +61,15 @@ class GeoResourceRepository(private val context: Context) {
     private val _isUpdatingAll = MutableStateFlow(false)
     val isUpdatingAll: StateFlow<Boolean> = _isUpdatingAll.asStateFlow()
 
+    private val compiledTagCache = ConcurrentHashMap<String, GeoDatParser.ExtractedGeoRules>()
+
     suspend fun loadInitial() {
         withContext(Dispatchers.IO) {
             indexMutex.withLock {
                 val loaded = readIndexFromDisk()
                 val reconciled = loaded.map { item ->
                     val file = File(storageDir, item.localFileName)
-                    if (item.status == GeoResourceStatus.UPDATING) {
+                    val baseItem = if (item.status == GeoResourceStatus.UPDATING) {
                         // Recover cleanly if killed mid-update: healthy prior file stays READY
                         if (file.isFile && file.length() > 0L) {
                             item.copy(status = GeoResourceStatus.READY, lastError = null)
@@ -70,6 +78,24 @@ class GeoResourceRepository(private val context: Context) {
                         }
                     } else {
                         item
+                    }
+                    if (baseItem.status == GeoResourceStatus.READY &&
+                        baseItem.format == GeoResourceFormat.UNKNOWN &&
+                        file.isFile &&
+                        file.length() > 0L
+                    ) {
+                        val inspected = GeoDatParser.inspectFile(file)
+                        if (inspected != null) {
+                            baseItem.copy(
+                                format = inspected.format,
+                                entryCount = inspected.entryCount,
+                                sampleTags = inspected.sampleTags
+                            )
+                        } else {
+                            baseItem
+                        }
+                    } else {
+                        baseItem
                     }
                 }
                 _resources.value = reconciled
@@ -129,6 +155,13 @@ class GeoResourceRepository(private val context: Context) {
             }
 
             val (byteCount, sha256) = writeStats.getOrThrow()
+            val inspected = GeoDatParser.inspectFile(partFile)
+                ?: run {
+                    partFile.delete()
+                    return@withContext Result.failure(
+                        GeoValidationException.InvalidDatFile("File is not a valid V2Ray .dat database or CIDR/domain list")
+                    )
+                }
             atomicReplaceFile(partFile, targetFile)
 
             val item = GeoResourceItem(
@@ -141,7 +174,10 @@ class GeoResourceRepository(private val context: Context) {
                 sha256 = sha256,
                 lastUpdatedMs = System.currentTimeMillis(),
                 status = GeoResourceStatus.READY,
-                lastError = null
+                lastError = null,
+                format = inspected.format,
+                entryCount = inspected.entryCount,
+                sampleTags = inspected.sampleTags
             )
 
             indexMutex.withLock {
@@ -149,7 +185,10 @@ class GeoResourceRepository(private val context: Context) {
                 writeIndexToDisk(updated)
                 _resources.value = updated
             }
-            LogRepository.i("GeoResources", "Imported .dat file '$cleanName' ($byteCount bytes)")
+            LogRepository.i(
+                "GeoResources",
+                "Imported .dat file '$cleanName' ($byteCount bytes, format=${inspected.format.name}, entries=${inspected.entryCount})"
+            )
             Result.success(item)
         } catch (t: Throwable) {
             Result.failure(t)
@@ -189,6 +228,13 @@ class GeoResourceRepository(private val context: Context) {
             }
 
             val (byteCount, sha256) = dlResult.getOrThrow()
+            val inspected = GeoDatParser.inspectFile(partFile)
+                ?: run {
+                    partFile.delete()
+                    return@withContext Result.failure(
+                        GeoValidationException.InvalidDatFile("Downloaded file is not a valid V2Ray .dat database or rule list")
+                    )
+                }
             atomicReplaceFile(partFile, targetFile)
 
             val item = GeoResourceItem(
@@ -201,7 +247,10 @@ class GeoResourceRepository(private val context: Context) {
                 sha256 = sha256,
                 lastUpdatedMs = System.currentTimeMillis(),
                 status = GeoResourceStatus.READY,
-                lastError = null
+                lastError = null,
+                format = inspected.format,
+                entryCount = inspected.entryCount,
+                sampleTags = inspected.sampleTags
             )
 
             indexMutex.withLock {
@@ -209,7 +258,10 @@ class GeoResourceRepository(private val context: Context) {
                 writeIndexToDisk(updated)
                 _resources.value = updated
             }
-            LogRepository.i("GeoResources", "Downloaded geo-resource '$fileNameFromUrl' ($byteCount bytes)")
+            LogRepository.i(
+                "GeoResources",
+                "Downloaded geo-resource '$fileNameFromUrl' ($byteCount bytes, format=${inspected.format.name}, entries=${inspected.entryCount})"
+            )
             Result.success(item)
         } catch (t: Throwable) {
             Result.failure(t)
@@ -251,11 +303,19 @@ class GeoResourceRepository(private val context: Context) {
             }
 
             val (byteCount, sha256) = dlResult.getOrThrow()
+            val inspected = GeoDatParser.inspectFile(partFile)
+                ?: run {
+                    partFile.delete()
+                    val msg = "Updated payload failed .dat structure validation; previous file preserved"
+                    markStatus(id = id, status = GeoResourceStatus.ERROR, error = msg)
+                    return@withContext Result.failure(GeoValidationException.InvalidDatFile(msg))
+                }
             // Preserve identical content without redundant rewrite if sha256 matches and healthy file exists
             if (targetFile.isFile && targetFile.length() == byteCount && snapshot.sha256 == sha256) {
                 partFile.delete()
             } else {
                 atomicReplaceFile(partFile, targetFile)
+                compiledTagCache.keys.removeAll { it.startsWith("$id:") }
             }
 
             var finalItem = snapshot
@@ -267,7 +327,10 @@ class GeoResourceRepository(private val context: Context) {
                             sha256 = sha256,
                             lastUpdatedMs = System.currentTimeMillis(),
                             status = GeoResourceStatus.READY,
-                            lastError = null
+                            lastError = null,
+                            format = inspected.format,
+                            entryCount = inspected.entryCount,
+                            sampleTags = inspected.sampleTags
                         ).also { finalItem = it }
                     } else {
                         item
@@ -276,7 +339,7 @@ class GeoResourceRepository(private val context: Context) {
                 writeIndexToDisk(updatedList)
                 _resources.value = updatedList
             }
-            LogRepository.i("GeoResources", "Updated '${finalItem.name}' ($byteCount bytes)")
+            LogRepository.i("GeoResources", "Updated '${finalItem.name}' ($byteCount bytes, entries=${inspected.entryCount})")
             Result.success(finalItem)
         } finally {
             releaseInFlight(lockKey)
@@ -321,10 +384,111 @@ class GeoResourceRepository(private val context: Context) {
                 File(storageDir, target.localFileName).delete()
                 File(storageDir, "${target.localFileName}.part").delete()
             }
+            compiledTagCache.keys.removeAll { it.startsWith("$id:") }
             val updated = _resources.value.filterNot { it.id == id }
             writeIndexToDisk(updated)
             _resources.value = updated
         }
+    }
+
+    /**
+     * Expands `geoip:<tag>` and `geosite:<tag>` rules declared in [profile] against imported READY `.dat`
+     * resources so both Aether (`--route-direct`/`--route-block`) and sing-box (`route.rules`) consume them.
+     * Cached by `(resource.id, resource.sha256, tags)` to avoid re-parsing multi-megabyte `.dat` files on reconnect.
+     */
+    suspend fun compileRulesForProfile(
+        profile: VpnProfile,
+        maxPerDirection: Int = 512
+    ): GeoDatParser.CompiledProfileGeoRules = withContext(Dispatchers.IO) {
+        val directParsed = RoutingRuleParser.parse(profile.directRules).validRules
+        val blockParsed = RoutingRuleParser.parse(profile.blockRules).validRules
+
+        val directGeoIpTags = directParsed.filter { it.kind == RuleKind.GEOIP }.map { it.value }.toSet()
+        val directGeoSiteTags = directParsed.filter { it.kind == RuleKind.GEOSITE }.map { it.value }.toSet()
+        val blockGeoIpTags = blockParsed.filter { it.kind == RuleKind.GEOIP }.map { it.value }.toSet()
+        val blockGeoSiteTags = blockParsed.filter { it.kind == RuleKind.GEOSITE }.map { it.value }.toSet()
+
+        if (directGeoIpTags.isEmpty() && directGeoSiteTags.isEmpty() &&
+            blockGeoIpTags.isEmpty() && blockGeoSiteTags.isEmpty()
+        ) {
+            return@withContext GeoDatParser.CompiledProfileGeoRules()
+        }
+
+        val readyItems = _resources.value.filter { it.status == GeoResourceStatus.READY }
+        val directCidrs = LinkedHashSet<String>()
+        val directDomains = LinkedHashSet<String>()
+        val blockCidrs = LinkedHashSet<String>()
+        val blockDomains = LinkedHashSet<String>()
+        val matchedTags = LinkedHashSet<String>()
+
+        fun extractCached(item: GeoResourceItem, wantedTags: Set<String>, limit: Int): GeoDatParser.ExtractedGeoRules {
+            if (wantedTags.isEmpty() || limit <= 0) return GeoDatParser.ExtractedGeoRules()
+            val file = File(storageDir, item.localFileName)
+            if (!file.isFile || file.length() <= 0L) return GeoDatParser.ExtractedGeoRules()
+            val key = "${item.id}:${item.sha256}:${wantedTags.sorted().joinToString(",")}:$limit"
+            compiledTagCache[key]?.let { return it }
+            val extracted = GeoDatParser.extractRulesForTags(
+                file = file,
+                requestedTags = wantedTags,
+                fileTagHint = item.name,
+                maxRules = limit
+            )
+            if (compiledTagCache.size > 64) compiledTagCache.clear()
+            compiledTagCache[key] = extracted
+            return extracted
+        }
+
+        for (item in readyItems) {
+            if (directGeoIpTags.isNotEmpty() &&
+                (item.format == GeoResourceFormat.V2RAY_GEOIP || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+            ) {
+                val res = extractCached(item, directGeoIpTags, maxPerDirection)
+                directCidrs.addAll(res.cidrs)
+                directDomains.addAll(res.domains)
+                matchedTags.addAll(res.matchedTags)
+            }
+            if (directGeoSiteTags.isNotEmpty() &&
+                (item.format == GeoResourceFormat.V2RAY_GEOSITE || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+            ) {
+                val res = extractCached(item, directGeoSiteTags, maxPerDirection)
+                directCidrs.addAll(res.cidrs)
+                directDomains.addAll(res.domains)
+                matchedTags.addAll(res.matchedTags)
+            }
+            if (blockGeoIpTags.isNotEmpty() &&
+                (item.format == GeoResourceFormat.V2RAY_GEOIP || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+            ) {
+                val res = extractCached(item, blockGeoIpTags, maxPerDirection)
+                blockCidrs.addAll(res.cidrs)
+                blockDomains.addAll(res.domains)
+                matchedTags.addAll(res.matchedTags)
+            }
+            if (blockGeoSiteTags.isNotEmpty() &&
+                (item.format == GeoResourceFormat.V2RAY_GEOSITE || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+            ) {
+                val res = extractCached(item, blockGeoSiteTags, maxPerDirection)
+                blockCidrs.addAll(res.cidrs)
+                blockDomains.addAll(res.domains)
+                matchedTags.addAll(res.matchedTags)
+            }
+        }
+
+        val allRequested = directGeoIpTags + directGeoSiteTags + blockGeoIpTags + blockGeoSiteTags
+        val unresolved = allRequested - matchedTags
+        val dCidrs = directCidrs.take(maxPerDirection)
+        val dDomains = directDomains.take((maxPerDirection - dCidrs.size).coerceAtLeast(0))
+        val bCidrs = blockCidrs.take(maxPerDirection)
+        val bDomains = blockDomains.take((maxPerDirection - bCidrs.size).coerceAtLeast(0))
+
+        GeoDatParser.CompiledProfileGeoRules(
+            directRules = dCidrs + dDomains,
+            directCidrs = dCidrs,
+            directDomains = dDomains,
+            blockRules = bCidrs + bDomains,
+            blockCidrs = bCidrs,
+            blockDomains = bDomains,
+            unresolvedTags = unresolved
+        )
     }
 
     private suspend fun markStatus(id: String, status: GeoResourceStatus, error: String?) {

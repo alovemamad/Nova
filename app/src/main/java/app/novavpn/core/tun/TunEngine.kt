@@ -35,6 +35,32 @@ interface TunEngine {
         auth: SessionProxyAuth?,
         profile: VpnProfile,
         protectFd: (Int) -> Boolean
+    ) {
+        start(
+            tunFd = tunFd,
+            socksHost = socksHost,
+            socksPort = socksPort,
+            auth = auth,
+            profile = profile,
+            extraDirectCidrs = emptyList(),
+            extraDirectDomains = emptyList(),
+            extraBlockCidrs = emptyList(),
+            extraBlockDomains = emptyList(),
+            protectFd = protectFd
+        )
+    }
+
+    suspend fun start(
+        tunFd: Int,
+        socksHost: String,
+        socksPort: Int,
+        auth: SessionProxyAuth?,
+        profile: VpnProfile,
+        extraDirectCidrs: List<String>,
+        extraDirectDomains: List<String>,
+        extraBlockCidrs: List<String>,
+        extraBlockDomains: List<String>,
+        protectFd: (Int) -> Boolean
     )
     suspend fun stop()
 }
@@ -56,6 +82,10 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
         socksPort: Int,
         auth: SessionProxyAuth?,
         profile: VpnProfile,
+        extraDirectCidrs: List<String>,
+        extraDirectDomains: List<String>,
+        extraBlockCidrs: List<String>,
+        extraBlockDomains: List<String>,
         protectFd: (Int) -> Boolean
     ) = withContext(Dispatchers.IO) {
         val libboxClass = try {
@@ -64,7 +94,16 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
             throw TunEngineException("libbox.aar is not bundled in app/libs/", e)
         }
 
-        val configJson = buildSingBoxConfig(socksHost, socksPort, auth, profile)
+        val configJson = buildSingBoxConfig(
+            socksHost = socksHost,
+            socksPort = socksPort,
+            auth = auth,
+            profile = profile,
+            extraDirectCidrs = extraDirectCidrs,
+            extraDirectDomains = extraDirectDomains,
+            extraBlockCidrs = extraBlockCidrs,
+            extraBlockDomains = extraBlockDomains
+        )
         val configFile = File(context.filesDir, "nova_core/singbox_tun.json").apply {
             parentFile?.mkdirs()
             writeText(configJson)
@@ -126,6 +165,21 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
     companion object {
         private val json = Json { prettyPrint = true }
 
+        @Volatile
+        private var cachedLibboxAvailable: Boolean? = null
+
+        fun isAvailable(): Boolean {
+            cachedLibboxAvailable?.let { return it }
+            val present = try {
+                Class.forName("io.nekohasekai.libbox.Libbox", false, SingBoxTunEngine::class.java.classLoader)
+                true
+            } catch (_: Throwable) {
+                false
+            }
+            cachedLibboxAvailable = present
+            return present
+        }
+
         /**
          * Builds a modern sing-box 1.12+ JSON configuration using kotlinx.serialization.json
          * (no string interpolation or deprecated `block`/`dns` outbounds or inbound `sniff`).
@@ -134,7 +188,11 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
             socksHost: String,
             socksPort: Int,
             auth: SessionProxyAuth?,
-            profile: VpnProfile
+            profile: VpnProfile,
+            extraDirectCidrs: List<String> = emptyList(),
+            extraDirectDomains: List<String> = emptyList(),
+            extraBlockCidrs: List<String> = emptyList(),
+            extraBlockDomains: List<String> = emptyList()
         ): String {
             val remoteDnsServer = buildRemoteDnsServer(profile)
             val blockRules = RoutingRuleParser.parse(profile.blockRules).validRules
@@ -163,11 +221,23 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
                     })
                 }
 
-                if (blockRules.isNotEmpty()) {
-                    addRuleGroup(blockRules, action = "reject", outbound = null)
+                if (blockRules.isNotEmpty() || extraBlockCidrs.isNotEmpty() || extraBlockDomains.isNotEmpty()) {
+                    addRuleGroup(
+                        rules = blockRules,
+                        extraCidrs = extraBlockCidrs,
+                        extraDomainEntries = extraBlockDomains,
+                        action = "reject",
+                        outbound = null
+                    )
                 }
-                if (directRules.isNotEmpty()) {
-                    addRuleGroup(directRules, action = "route", outbound = "direct")
+                if (directRules.isNotEmpty() || extraDirectCidrs.isNotEmpty() || extraDirectDomains.isNotEmpty()) {
+                    addRuleGroup(
+                        rules = directRules,
+                        extraCidrs = extraDirectCidrs,
+                        extraDomainEntries = extraDirectDomains,
+                        action = "route",
+                        outbound = "direct"
+                    )
                 }
             }
 
@@ -272,12 +342,24 @@ class SingBoxTunEngine(private val context: Context) : TunEngine {
 
         private fun kotlinx.serialization.json.JsonArrayBuilder.addRuleGroup(
             rules: List<app.novavpn.domain.routing.ParsedRoutingRule>,
+            extraCidrs: List<String> = emptyList(),
+            extraDomainEntries: List<String> = emptyList(),
             action: String,
             outbound: String?
         ) {
-            val domains = rules.filter { it.kind == RuleKind.DOMAIN }.map { JsonPrimitive(it.value) }
-            val suffixes = rules.filter { it.kind == RuleKind.DOMAIN_SUFFIX }.map { JsonPrimitive(it.value) }
-            val cidrs = rules.filter { it.kind == RuleKind.IP_CIDR }.map { JsonPrimitive(it.value) }
+            val domains = (rules.filter { it.kind == RuleKind.DOMAIN }.map { it.value } +
+                extraDomainEntries.filterNot { it.startsWith("*.") }.map { it.trim().lowercase() })
+                .distinct()
+                .map(::JsonPrimitive)
+            val suffixes = (rules.filter { it.kind == RuleKind.DOMAIN_SUFFIX }.map { it.value } +
+                extraDomainEntries.filter { it.startsWith("*.") }.map { it.removePrefix("*.").trim().lowercase() })
+                .distinct()
+                .map(::JsonPrimitive)
+            val cidrs = (rules.filter { it.kind == RuleKind.IP_CIDR }.map { it.value } +
+                extraCidrs.map { it.trim() })
+                .filter { it.isNotEmpty() }
+                .distinct()
+                .map(::JsonPrimitive)
             val ports = rules.filter { it.kind == RuleKind.PORT }.mapNotNull { it.value.toIntOrNull()?.let(::JsonPrimitive) }
 
             if (domains.isNotEmpty() || suffixes.isNotEmpty()) {
@@ -328,6 +410,10 @@ class HevSocks5TunEngine(private val context: Context) : TunEngine {
         socksPort: Int,
         auth: SessionProxyAuth?,
         profile: VpnProfile,
+        extraDirectCidrs: List<String>,
+        extraDirectDomains: List<String>,
+        extraBlockCidrs: List<String>,
+        extraBlockDomains: List<String>,
         protectFd: (Int) -> Boolean
     ) = withContext(Dispatchers.IO) {
         val confFile = File(context.filesDir, "nova_core/hev_socks5.yml").apply {
@@ -464,12 +550,17 @@ class TunEngineManager(private val context: Context) {
         auth: SessionProxyAuth?,
         profile: VpnProfile,
         preference: TunEnginePreference,
+        extraDirectCidrs: List<String> = emptyList(),
+        extraDirectDomains: List<String> = emptyList(),
+        extraBlockCidrs: List<String> = emptyList(),
+        extraBlockDomains: List<String> = emptyList(),
         protectFd: (Int) -> Boolean
     ): Result<TunEngineType> {
         stopTun()
         val fd = tunInterface.fd
         val enginesToTry: List<TunEngine> = when (preference) {
-            TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV -> listOf(singBox, hev)
+            TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV ->
+                if (SingBoxTunEngine.isAvailable()) listOf(singBox, hev) else listOf(hev)
             TunEnginePreference.SINGBOX_ONLY -> listOf(singBox)
             TunEnginePreference.HEV_SOCKS5_ONLY -> listOf(hev)
         }
@@ -477,7 +568,18 @@ class TunEngineManager(private val context: Context) {
         var lastError: Throwable? = null
         for ((index, engine) in enginesToTry.withIndex()) {
             try {
-                engine.start(fd, "127.0.0.1", socksPort, auth, profile, protectFd)
+                engine.start(
+                    tunFd = fd,
+                    socksHost = "127.0.0.1",
+                    socksPort = socksPort,
+                    auth = auth,
+                    profile = profile,
+                    extraDirectCidrs = extraDirectCidrs,
+                    extraDirectDomains = extraDirectDomains,
+                    extraBlockCidrs = extraBlockCidrs,
+                    extraBlockDomains = extraBlockDomains,
+                    protectFd = protectFd
+                )
                 activeEngine = engine
                 if (index > 0) {
                     LogRepository.w("TunManager", "Default TUN failed (${lastError?.message}); fell back to ${engine.type}")

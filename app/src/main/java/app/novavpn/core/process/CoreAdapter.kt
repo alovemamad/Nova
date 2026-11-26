@@ -57,7 +57,12 @@ object AetherCoreAdapter : CoreAdapter {
         chainExitSocksBind: String? = null,
         chainExitHttpBind: String? = null,
         nonVpnDnsServers: List<String> = emptyList(),
-        psiphonSlot: Int = 0
+        psiphonSlot: Int = 0,
+        extraCompiledDirectRules: List<String> = emptyList(),
+        extraCompiledBlockRules: List<String> = emptyList(),
+        forceQuickReconnect: Boolean? = null,
+        endpointOverride: String? = null,
+        scanLevelOverride: Int? = null
     ): List<String> {
         workDir.mkdirs()
         val bin = File(nativeDir, "libaether.so").absolutePath
@@ -174,7 +179,7 @@ object AetherCoreAdapter : CoreAdapter {
         }
         args.addAll(listOf("--noize", noizeFlag))
 
-        val explicitEndpoint = profile.customEndpoint.trim()
+        val explicitEndpoint = endpointOverride?.trim()?.takeIf { it.isNotBlank() } ?: profile.customEndpoint.trim()
         if (explicitEndpoint.isNotBlank()) {
             when (profile.aetherProtocol) {
                 AetherProtocol.WIREGUARD -> args.addAll(listOf("--wg-peer", explicitEndpoint))
@@ -186,13 +191,16 @@ object AetherCoreAdapter : CoreAdapter {
                 }
                 AetherProtocol.WARP_IN_MASQUE -> args.addAll(listOf("--peer", explicitEndpoint))
             }
-        } else if (!useFreshScan && settings.preferLastGoodGateway) {
-            args.add("--quick-reconnect")
         } else {
-            args.add("--no-quick-reconnect")
+            val useQuickReconnect = forceQuickReconnect ?: (!useFreshScan && settings.preferLastGoodGateway)
+            if (useQuickReconnect) {
+                args.add("--quick-reconnect")
+            } else {
+                args.add("--no-quick-reconnect")
+            }
         }
 
-        val scanFlag = when (profile.scanLevel.coerceIn(1, 3)) {
+        val scanFlag = when ((scanLevelOverride ?: profile.scanLevel).coerceIn(1, 3)) {
             1 -> "--turbo"
             3 -> "--thorough"
             else -> "--balanced"
@@ -216,11 +224,11 @@ object AetherCoreAdapter : CoreAdapter {
 
         appendUpstream(args, profile)
 
-        val directCsv = formatRoutingRulesCsv(profile.directRules)
+        val directCsv = formatRoutingRulesCsv(profile.directRules, extraCompiledDirectRules)
         if (directCsv.isNotEmpty()) {
             args.addAll(listOf("--route-direct", directCsv))
         }
-        val blockCsv = formatRoutingRulesCsv(profile.blockRules)
+        val blockCsv = formatRoutingRulesCsv(profile.blockRules, extraCompiledBlockRules)
         if (blockCsv.isNotEmpty()) {
             args.addAll(listOf("--route-block", blockCsv))
         }
@@ -345,15 +353,35 @@ object AetherCoreAdapter : CoreAdapter {
         }
     }
 
-    internal fun formatRoutingRulesCsv(rawRules: String): String {
+    internal fun formatRoutingRulesCsv(
+        rawRules: String,
+        extraCompiledRules: List<String> = emptyList(),
+        maxCsvChars: Int = 32_000
+    ): String {
         val parsed = RoutingRuleParser.parse(rawRules)
-        return parsed.validRules.mapNotNull { rule ->
+        val combined = LinkedHashSet<String>()
+        parsed.validRules.forEach { rule ->
             when (rule.kind) {
-                RuleKind.IP_CIDR, RuleKind.DOMAIN, RuleKind.DOMAIN_SUFFIX -> rule.rawLine
-                RuleKind.PORT -> "port:${rule.value}"
-                RuleKind.GEOIP, RuleKind.GEOSITE -> if (rule.value == "private") "private" else null
+                RuleKind.IP_CIDR, RuleKind.DOMAIN, RuleKind.DOMAIN_SUFFIX -> combined.add(rule.rawLine)
+                RuleKind.PORT -> combined.add("port:${rule.value}")
+                RuleKind.GEOIP, RuleKind.GEOSITE -> if (rule.value == "private") combined.add("private")
             }
-        }.distinct().joinToString(",")
+        }
+        extraCompiledRules.forEach { entry ->
+            val clean = entry.trim()
+            if (clean.isNotEmpty() && !clean.contains(',')) {
+                combined.add(clean)
+            }
+        }
+        if (combined.isEmpty()) return ""
+        val sb = StringBuilder()
+        for (rule in combined) {
+            val needed = if (sb.isEmpty()) rule.length else rule.length + 1
+            if (sb.length + needed > maxCsvChars) break
+            if (sb.isNotEmpty()) sb.append(',')
+            sb.append(rule)
+        }
+        return sb.toString()
     }
 
     override fun isReadinessLine(line: String): Boolean {
@@ -379,6 +407,14 @@ object AetherCoreAdapter : CoreAdapter {
         val lower = line.lowercase()
         return lower.contains("tor is ready") ||
             lower.contains("bootstrapped 100%")
+    }
+
+    fun isFatalTunnelLine(line: String): Boolean {
+        val lower = line.lowercase()
+        return lower.contains("tunnel considered dead") ||
+            lower.contains("no valid data from peer") ||
+            lower.contains("fatal:") ||
+            lower.contains("panic:")
     }
 
     override fun extractEndpoint(line: String): String? {

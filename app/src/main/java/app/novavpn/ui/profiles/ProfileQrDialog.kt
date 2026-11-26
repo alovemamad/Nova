@@ -14,9 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -32,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
+import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.theme.JetBrainsMonoFamily
@@ -49,7 +47,7 @@ fun ProfileQrDialog(
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = profileName,
-        icon = Icons.Rounded.QrCode2
+        icon = GlassIcons.QrFill
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -98,7 +96,7 @@ fun ProfileQrDialog(
                 )
                 GlassCapsuleButton(
                     text = stringResource(R.string.profiles_copy_link),
-                    icon = Icons.Rounded.ContentCopy,
+                    icon = GlassIcons.Copy,
                     onClick = onCopyUri,
                     prominent = true,
                     modifier = Modifier.weight(1.3f)

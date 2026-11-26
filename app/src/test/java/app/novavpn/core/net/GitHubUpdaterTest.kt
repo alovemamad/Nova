@@ -106,4 +106,44 @@ class GitHubUpdaterTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun `parseLatestReleaseJson extracts asset digest sha256 and falls back to release notes checksum`() {
+        val digestHex = "a".repeat(64)
+        val notesHex = "b".repeat(64)
+        val withDigest = """
+            {
+              "tag_name": "v2.0.0",
+              "html_url": "https://github.com/alovemamad/Nova/releases/tag/v2.0.0",
+              "body": "Release notes",
+              "assets": [
+                {
+                  "name": "NovaVPN-arm64-v8a-release.apk",
+                  "browser_download_url": "https://example.com/a.apk",
+                  "size": 12345,
+                  "digest": "sha256:$digestHex"
+                }
+              ]
+            }
+        """.trimIndent()
+        val parsedDigest = GitHubUpdater.parseLatestReleaseJson(withDigest, "1.0.1", listOf("arm64-v8a"))
+        assertEquals(digestHex, parsedDigest.expectedSha256)
+
+        val withNotes = """
+            {
+              "tag_name": "v2.0.0",
+              "html_url": "https://github.com/alovemamad/Nova/releases/tag/v2.0.0",
+              "body": "NovaVPN-arm64-v8a-release.apk $notesHex",
+              "assets": [
+                {
+                  "name": "NovaVPN-arm64-v8a-release.apk",
+                  "browser_download_url": "https://example.com/a.apk",
+                  "size": 12345
+                }
+              ]
+            }
+        """.trimIndent()
+        val parsedNotes = GitHubUpdater.parseLatestReleaseJson(withNotes, "1.0.1", listOf("arm64-v8a"))
+        assertEquals(notesHex, parsedNotes.expectedSha256)
+    }
 }

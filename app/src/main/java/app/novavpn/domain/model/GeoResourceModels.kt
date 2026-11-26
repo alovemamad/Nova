@@ -16,6 +16,14 @@ enum class GeoResourceStatus {
 }
 
 @Serializable
+enum class GeoResourceFormat {
+    UNKNOWN,
+    V2RAY_GEOIP,
+    V2RAY_GEOSITE,
+    TEXT_RULES
+}
+
+@Serializable
 data class GeoResourceItem(
     val id: String,
     val name: String,
@@ -26,7 +34,10 @@ data class GeoResourceItem(
     val sha256: String = "",
     val lastUpdatedMs: Long = 0L,
     val status: GeoResourceStatus = GeoResourceStatus.READY,
-    val lastError: String? = null
+    val lastError: String? = null,
+    val format: GeoResourceFormat = GeoResourceFormat.UNKNOWN,
+    val entryCount: Int = 0,
+    val sampleTags: List<String> = emptyList()
 )
 
 data class GeoBatchUpdateSummary(

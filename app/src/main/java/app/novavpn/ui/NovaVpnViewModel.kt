@@ -105,6 +105,7 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
     private val appsLoading = AtomicBoolean(false)
     private val updateCheckInFlight = AtomicBoolean(false)
     private val updateDownloadInFlight = AtomicBoolean(false)
+    private val autoUpdateCheckedThisLaunch = AtomicBoolean(false)
 
     private val startupExceptionHandler = CoroutineExceptionHandler { _, throwable ->
         LogRepository.e(
@@ -525,11 +526,56 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 _updateInfo.value = UpdateInfo(checking = true)
-                _updateInfo.value = diagnosticsEngine.checkForUpdates(currentVersion)
+                val info = diagnosticsEngine.checkForUpdates(currentVersion)
+                settingsRepo.updateSettings {
+                    it.copy(lastAutoUpdateCheckMs = System.currentTimeMillis())
+                }
+                _updateInfo.value = info
             } finally {
                 updateCheckInFlight.set(false)
             }
         }
+    }
+
+    fun maybeAutoCheckUpdates3Days(currentVersion: String) {
+        if (!autoUpdateCheckedThisLaunch.compareAndSet(false, true)) return
+        if (!updateCheckInFlight.compareAndSet(false, true)) return
+        viewModelScope.launch(startupExceptionHandler) {
+            try {
+                val s = settingsRepo.getSettings()
+                val now = System.currentTimeMillis()
+                val intervalMs = 3L * 24 * 60 * 60 * 1000L
+                if (now - s.lastAutoUpdateCheckMs < intervalMs) {
+                    return@launch
+                }
+                settingsRepo.updateSettings { it.copy(lastAutoUpdateCheckMs = now) }
+                val info = diagnosticsEngine.checkForUpdates(currentVersion)
+                val snoozedForThisTag = info.latestTag != null &&
+                    info.latestTag == s.snoozedUpdateTag &&
+                    now < s.snoozedUpdateUntilMs
+                if (info.updateAvailable && info.error == null && !snoozedForThisTag) {
+                    _updateInfo.value = info.copy(isAutoPrompt = true)
+                }
+            } finally {
+                updateCheckInFlight.set(false)
+            }
+        }
+    }
+
+    fun snoozeUpdatePrompt() {
+        val current = _updateInfo.value
+        val tag = current.latestTag
+        val until = System.currentTimeMillis() + (3L * 24 * 60 * 60 * 1000L)
+        _updateInfo.value = current.copy(isAutoPrompt = false)
+        viewModelScope.launch {
+            settingsRepo.updateSettings {
+                it.copy(snoozedUpdateTag = tag, snoozedUpdateUntilMs = until)
+            }
+        }
+    }
+
+    fun dismissUpdatePrompt() {
+        _updateInfo.value = _updateInfo.value.copy(isAutoPrompt = false)
     }
 
     fun downloadAndInstallUpdate() {
@@ -550,6 +596,7 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
                     downloadUrl = url,
                     assetName = name,
                     expectedSizeBytes = current.apkSizeBytes,
+                    expectedSha256 = current.expectedSha256,
                     onProgress = { pct ->
                         _updateInfo.value = _updateInfo.value.copy(downloadProgress = pct)
                     }

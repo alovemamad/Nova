@@ -2,8 +2,10 @@ package app.novavpn.data.store
 
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
+import app.novavpn.domain.model.GeoResourceFormat
 import app.novavpn.domain.model.GeoResourceStatus
 import app.novavpn.domain.model.GeoSourceType
+import app.novavpn.domain.routing.GeoDatParserTest
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
@@ -59,7 +61,7 @@ class GeoResourceRepositoryTest {
     @Test
     fun `importFromUri imports valid dat file and rejects invalid HTML or non-dat file`() = runBlocking {
         val validDat = File(tempDir, "iran.dat").apply {
-            writeBytes(byteArrayOf(0x0A, 0x10, 0x49, 0x52, 0x01, 0x02, 0x03, 0x04))
+            writeBytes(GeoDatParserTest.buildGeoIpList("IR" to listOf("185.143.232.0" to 22)))
         }
         val okRes = repo.importFromUri(Uri.fromFile(validDat))
         assertTrue(okRes.isSuccess)
@@ -67,6 +69,8 @@ class GeoResourceRepositoryTest {
         assertEquals("iran.dat", item.name)
         assertEquals(GeoSourceType.LOCAL_FILE, item.sourceType)
         assertEquals(GeoResourceStatus.READY, item.status)
+        assertEquals(GeoResourceFormat.V2RAY_GEOIP, item.format)
+        assertEquals(1, item.entryCount)
         assertTrue(repo.resolveResourceFile(item).exists())
 
         val wrongExt = File(tempDir, "bad.txt").apply { writeText("hello") }
@@ -78,7 +82,9 @@ class GeoResourceRepositoryTest {
 
     @Test
     fun `failed batch update preserves previous healthy dat file intact`() = runBlocking {
-        val healthyPayload = byteArrayOf(0x08, 0x01, 0x12, 0x04, 0x55, 0x53, 0x41, 0x00)
+        val healthyPayload = GeoDatParserTest.buildGeoSiteList(
+            "CATEGORY-ADS-ALL" to listOf(2 to "ads.example.com")
+        )
         val requestCount = AtomicInteger(0)
 
         val server = ServerSocket(0)

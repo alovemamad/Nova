@@ -32,7 +32,8 @@ import java.util.Locale
 data class ReleaseApkAsset(
     val name: String,
     val downloadUrl: String,
-    val sizeBytes: Long
+    val sizeBytes: Long,
+    val sha256: String? = null
 )
 
 data class ApkValidationResult(
@@ -124,6 +125,7 @@ object GitHubUpdater {
         val assetsArr = obj["assets"] as? JsonArray
         val apks = parseApkAssets(assetsArr)
         val matchedAsset = selectBestApkAsset(apks, supportedAbis)
+        val expectedSha = matchedAsset?.sha256 ?: extractSha256FromReleaseNotes(notes, matchedAsset?.name)
 
         return UpdateInfo(
             checking = false,
@@ -133,7 +135,8 @@ object GitHubUpdater {
             updateAvailable = available,
             apkDownloadUrl = matchedAsset?.downloadUrl,
             apkAssetName = matchedAsset?.name,
-            apkSizeBytes = matchedAsset?.sizeBytes
+            apkSizeBytes = matchedAsset?.sizeBytes,
+            expectedSha256 = expectedSha
         )
     }
 
@@ -145,8 +148,27 @@ object GitHubUpdater {
             if (!name.endsWith(".apk", ignoreCase = true)) return@mapNotNull null
             val url = obj["browser_download_url"]?.jsonPrimitive?.content ?: return@mapNotNull null
             val size = obj["size"]?.jsonPrimitive?.longOrNull ?: 0L
-            ReleaseApkAsset(name = name, downloadUrl = url, sizeBytes = size)
+            val rawDigest = obj["digest"]?.jsonPrimitive?.content
+            val sha256 = rawDigest
+                ?.substringAfter("sha256:", "")
+                ?.trim()
+                ?.lowercase(Locale.US)
+                ?.takeIf { it.length == 64 && it.all { ch -> ch in '0'..'9' || ch in 'a'..'f' } }
+            ReleaseApkAsset(name = name, downloadUrl = url, sizeBytes = size, sha256 = sha256)
         }
+    }
+
+    internal fun extractSha256FromReleaseNotes(notes: String, assetName: String?): String? {
+        if (notes.isBlank()) return null
+        val shaRegex = Regex("([0-9a-fA-F]{64})")
+        if (!assetName.isNullOrBlank()) {
+            notes.lines().firstOrNull { line ->
+                line.contains(assetName, ignoreCase = true) && shaRegex.containsMatchIn(line)
+            }?.let { line ->
+                return shaRegex.find(line)?.groupValues?.get(1)?.lowercase(Locale.US)
+            }
+        }
+        return null
     }
 
     internal fun selectBestApkAsset(
@@ -211,6 +233,7 @@ object GitHubUpdater {
         downloadUrl: String,
         assetName: String,
         expectedSizeBytes: Long? = null,
+        expectedSha256: String? = null,
         onProgress: (Float) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatchingCancellable {
@@ -234,6 +257,7 @@ object GitHubUpdater {
                 .build()
 
             var expectedTotal = expectedSizeBytes?.takeIf { it > 0L } ?: -1L
+            val shaDigest = MessageDigest.getInstance("SHA-256")
             httpClient(readTimeoutSec = 120L).newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     error("APK download failed (HTTP ${resp.code})")
@@ -251,6 +275,7 @@ object GitHubUpdater {
                         while (true) {
                             val read = input.read(buffer)
                             if (read <= 0) break
+                            shaDigest.update(buffer, 0, read)
                             output.write(buffer, 0, read)
                             copied += read
                             if (expectedTotal > 0L) {
@@ -277,6 +302,14 @@ object GitHubUpdater {
             if (expectedTotal > 0L && tmpFile.length() != expectedTotal) {
                 tmpFile.delete()
                 error("Downloaded APK is incomplete (${tmpFile.length()} / $expectedTotal bytes)")
+            }
+
+            if (!expectedSha256.isNullOrBlank()) {
+                val actualSha = shaDigest.digest().joinToString("") { "%02x".format(it) }
+                if (!actualSha.equals(expectedSha256.trim(), ignoreCase = true)) {
+                    tmpFile.delete()
+                    error("Downloaded APK SHA-256 checksum mismatch")
+                }
             }
 
             check(hasZipMagicHeader(tmpFile)) {

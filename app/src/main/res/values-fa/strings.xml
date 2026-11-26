@@ -295,6 +295,14 @@
     <string name="geo_name_hint">نام دلخواه فایل (اختیاری، .dat)</string>
     <string name="geo_refresh_single">به‌روزرسانی</string>
     <string name="geo_delete">حذف</string>
+    <string name="geo_format_info">%1$s · %2$d مدخل%3$s</string>
+    <string name="geo_core_compat">سازگار با هسته Aether و Sing-box</string>
+
+    <!-- 3-Day Auto Update Prompt -->
+    <string name="update_modal_title">نسخه جدید در دسترس است</string>
+    <string name="update_modal_body">نسخه %1$s آماده دانلود و نصب است.</string>
+    <string name="update_modal_download">به‌روزرسانی</string>
+    <string name="update_modal_later">بعداً</string>
 
     <!-- About Notice & Telegram Support -->
     <string name="about_notice_text">برای این برنامه توسط توسعه‌دهنده زحمت زیادی کشیده شده است. شرعاً استفاده از آن برای کوچکی مجاز نمی‌باشد. اگر یک کوچکی هستید فوراً برنامه را ترک کنید.</string>

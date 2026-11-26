@@ -48,8 +48,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -895,4 +897,32 @@ fun GlassSheet(
             }
         }
     }
+}
+
+@Composable
+fun novaOutlinedTextFieldColors(): TextFieldColors {
+    val look = LocalGlassLook.current
+    return OutlinedTextFieldDefaults.colors(
+        focusedTextColor = look.textPrimary,
+        unfocusedTextColor = look.textPrimary,
+        disabledTextColor = look.textMuted,
+        focusedContainerColor = look.fill2,
+        unfocusedContainerColor = look.fill,
+        disabledContainerColor = look.fill.copy(alpha = 0.5f),
+        cursorColor = look.accent,
+        focusedBorderColor = look.accent,
+        unfocusedBorderColor = look.cardBorder,
+        disabledBorderColor = look.separator,
+        focusedLabelColor = look.accent,
+        unfocusedLabelColor = look.textSecondary,
+        disabledLabelColor = look.textMuted,
+        focusedPlaceholderColor = look.textMuted,
+        unfocusedPlaceholderColor = look.textMuted,
+        focusedSupportingTextColor = look.textSecondary,
+        unfocusedSupportingTextColor = look.textSecondary,
+        focusedLeadingIconColor = look.accent,
+        unfocusedLeadingIconColor = look.textSecondary,
+        focusedTrailingIconColor = look.accent,
+        unfocusedTrailingIconColor = look.textSecondary
+    )
 }

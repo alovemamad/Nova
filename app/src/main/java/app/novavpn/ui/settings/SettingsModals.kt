@@ -4,7 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,12 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Apps
-import androidx.compose.material.icons.rounded.AutoMode
-import androidx.compose.material.icons.rounded.BugReport
-import androidx.compose.material.icons.rounded.Dns
-import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -35,11 +29,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -51,13 +47,19 @@ import app.novavpn.domain.model.InstalledAppInfo
 import app.novavpn.domain.model.LogEntry
 import app.novavpn.domain.model.SplitTunnelMode
 import app.novavpn.ui.glass.GlassCapsuleButton
+import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.GlassSegmented
 import app.novavpn.ui.glass.GlassSwitch
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.novaOutlinedTextFieldColors
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.tr
 import com.example.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+private val splitTunnelAppIconCache = LruCache<String, ImageBitmap>(120)
 
 @Composable
 fun SplitTunnelPickerDialog(
@@ -90,7 +92,7 @@ fun SplitTunnelPickerDialog(
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.settings_split_tunnel),
-        icon = Icons.Rounded.Apps
+        icon = GlassIcons.Apps
     ) {
         GlassSegmented(
             options = listOf(
@@ -111,6 +113,7 @@ fun SplitTunnelPickerDialog(
             label = { Text(stringResource(R.string.split_search)) },
             singleLine = true,
             shape = RoundedCornerShape(14.dp),
+            colors = novaOutlinedTextFieldColors(),
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp))
@@ -134,10 +137,21 @@ fun SplitTunnelPickerDialog(
         LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
             items(filtered, key = { it.packageName }) { app ->
                 val checked = app.packageName in localSelected
-                val iconBmp: Bitmap? = remember(app.packageName) {
-                    runCatching {
-                        context.packageManager.getApplicationIcon(app.packageName).toBitmap(64, 64)
-                    }.getOrNull()
+                val iconImg by produceState<ImageBitmap?>(
+                    initialValue = splitTunnelAppIconCache.get(app.packageName),
+                    key1 = app.packageName
+                ) {
+                    if (value != null) return@produceState
+                    value = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val bmp = context.packageManager
+                                .getApplicationIcon(app.packageName)
+                                .toBitmap(64, 64)
+                                .asImageBitmap()
+                            splitTunnelAppIconCache.put(app.packageName, bmp)
+                            bmp
+                        }.getOrNull()
+                    }
                 }
                 Row(
                     modifier = Modifier
@@ -149,9 +163,9 @@ fun SplitTunnelPickerDialog(
                         .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (iconBmp != null) {
+                    if (iconImg != null) {
                         Image(
-                            bitmap = iconBmp.asImageBitmap(),
+                            bitmap = iconImg!!,
                             contentDescription = app.label,
                             modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp))
                         )
@@ -212,7 +226,7 @@ fun AutoConnectDialog(
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.settings_auto_connect),
-        icon = Icons.Rounded.AutoMode
+        icon = GlassIcons.Sync
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -231,6 +245,7 @@ fun AutoConnectDialog(
                     minLines = 2,
                     maxLines = 4,
                     shape = RoundedCornerShape(14.dp),
+                    colors = novaOutlinedTextFieldColors(),
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -246,6 +261,7 @@ fun AutoConnectDialog(
                     minLines = 2,
                     maxLines = 4,
                     shape = RoundedCornerShape(14.dp),
+                    colors = novaOutlinedTextFieldColors(),
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -289,7 +305,7 @@ fun LogsViewerDialog(
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = tr("Redacted Logs", "لاگ‌های سیستم (سانسورشده)"),
-        icon = Icons.Rounded.BugReport
+        icon = GlassIcons.Logs
     ) {
         LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
             if (logs.isEmpty()) {
@@ -353,7 +369,7 @@ fun BackupRestoreDialog(
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.settings_backup_restore),
-        icon = Icons.Rounded.Restore
+        icon = GlassIcons.Archive
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
@@ -363,6 +379,7 @@ fun BackupRestoreDialog(
                 minLines = 4,
                 maxLines = 8,
                 shape = RoundedCornerShape(14.dp),
+                colors = novaOutlinedTextFieldColors(),
                 modifier = Modifier.fillMaxWidth()
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -406,7 +423,7 @@ fun PortsEditorDialog(
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.settings_local_ports),
-        icon = Icons.Rounded.Dns
+        icon = GlassIcons.Server
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
@@ -415,6 +432,7 @@ fun PortsEditorDialog(
                 label = { Text("SOCKS5 Port (1024-65535)") },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
+                colors = novaOutlinedTextFieldColors(),
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
@@ -423,6 +441,7 @@ fun PortsEditorDialog(
                 label = { Text("HTTP Port (1024-65535)") },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
+                colors = novaOutlinedTextFieldColors(),
                 modifier = Modifier.fillMaxWidth()
             )
             err?.let { Text(it, color = look.danger, style = MaterialTheme.typography.bodySmall) }

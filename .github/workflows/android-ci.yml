@@ -56,8 +56,10 @@ jobs:
        (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     env:
       GH_TOKEN: ${{ github.token }}
+      # --- اصلاحات مربوط به کلید امضا ---
       KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - name: Checkout repository
@@ -129,11 +131,19 @@ jobs:
           mkdir -p dist
           TAG="${{ steps.ver.outputs.tag }}"
 
-          if [[ -n "${KEYSTORE_BASE64}" && -n "${STORE_PASSWORD}" && -n "${KEY_PASSWORD}" ]]; then
-            echo "${KEYSTORE_BASE64}" | base64 --decode > my-upload-key.jks
-            export KEYSTORE_PATH="${PWD}/my-upload-key.jks"
-            ./gradlew :app:assembleRelease -PsplitApks=true --stacktrace
-            rm -f my-upload-key.jks
+          if [[ -n "${KEYSTORE_BASE64}" && -n "${KEYSTORE_PASSWORD}" && -n "${KEY_PASSWORD}" && -n "${KEY_ALIAS}" ]]; then
+            # اصلاح: نام فایل به پسوند p12 تغییر کرد
+            echo "${KEYSTORE_BASE64}" | base64 --decode > release-key.p12
+            
+            # اصلاح: پاس دادن مسیر و اطلاعات کلید به Gradle
+            ./gradlew :app:assembleRelease -PsplitApks=true \
+              -Pandroid.injected.signing.store.file="${PWD}/release-key.p12" \
+              -Pandroid.injected.signing.store.password="${KEYSTORE_PASSWORD}" \
+              -Pandroid.injected.signing.key.alias="${KEY_ALIAS}" \
+              -Pandroid.injected.signing.key.password="${KEY_PASSWORD}" \
+              --stacktrace
+            
+            rm -f release-key.p12
             APK_DIR="app/build/outputs/apk/release"
             VARIANT="release"
           else

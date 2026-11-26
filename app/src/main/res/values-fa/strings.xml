@@ -171,6 +171,10 @@
     <string name="updates_checking">در حال بررسی نسخه جدید در گیت‌هاب…</string>
     <string name="updates_available">نسخه جدید %1$s منتشر شده است</string>
     <string name="updates_up_to_date">شما آخرین نسخه را دارید</string>
+    <string name="updates_downloading">در حال دانلود فایل نصب… %1$d%%</string>
+    <string name="updates_download_install">دانلود و نصب (%1$s)</string>
+    <string name="updates_install_now">نصب نسخه دانلودشده</string>
+    <string name="updates_grant_install_perm">اجازه نصب و تلاش مجدد</string>
     <string name="updates_open_github">باز کردن در گیت‌هاب</string>
     <string name="updates_check_now">بررسی الان</string>
     <string name="about_version">نسخه برنامه</string>
@@ -298,7 +302,7 @@
 
     <!-- 3-Day Auto Update Prompt -->
     <string name="update_modal_title">نسخه جدید در دسترس است</string>
-    <string name="update_modal_body">نسخه %1$s در گیت‌هاب منتشر شده است.</string>
+    <string name="update_modal_body">نسخه %1$s آماده دانلود و نصب است.</string>
     <string name="update_modal_download">به‌روزرسانی</string>
     <string name="update_modal_later">بعداً</string>
 

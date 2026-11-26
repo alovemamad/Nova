@@ -171,6 +171,10 @@
     <string name="updates_checking">Checking GitHub for updates…</string>
     <string name="updates_available">New version %1$s available</string>
     <string name="updates_up_to_date">You are on the latest release</string>
+    <string name="updates_downloading">Downloading APK… %1$d%%</string>
+    <string name="updates_download_install">Download &amp; Install (%1$s)</string>
+    <string name="updates_install_now">Install Downloaded APK</string>
+    <string name="updates_grant_install_perm">Allow App Installs &amp; Retry</string>
     <string name="updates_open_github">Open Release on GitHub</string>
     <string name="updates_check_now">Check Now</string>
     <string name="about_version">App Version</string>
@@ -298,7 +302,7 @@
 
     <!-- 3-Day Auto Update Prompt -->
     <string name="update_modal_title">Update Available</string>
-    <string name="update_modal_body">Version %1$s is available on GitHub Releases.</string>
+    <string name="update_modal_body">Version %1$s is ready to download and install.</string>
     <string name="update_modal_download">Update</string>
     <string name="update_modal_later">Later</string>
 

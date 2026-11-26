@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -37,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -49,7 +52,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import app.novavpn.core.net.GitHubUpdater
 import app.novavpn.domain.model.SuggestedFixAction
 import app.novavpn.domain.model.VpnState
 import app.novavpn.ui.glass.GlassCapsuleButton
@@ -385,6 +387,8 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         onImportBackup = { raw -> viewModel.importBackupJson(raw) },
                                                         onClearLogs = { viewModel.clearLogs() },
                                                         onCheckUpdates = { ver -> viewModel.checkForUpdates(ver) },
+                                                        onDownloadUpdate = { viewModel.downloadAndInstallUpdate() },
+                                                        onRetryInstallUpdate = { viewModel.retryInstallDownloadedApk() },
                                                         onOpenVpnSettings = { viewModel.openVpnSystemSettings() },
                                                         onOpenBatterySettings = { viewModel.openBatteryOptimizationSettings() },
                                                         onClearGeoError = { viewModel.clearGeoActionError() },
@@ -463,7 +467,9 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
 
                         if (updateInfo.isAutoPrompt && updateInfo.updateAvailable) {
                             GlassModalDialog(
-                                onDismissRequest = { viewModel.snoozeUpdatePrompt() },
+                                onDismissRequest = {
+                                    if (!updateInfo.downloading) viewModel.snoozeUpdatePrompt()
+                                },
                                 title = stringResource(R.string.update_modal_title),
                                 icon = GlassIcons.Download
                             ) {
@@ -487,29 +493,86 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
-                                ) {
-                                    GlassCapsuleButton(
-                                        text = stringResource(R.string.update_modal_later),
-                                        onClick = { viewModel.snoozeUpdatePrompt() }
+                                if (updateInfo.downloading) {
+                                    val pct = (updateInfo.downloadProgress * 100f).toInt().coerceIn(0, 100)
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = fmtDigits(stringResource(R.string.updates_downloading, pct)),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = look.accent
                                     )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    GlassCapsuleButton(
-                                        text = stringResource(R.string.update_modal_download),
-                                        icon = GlassIcons.Link,
-                                        prominent = true,
-                                        onClick = {
-                                            val targetUrl = updateInfo.releaseUrl
-                                                ?.takeIf { it.isNotBlank() }
-                                                ?: GitHubUpdater.REPO_HTML_URL
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
-                                            runCatching { context.startActivity(intent) }
-                                            viewModel.dismissUpdatePrompt()
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { updateInfo.downloadProgress.coerceIn(0f, 1f) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp)
+                                            .clip(RoundedCornerShape(3.dp)),
+                                        color = look.accent,
+                                        trackColor = look.fill2
+                                    )
+                                } else {
+                                    if (updateInfo.downloadError != null) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = updateInfo.downloadError.orEmpty(),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = look.danger
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End
+                                    ) {
+                                        GlassCapsuleButton(
+                                            text = stringResource(R.string.update_modal_later),
+                                            onClick = { viewModel.snoozeUpdatePrompt() }
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        when {
+                                            updateInfo.needsInstallPermission && updateInfo.downloadedApkPath != null -> {
+                                                GlassCapsuleButton(
+                                                    text = stringResource(R.string.updates_grant_install_perm),
+                                                    icon = GlassIcons.Shield,
+                                                    prominent = true,
+                                                    tint = look.warning,
+                                                    onClick = { viewModel.retryInstallDownloadedApk() }
+                                                )
+                                            }
+                                            updateInfo.downloadedApkPath != null -> {
+                                                GlassCapsuleButton(
+                                                    text = stringResource(R.string.updates_install_now),
+                                                    icon = GlassIcons.Box,
+                                                    prominent = true,
+                                                    onClick = { viewModel.retryInstallDownloadedApk() }
+                                                )
+                                            }
+                                            !updateInfo.apkDownloadUrl.isNullOrBlank() -> {
+                                                GlassCapsuleButton(
+                                                    text = stringResource(R.string.update_modal_download),
+                                                    icon = GlassIcons.Download,
+                                                    prominent = true,
+                                                    onClick = { viewModel.downloadAndInstallUpdate() }
+                                                )
+                                            }
+                                            !updateInfo.releaseUrl.isNullOrBlank() -> {
+                                                GlassCapsuleButton(
+                                                    text = stringResource(R.string.update_modal_download),
+                                                    icon = GlassIcons.Link,
+                                                    prominent = true,
+                                                    onClick = {
+                                                        val intent = Intent(
+                                                            Intent.ACTION_VIEW,
+                                                            Uri.parse(updateInfo.releaseUrl)
+                                                        )
+                                                        runCatching { context.startActivity(intent) }
+                                                        viewModel.dismissUpdatePrompt()
+                                                    }
+                                                )
+                                            }
                                         }
-                                    )
+                                    }
                                 }
                             }
                         }

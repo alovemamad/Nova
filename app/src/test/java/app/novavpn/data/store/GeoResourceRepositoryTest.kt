@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import app.novavpn.domain.model.GeoResourceFormat
 import app.novavpn.domain.model.GeoResourceStatus
 import app.novavpn.domain.model.GeoSourceType
+import app.novavpn.domain.model.VpnProfile
 import app.novavpn.domain.routing.GeoDatParserTest
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -144,5 +145,26 @@ class GeoResourceRepositoryTest {
             server.close()
             serverThread.interrupt()
         }
+    }
+
+    @Test
+    fun `findUnresolvedGeoTags reports category-ads-all until matching geosite dat is imported`() = runBlocking {
+        val profile = VpnProfile(
+            id = "p-geo",
+            name = "Geo",
+            directRules = "geoip:private\n*.ir",
+            blockRules = "geosite:category-ads-all"
+        )
+
+        val before = repo.findUnresolvedGeoTags(listOf(profile))
+        assertEquals(listOf("geosite:category-ads-all"), before)
+
+        val geositeFile = File(tempDir, "geosite.dat").apply {
+            writeBytes(GeoDatParserTest.buildGeoSiteList("CATEGORY-ADS-ALL" to listOf(2 to "doubleclick.net")))
+        }
+        assertTrue(repo.importFromUri(Uri.fromFile(geositeFile)).isSuccess)
+
+        val after = repo.findUnresolvedGeoTags(listOf(profile))
+        assertTrue(after.isEmpty())
     }
 }

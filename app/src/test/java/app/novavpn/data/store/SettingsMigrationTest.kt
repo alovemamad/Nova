@@ -97,4 +97,25 @@ class SettingsMigrationTest {
         assertFalse(aether.requiresCountry)
         assertTrue(aether.isCountryIndependent)
     }
+
+    @Test
+    fun `migrates the old validateSecs default of 5 to 8 and keeps user-chosen values`() {
+        val profiles = listOf(
+            VpnProfile(id = "legacy", name = "Legacy", validateSecs = VpnProfile.LEGACY_VALIDATE_SECS),
+            VpnProfile(id = "custom", name = "Custom", validateSecs = 12),
+            VpnProfile(id = "new", name = "New")
+        )
+        val json = kotlinx.serialization.json.Json { encodeDefaults = true }
+        val raw = json.encodeToString(
+            kotlinx.serialization.builtins.ListSerializer(VpnProfile.serializer()),
+            profiles
+        )
+
+        val migrated = SettingsMigrator.migrateProfilesJson(raw).associateBy { it.id }
+
+        assertEquals(VpnProfile.DEFAULT_VALIDATE_SECS, migrated.getValue("legacy").validateSecs)
+        assertEquals(12, migrated.getValue("custom").validateSecs)
+        assertEquals(VpnProfile.DEFAULT_VALIDATE_SECS, migrated.getValue("new").validateSecs)
+        assertEquals(8, VpnProfile.DEFAULT_VALIDATE_SECS)
+    }
 }

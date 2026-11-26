@@ -75,6 +75,9 @@ class NovaVpnService : VpnService() {
     @Volatile
     private var latestCompiledGeo: GeoDatParser.CompiledProfileGeoRules = GeoDatParser.CompiledProfileGeoRules()
 
+    @Volatile
+    private var latestProbeReady: CoreProbeOutcome.Ready? = null
+
     private var telemetryJob: Job? = null
     private var reconnectJob: Job? = null
     private var networkDebounceJob: Job? = null
@@ -136,6 +139,12 @@ class NovaVpnService : VpnService() {
             onFatalTunnelError = { summary ->
                 if (!coordinator.isUserStopping && !coordinator.isPaused && coordinator.state == VpnState.CONNECTED) {
                     LogRepository.w("NovaVpnService", "Fatal tunnel error ($summary); triggering immediate reconnect")
+                    // The cached gateway/endpoint just died: make the next connect skip the stale cache.
+                    serviceScope.launch {
+                        runCatching {
+                            ServiceLocator.settingsRepository.updateSettings { it.copy(lastConnectFailed = true) }
+                        }
+                    }
                     val decision = reconnectMachine.onCoreDied()
                     serviceScope.launch { handleReconnectDecision(decision) }
                 }
@@ -294,6 +303,7 @@ class NovaVpnService : VpnService() {
                 telemetryJob?.cancel()
                 telemetryJob = null
                 connectStartedElapsedMs = SystemClock.elapsedRealtime()
+                latestProbeReady = null
                 acquireConnectingLocks()
                 val settings = settingsRepo.getSettings()
                 val profile = settingsRepo.getActiveProfile()
@@ -337,6 +347,7 @@ class NovaVpnService : VpnService() {
                 return when (outcome) {
                     is CoreProbeOutcome.Ready -> {
                         latestCompiledGeo = outcome.compiledGeoRules
+                        latestProbeReady = outcome
                         TunnelLifecycleCoordinator.CoreStepResult.Ready(
                             route = outcome.route,
                             socksPort = outcome.socksPort,
@@ -347,6 +358,7 @@ class NovaVpnService : VpnService() {
                     }
                     is CoreProbeOutcome.Failure -> {
                         latestCompiledGeo = GeoDatParser.CompiledProfileGeoRules()
+                        latestProbeReady = null
                         TunnelLifecycleCoordinator.CoreStepResult.Failed(
                             reason = outcome.dropReason,
                             errorMessage = outcome.errorMessage,
@@ -442,13 +454,24 @@ class NovaVpnService : VpnService() {
                 resumed: Boolean
             ) {
                 releaseWakeLockOnly()
-                val totalStart = connectStartedElapsedMs
-                if (totalStart > 0L) {
-                    LogRepository.i("Timing", "Total connect elapsed: ${SystemClock.elapsedRealtime() - totalStart}ms")
-                    connectStartedElapsedMs = 0L
-                }
                 val settings = settingsRepo.getSettings()
                 val profile = settingsRepo.getActiveProfile()
+                val totalStart = connectStartedElapsedMs
+                connectStartedElapsedMs = 0L
+                val probeMeta = latestProbeReady
+                latestProbeReady = null
+                if (!resumed && totalStart > 0L) {
+                    val elapsedMs = SystemClock.elapsedRealtime() - totalStart
+                    val summary = app.novavpn.core.tun.TunnelStartOrchestrator.formatConnectSummary(
+                        route = route,
+                        carrier = probeMeta?.carrierLabel?.ifBlank { profile.aetherProtocol.name } ?: profile.aetherProtocol.name,
+                        usedSavedEndpoint = probeMeta?.usedSavedEndpoint ?: false,
+                        usedQuickCache = probeMeta?.usedQuickCache ?: false,
+                        winningCandidate = probeMeta?.winningCandidate ?: route.name,
+                        timeToConnectedMs = elapsedMs
+                    )
+                    LogRepository.i("ConnectSummary", summary)
+                }
                 settingsRepo.setVpnActiveState(true)
                 reconnectMachine.reset()
                 if (!resumed || sessionStartMs == 0L) {
@@ -509,6 +532,7 @@ class NovaVpnService : VpnService() {
             ) {
                 releaseLocks()
                 connectStartedElapsedMs = 0L
+                latestProbeReady = null
                 latestCompiledGeo = GeoDatParser.CompiledProfileGeoRules()
                 settingsRepo.setVpnActiveState(false)
                 controller.updateSessionProxyAuth(null)

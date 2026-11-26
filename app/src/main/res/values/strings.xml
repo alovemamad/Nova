@@ -297,6 +297,8 @@
     <string name="geo_delete">Delete</string>
     <string name="geo_format_info">%1$s · %2$d entries%3$s</string>
     <string name="geo_core_compat">Compatible: Aether Core &amp; Sing-box</string>
+    <string name="geo_unresolved_warning_title">Unresolved geo rules</string>
+    <string name="geo_unresolved_warning_body">Missing .dat rules for: %1$s. These rules are skipped during connect until a matching .dat file is imported.</string>
 
     <!-- 3-Day Auto Update Prompt -->
     <string name="update_modal_title">Update Available</string>

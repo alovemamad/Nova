@@ -313,7 +313,7 @@ class AetherCommandBuilderTest {
         val stage = quickPlan.stages.single()
         assertEquals("3", stage.envVars["AETHER_MASQUE_VALIDATE_SECS"])
         assertEquals("3", stage.envVars["AETHER_WG_VALIDATE_SECS"])
-        assertEquals(12_000L, stage.readinessTimeoutMs)
+        assertEquals(AetherCommandBuilder.FAST_CACHE_READINESS_MS, stage.readinessTimeoutMs)
         assertTrue(stage.args.contains("--quick-reconnect"))
         assertFalse(stage.args.contains("--no-quick-reconnect"))
         val directArgIdx = stage.args.indexOf("--route-direct")
@@ -339,5 +339,83 @@ class AetherCommandBuilderTest {
             endpointOverride = "162.159.193.5:443"
         ).getOrThrow()
         assertTrue(pinnedPlan.stages.single().args.containsAll(listOf("--peer", "162.159.193.5:443")))
+    }
+
+    @Test
+    fun `fast cache attempt gets 16s budget and is extended once validation starts`() {
+        val nativeDir = tempFolder.newFolder("jni-fast")
+        val workDir = tempFolder.newFolder("work-fast")
+        val profile = VpnProfile(
+            id = "fast",
+            name = "Fast",
+            routeChain = RouteChain.AETHER,
+            aetherProtocol = AetherProtocol.MASQUE
+        )
+
+        val fast = AetherCommandBuilder.build(
+            nativeDir = nativeDir,
+            workDir = workDir,
+            profile = profile,
+            settings = AppSettings(),
+            resolvedRoute = RouteChain.AETHER,
+            useFreshScan = false,
+            forceQuickReconnect = true
+        ).getOrThrow().stages.single()
+
+        assertEquals(AetherCommandBuilder.FAST_CACHE_READINESS_MS, fast.readinessTimeoutMs)
+        assertEquals(16_000L, fast.readinessTimeoutMs)
+        assertEquals(AetherCommandBuilder.PROGRESS_EXTENSION_MS, fast.progressExtensionMs)
+        assertTrue(fast.args.contains("--quick-reconnect"))
+
+        val override = AetherCommandBuilder.build(
+            nativeDir = nativeDir,
+            workDir = workDir,
+            profile = profile,
+            settings = AppSettings(),
+            resolvedRoute = RouteChain.AETHER,
+            useFreshScan = false,
+            readinessTimeoutOverrideMs = 35_000L
+        ).getOrThrow().stages.single()
+        assertEquals(35_000L, override.readinessTimeoutMs)
+    }
+
+    @Test
+    fun `validate-secs defaults to 8 and is clamped before reaching the core env`() {
+        val nativeDir = tempFolder.newFolder("jni-vs")
+        val workDir = tempFolder.newFolder("work-vs")
+        assertEquals(8, VpnProfile(id = "d", name = "d").validateSecs)
+
+        fun envFor(secs: Int) = AetherCommandBuilder.build(
+            nativeDir = nativeDir,
+            workDir = workDir,
+            profile = VpnProfile(id = "v", name = "v", routeChain = RouteChain.AETHER, validateSecs = secs),
+            settings = AppSettings(),
+            resolvedRoute = RouteChain.AETHER,
+            useFreshScan = false
+        ).getOrThrow().stages.single().envVars
+
+        assertEquals("8", envFor(8)["AETHER_MASQUE_VALIDATE_SECS"])
+        assertEquals("8", envFor(8)["AETHER_WG_VALIDATE_SECS"])
+        assertEquals("2", envFor(0)["AETHER_MASQUE_VALIDATE_SECS"])
+        assertEquals("30", envFor(999)["AETHER_WG_VALIDATE_SECS"])
+    }
+
+    @Test
+    fun `validation progress lines match real Aether output but stale-cache lines do not`() {
+        val real = listOf(
+            "[+] profile 'balanced' passed handshake + data-plane (rtt 8.563151455s)",
+            "[*] validating WireGuard tunnel with 188.114.0.1:891 (handshake + data-plane) before serving socks5...",
+            "[h2] validating data-plane (end-to-end probe) before exposing socks5",
+            "[h2] connect-ip status: 200"
+        )
+        real.forEach { assertTrue(it, AetherCoreAdapter.isValidationProgressLine(it)) }
+
+        val notProgress = listOf(
+            "[*] verifying cached gateway 162.159.0.1:443 before reuse",
+            "[-] cached gateway 162.159.0.1:443 no longer answers; trying the next one",
+            "[-] no remembered gateway answers; scanning fresh",
+            "[+] obfuscation profile: light"
+        )
+        notProgress.forEach { assertFalse(it, AetherCoreAdapter.isValidationProgressLine(it)) }
     }
 }

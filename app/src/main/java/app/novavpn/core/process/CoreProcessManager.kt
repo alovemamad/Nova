@@ -2,6 +2,7 @@ package app.novavpn.core.process
 
 import android.content.Context
 import android.os.Process as AndroidProcess
+import android.os.SystemClock
 import app.novavpn.core.net.ConnectivityHelper
 import app.novavpn.data.log.LogRepository
 import app.novavpn.domain.validation.InputValidators
@@ -131,6 +132,10 @@ class CoreProcessManager(
             val isReadyLine = stage.readinessMatcher ?: stage.adapter::isReadinessLine
             val readyDeferred = CompletableDeferred<Result<String?>>()
             currentReadyDeferred = readyDeferred
+            val readinessStartMs = SystemClock.elapsedRealtime()
+            val readinessDeadlineMs = AtomicLong(readinessStartMs + stage.readinessTimeoutMs)
+            val readinessHardCapMs = readinessStartMs + stage.readinessTimeoutMs + stage.progressExtensionMs
+            var progressExtended = false
             val lastErrorLine = AtomicReference<String?>(null)
             val pb = ProcessBuilder(stage.args)
                 .directory(workDir())
@@ -179,6 +184,15 @@ class CoreProcessManager(
 
                             stage.adapter.extractEndpoint(line)?.let { ep ->
                                 lastDetectedEndpoint.set(ep)
+                            }
+
+                            if (!readySignaled && !progressExtended &&
+                                stage.progressExtensionMs > 0L &&
+                                stage.progressMatcher?.invoke(line) == true
+                            ) {
+                                progressExtended = true
+                                val extended = SystemClock.elapsedRealtime() + stage.progressExtensionMs
+                                readinessDeadlineMs.accumulateAndGet(minOf(extended, readinessHardCapMs)) { a, b -> maxOf(a, b) }
                             }
 
                             if (!readySignaled && isReadyLine(line)) {
@@ -233,7 +247,13 @@ class CoreProcessManager(
                 readerJobs.add(job)
             }
 
-            val readyResult = withTimeoutOrNull(stage.readinessTimeoutMs) { readyDeferred.await() }
+            var rawReadyResult: Result<String?>? = null
+            while (rawReadyResult == null) {
+                val remainingMs = readinessDeadlineMs.get() - SystemClock.elapsedRealtime()
+                if (remainingMs <= 0L) break
+                rawReadyResult = withTimeoutOrNull(remainingMs) { readyDeferred.await() }
+            }
+            val readyResult = rawReadyResult
             currentReadyDeferred = null
             if (readyResult == null) {
                 stopInternal()

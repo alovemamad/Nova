@@ -27,7 +27,11 @@ sealed class CoreProbeOutcome {
         val httpPort: Int?,
         val auth: SessionProxyAuth?,
         val initialPingMs: Int?,
-        val compiledGeoRules: GeoDatParser.CompiledProfileGeoRules = GeoDatParser.CompiledProfileGeoRules()
+        val compiledGeoRules: GeoDatParser.CompiledProfileGeoRules = GeoDatParser.CompiledProfileGeoRules(),
+        val carrierLabel: String = "",
+        val usedSavedEndpoint: Boolean = false,
+        val usedQuickCache: Boolean = false,
+        val winningCandidate: String = route.name
     ) : CoreProbeOutcome()
 
     data class Failure(
@@ -129,7 +133,7 @@ class TunnelStartOrchestrator(
                             forceQuickReconnect = false,
                             endpointOverride = settings.lastKnownGoodEndpoint,
                             scanLevelOverride = 1,
-                            readinessTimeoutOverrideMs = if (isChainSlow) 25_000L else 10_000L,
+                            readinessTimeoutOverrideMs = if (isChainSlow) 30_000L else AetherCommandBuilder.FAST_CACHE_READINESS_MS,
                             labelSuffix = " (Cached)"
                         )
                     )
@@ -140,7 +144,7 @@ class TunnelStartOrchestrator(
                             profileOverride = preferredProfile,
                             forceQuickReconnect = true,
                             scanLevelOverride = 1,
-                            readinessTimeoutOverrideMs = if (isChainSlow) 30_000L else 12_000L,
+                            readinessTimeoutOverrideMs = if (isChainSlow) 30_000L else AetherCommandBuilder.FAST_CACHE_READINESS_MS,
                             labelSuffix = " (Fast Cache)"
                         )
                     )
@@ -221,9 +225,6 @@ class TunnelStartOrchestrator(
                 "GeoResources",
                 "Compiled geo rules: direct=${compiledGeo.directRules.size}, block=${compiledGeo.blockRules.size}"
             )
-        }
-        if (compiledGeo.unresolvedTags.isNotEmpty()) {
-            LogRepository.w("GeoResources", "Unresolved geo tags (import matching .dat): ${compiledGeo.unresolvedTags.joinToString()}")
         }
 
         val candidates = buildLaunchCandidates(profile, settings, networkKey, useFreshScan)
@@ -334,7 +335,11 @@ class TunnelStartOrchestrator(
                         httpPort = coreRes.httpPort,
                         auth = plan.sessionAuth,
                         initialPingMs = pingMs,
-                        compiledGeoRules = compiledGeo
+                        compiledGeoRules = compiledGeo,
+                        carrierLabel = describeCarrier(route, candidate.profileOverride),
+                        usedSavedEndpoint = candidate.endpointOverride != null,
+                        usedQuickCache = candidate.forceQuickReconnect,
+                        winningCandidate = "${route.name}${candidate.labelSuffix}".ifBlank { route.name }
                     )
                 }
                 is CoreStartResult.MissingBinary -> {
@@ -373,5 +378,33 @@ class TunnelStartOrchestrator(
         }
 
         return CoreProbeOutcome.Failure(dropReason, lastError, suggestedFix)
+    }
+
+    companion object {
+        internal fun describeCarrier(route: RouteChain, profile: VpnProfile): String {
+            if (route == RouteChain.PSIPHON_ONLY) return "PSIPHON"
+            if (route == RouteChain.TOR_ONLY) return "TOR"
+            val proto = profile.aetherProtocol
+            val isMasqueFamily = proto == AetherProtocol.MASQUE ||
+                proto == AetherProtocol.WARP_IN_MASQUE ||
+                proto == AetherProtocol.MASQUE_IN_MASQUE
+            return if (isMasqueFamily) {
+                val transport = if (profile.masqueOverH2) "H2" else "H3"
+                val frag = if (profile.tlsFragment) "+Frag" else ""
+                "${proto.name}/$transport$frag"
+            } else {
+                proto.name
+            }
+        }
+
+        fun formatConnectSummary(
+            route: RouteChain,
+            carrier: String,
+            usedSavedEndpoint: Boolean,
+            usedQuickCache: Boolean,
+            winningCandidate: String,
+            timeToConnectedMs: Long
+        ): String = "route=${route.name}, carrier=$carrier, savedEndpoint=$usedSavedEndpoint, " +
+            "quickCache=$usedQuickCache, winner=$winningCandidate, timeMs=$timeToConnectedMs"
     }
 }

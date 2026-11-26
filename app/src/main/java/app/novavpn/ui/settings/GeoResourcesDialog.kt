@@ -66,6 +66,7 @@ import java.util.Locale
 fun GeoResourcesDialog(
     resources: List<GeoResourceItem>,
     isUpdatingAll: Boolean,
+    unresolvedTags: List<String> = emptyList(),
     errorMessage: String?,
     onClearError: () -> Unit,
     onAddFromFile: (Uri) -> Unit,
@@ -173,6 +174,47 @@ fun GeoResourcesDialog(
                     strokeWidth = 2.dp,
                     color = look.accent
                 )
+            }
+        }
+
+        AnimatedVisibility(visible = unresolvedTags.isNotEmpty()) {
+            GlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+                    .testTag("geo_unresolved_warning_banner"),
+                cornerRadius = 16.dp,
+                tintOverride = look.warning.copy(alpha = 0.16f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Icon(
+                        imageVector = GlassIcons.Warning,
+                        contentDescription = null,
+                        tint = look.warning,
+                        modifier = Modifier.padding(top = 2.dp).size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.geo_unresolved_warning_title),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = look.warning
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.geo_unresolved_warning_body,
+                                unresolvedTags.joinToString(", ")
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = look.textPrimary
+                        )
+                    }
+                }
             }
         }
 

@@ -392,6 +392,18 @@ object AetherCoreAdapter : CoreAdapter {
             lower.contains("tunnel validated")
     }
 
+    /**
+     * Lines Aether prints once a gateway has been chosen and is being validated
+     * (log lines taken from Aether v2.4.0 runs: MASQUE and WireGuard).
+     */
+    fun isValidationProgressLine(line: String): Boolean {
+        val lower = line.lowercase()
+        return lower.contains("passed handshake + data-plane") ||
+            lower.contains("validating wireguard tunnel") ||
+            lower.contains("validating data-plane") ||
+            lower.contains("connect-ip status: 200")
+    }
+
     fun isPsiphonReadinessLine(line: String): Boolean {
         val lower = line.lowercase()
         return lower.contains("psiphon is ready") ||

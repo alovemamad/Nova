@@ -92,10 +92,24 @@ object SettingsMigrator {
             if (parsed.isEmpty()) {
                 defaultProfiles()
             } else {
-                ensureIndependentAetherPreset(parsed)
+                ensureIndependentAetherPreset(migrateValidateSecs(parsed))
             }
         }.getOrElse { defaultProfiles() }
     }
+
+    /**
+     * v1.0.5 persisted validateSecs=5 for every profile (encodeDefaults). Real-device logs show healthy
+     * gateways needing 5.7-7.8s for the data-plane probe, so 5 caused false rejections. Only the old
+     * default is bumped; any other value was chosen by the user and is kept.
+     */
+    internal fun migrateValidateSecs(profiles: List<VpnProfile>): List<VpnProfile> =
+        profiles.map {
+            if (it.validateSecs == VpnProfile.LEGACY_VALIDATE_SECS) {
+                it.copy(validateSecs = VpnProfile.DEFAULT_VALIDATE_SECS)
+            } else {
+                it
+            }
+        }
 
     private fun ensureIndependentAetherPreset(profiles: List<VpnProfile>): List<VpnProfile> {
         val hasIndependentAether = profiles.any { it.id == VpnProfile.PRESET_AETHER_ID }

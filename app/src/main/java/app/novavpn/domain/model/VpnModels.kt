@@ -196,7 +196,7 @@ data class VpnProfile(
     val tlsFragment: Boolean = false,
     val customEndpoint: String = "",
     val scanLevel: Int = 2, // 1 = Fast, 2 = Balanced, 3 = Deep
-    val validateSecs: Int = 5,
+    val validateSecs: Int = VpnProfile.DEFAULT_VALIDATE_SECS, // Aether data-plane probe wait; 5s rejected healthy but cold gateways
     val obfuscation: ObfuscationProfile = ObfuscationProfile.AUTO,
     val ipv4Enabled: Boolean = true,
     val ipv6Enabled: Boolean = false,
@@ -221,6 +221,9 @@ data class VpnProfile(
         get() = !requiresCountry || id == PRESET_AETHER_ID
 
     companion object {
+        const val DEFAULT_VALIDATE_SECS = 8
+        /** Value shipped in v1.0.5 and persisted for existing users; migrated to [DEFAULT_VALIDATE_SECS]. */
+        const val LEGACY_VALIDATE_SECS = 5
         const val PRESET_AETHER_ID = "preset-aether"
     }
 }

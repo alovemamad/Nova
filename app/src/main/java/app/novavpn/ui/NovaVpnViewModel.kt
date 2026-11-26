@@ -77,6 +77,9 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
 
     val geoResources: StateFlow<List<GeoResourceItem>> = geoResourceRepo.resources
     val isUpdatingGeoResources: StateFlow<Boolean> = geoResourceRepo.isUpdatingAll
+    val unresolvedGeoTags: StateFlow<List<String>> = combine(geoResources, profiles) { _, profileList ->
+        geoResourceRepo.findUnresolvedGeoTags(profileList)
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private val _geoActionError = MutableStateFlow<String?>(null)
     val geoActionError: StateFlow<String?> = _geoActionError.asStateFlow()

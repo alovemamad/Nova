@@ -107,6 +107,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
     val batteryIgnored by viewModel.batteryOptimizationIgnored.collectAsStateWithLifecycle()
     val geoResources by viewModel.geoResources.collectAsStateWithLifecycle()
     val isUpdatingGeoResources by viewModel.isUpdatingGeoResources.collectAsStateWithLifecycle()
+    val unresolvedGeoTags by viewModel.unresolvedGeoTags.collectAsStateWithLifecycle()
     val geoActionError by viewModel.geoActionError.collectAsStateWithLifecycle()
     val uiMessage by viewModel.uiMessage.collectAsStateWithLifecycle()
     val pendingDeepLinkProfile by viewModel.pendingDeepLinkProfile.collectAsStateWithLifecycle()
@@ -377,6 +378,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         batteryOptimizationIgnored = batteryIgnored,
                                                         geoResources = geoResources,
                                                         isUpdatingGeoResources = isUpdatingGeoResources,
+                                                        unresolvedGeoTags = unresolvedGeoTags,
                                                         geoActionError = geoActionError,
                                                         onRefreshBatteryOptimizationState = { viewModel.refreshBatteryOptimizationState() },
                                                         onUpdateSettings = { t -> viewModel.updateSettings(t) },

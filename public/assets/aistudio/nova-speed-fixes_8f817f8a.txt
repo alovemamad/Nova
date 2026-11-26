@@ -1,0 +1,351 @@
+diff --git a/app/src/main/java/app/novavpn/core/process/AetherCommandBuilder.kt b/app/src/main/java/app/novavpn/core/process/AetherCommandBuilder.kt
+index 694c67d..abd5134 100644
+--- a/app/src/main/java/app/novavpn/core/process/AetherCommandBuilder.kt
++++ b/app/src/main/java/app/novavpn/core/process/AetherCommandBuilder.kt
+@@ -16,7 +16,14 @@ data class LaunchStage(
+     val preflightBinaries: List<File>,
+     val envVars: Map<String, String> = emptyMap(),
+     val readinessTimeoutMs: Long = 45_000L,
+-    val readinessMatcher: ((String) -> Boolean)? = null
++    val readinessMatcher: ((String) -> Boolean)? = null,
++    /**
++     * Lines that prove the core is past discovery and is validating a chosen gateway. When one
++     * appears, the readiness deadline is pushed out (once, capped) so a nearly-finished attempt
++     * is not killed by a short fast-path timeout.
++     */
++    val progressMatcher: ((String) -> Boolean)? = null,
++    val progressExtensionMs: Long = 0L
+ )
+ 
+ data class BuiltLaunchPlan(
+@@ -32,6 +39,12 @@ data class BuiltLaunchPlan(
+ 
+ object AetherCommandBuilder {
+ 
++    /** Readiness budget for attempts that reuse a cached/saved gateway (stale ones must fail fast). */
++    const val FAST_CACHE_READINESS_MS = 16_000L
++
++    /** Extra time granted once Aether reports it is validating the selected gateway. */
++    const val PROGRESS_EXTENSION_MS = 8_000L
++
+     private val ENV_TOKEN_REGEX = Regex("""^[A-Z][A-Z0-9_]*=.*""")
+ 
+     fun build(
+@@ -103,7 +116,7 @@ object AetherCommandBuilder {
+         val effectiveScanLevel = (scanLevelOverride ?: profile.scanLevel).coerceIn(1, 3)
+         val baseAetherTimeoutMs = if (isMasqueFamily) 135_000L else 95_000L
+         val computedAetherTimeoutMs = readinessTimeoutOverrideMs ?: when {
+-            forceQuickReconnect == true -> 12_000L
++            forceQuickReconnect == true -> FAST_CACHE_READINESS_MS
+             effectiveScanLevel >= 3 -> baseAetherTimeoutMs + 30_000L
+             else -> baseAetherTimeoutMs
+         }
+@@ -134,7 +147,9 @@ object AetherCommandBuilder {
+                     preflightBinaries = listOf(aetherBin),
+                     envVars = aetherEnv,
+                     readinessTimeoutMs = computedAetherTimeoutMs,
+-                    readinessMatcher = AetherCoreAdapter::isReadinessLine
++                    readinessMatcher = AetherCoreAdapter::isReadinessLine,
++                    progressMatcher = AetherCoreAdapter::isValidationProgressLine,
++                    progressExtensionMs = PROGRESS_EXTENSION_MS
+                 )
+             }
+ 
+diff --git a/app/src/main/java/app/novavpn/core/process/CoreAdapter.kt b/app/src/main/java/app/novavpn/core/process/CoreAdapter.kt
+index 949ad7c..f0226e9 100644
+--- a/app/src/main/java/app/novavpn/core/process/CoreAdapter.kt
++++ b/app/src/main/java/app/novavpn/core/process/CoreAdapter.kt
+@@ -392,6 +392,18 @@ object AetherCoreAdapter : CoreAdapter {
+             lower.contains("tunnel validated")
+     }
+ 
++    /**
++     * Lines Aether prints once a gateway has been chosen and is being validated
++     * (log lines taken from Aether v2.4.0 runs: MASQUE and WireGuard).
++     */
++    fun isValidationProgressLine(line: String): Boolean {
++        val lower = line.lowercase()
++        return lower.contains("passed handshake + data-plane") ||
++            lower.contains("validating wireguard tunnel") ||
++            lower.contains("validating data-plane") ||
++            lower.contains("connect-ip status: 200")
++    }
++
+     fun isPsiphonReadinessLine(line: String): Boolean {
+         val lower = line.lowercase()
+         return lower.contains("psiphon is ready") ||
+diff --git a/app/src/main/java/app/novavpn/core/process/CoreProcessManager.kt b/app/src/main/java/app/novavpn/core/process/CoreProcessManager.kt
+index 63a803e..a2b8624 100644
+--- a/app/src/main/java/app/novavpn/core/process/CoreProcessManager.kt
++++ b/app/src/main/java/app/novavpn/core/process/CoreProcessManager.kt
+@@ -2,6 +2,7 @@ package app.novavpn.core.process
+ 
+ import android.content.Context
+ import android.os.Process as AndroidProcess
++import android.os.SystemClock
+ import app.novavpn.core.net.ConnectivityHelper
+ import app.novavpn.data.log.LogRepository
+ import app.novavpn.domain.validation.InputValidators
+@@ -131,6 +132,10 @@ class CoreProcessManager(
+             val isReadyLine = stage.readinessMatcher ?: stage.adapter::isReadinessLine
+             val readyDeferred = CompletableDeferred<Result<String?>>()
+             currentReadyDeferred = readyDeferred
++            val readinessStartMs = SystemClock.elapsedRealtime()
++            val readinessDeadlineMs = AtomicLong(readinessStartMs + stage.readinessTimeoutMs)
++            val readinessHardCapMs = readinessStartMs + stage.readinessTimeoutMs + stage.progressExtensionMs
++            var progressExtended = false
+             val lastErrorLine = AtomicReference<String?>(null)
+             val pb = ProcessBuilder(stage.args)
+                 .directory(workDir())
+@@ -181,6 +186,15 @@ class CoreProcessManager(
+                                 lastDetectedEndpoint.set(ep)
+                             }
+ 
++                            if (!readySignaled && !progressExtended &&
++                                stage.progressExtensionMs > 0L &&
++                                stage.progressMatcher?.invoke(line) == true
++                            ) {
++                                progressExtended = true
++                                val extended = SystemClock.elapsedRealtime() + stage.progressExtensionMs
++                                readinessDeadlineMs.accumulateAndGet(minOf(extended, readinessHardCapMs)) { a, b -> maxOf(a, b) }
++                            }
++
+                             if (!readySignaled && isReadyLine(line)) {
+                                 readySignaled = true
+                                 readyDeferred.complete(Result.success(lastDetectedEndpoint.get()))
+@@ -233,7 +247,12 @@ class CoreProcessManager(
+                 readerJobs.add(job)
+             }
+ 
+-            val readyResult = withTimeoutOrNull(stage.readinessTimeoutMs) { readyDeferred.await() }
++            var readyResult: Result<String?>? = null
++            while (readyResult == null) {
++                val remainingMs = readinessDeadlineMs.get() - SystemClock.elapsedRealtime()
++                if (remainingMs <= 0L) break
++                readyResult = withTimeoutOrNull(remainingMs) { readyDeferred.await() }
++            }
+             currentReadyDeferred = null
+             if (readyResult == null) {
+                 stopInternal()
+diff --git a/app/src/main/java/app/novavpn/core/tun/TunnelStartOrchestrator.kt b/app/src/main/java/app/novavpn/core/tun/TunnelStartOrchestrator.kt
+index bbefbf4..996fe54 100644
+--- a/app/src/main/java/app/novavpn/core/tun/TunnelStartOrchestrator.kt
++++ b/app/src/main/java/app/novavpn/core/tun/TunnelStartOrchestrator.kt
+@@ -129,7 +129,7 @@ class TunnelStartOrchestrator(
+                             forceQuickReconnect = false,
+                             endpointOverride = settings.lastKnownGoodEndpoint,
+                             scanLevelOverride = 1,
+-                            readinessTimeoutOverrideMs = if (isChainSlow) 25_000L else 10_000L,
++                            readinessTimeoutOverrideMs = if (isChainSlow) 30_000L else AetherCommandBuilder.FAST_CACHE_READINESS_MS,
+                             labelSuffix = " (Cached)"
+                         )
+                     )
+@@ -140,7 +140,7 @@ class TunnelStartOrchestrator(
+                             profileOverride = preferredProfile,
+                             forceQuickReconnect = true,
+                             scanLevelOverride = 1,
+-                            readinessTimeoutOverrideMs = if (isChainSlow) 30_000L else 12_000L,
++                            readinessTimeoutOverrideMs = if (isChainSlow) 30_000L else AetherCommandBuilder.FAST_CACHE_READINESS_MS,
+                             labelSuffix = " (Fast Cache)"
+                         )
+                     )
+diff --git a/app/src/main/java/app/novavpn/data/store/SettingsDataStore.kt b/app/src/main/java/app/novavpn/data/store/SettingsDataStore.kt
+index 377c3d3..c485c6d 100644
+--- a/app/src/main/java/app/novavpn/data/store/SettingsDataStore.kt
++++ b/app/src/main/java/app/novavpn/data/store/SettingsDataStore.kt
+@@ -92,11 +92,25 @@ object SettingsMigrator {
+             if (parsed.isEmpty()) {
+                 defaultProfiles()
+             } else {
+-                ensureIndependentAetherPreset(parsed)
++                ensureIndependentAetherPreset(migrateValidateSecs(parsed))
+             }
+         }.getOrElse { defaultProfiles() }
+     }
+ 
++    /**
++     * v1.0.5 persisted validateSecs=5 for every profile (encodeDefaults). Real-device logs show healthy
++     * gateways needing 5.7-7.8s for the data-plane probe, so 5 caused false rejections. Only the old
++     * default is bumped; any other value was chosen by the user and is kept.
++     */
++    internal fun migrateValidateSecs(profiles: List<VpnProfile>): List<VpnProfile> =
++        profiles.map {
++            if (it.validateSecs == VpnProfile.LEGACY_VALIDATE_SECS) {
++                it.copy(validateSecs = VpnProfile.DEFAULT_VALIDATE_SECS)
++            } else {
++                it
++            }
++        }
++
+     private fun ensureIndependentAetherPreset(profiles: List<VpnProfile>): List<VpnProfile> {
+         val hasIndependentAether = profiles.any { it.id == VpnProfile.PRESET_AETHER_ID }
+         val normalized = profiles.map { profile ->
+diff --git a/app/src/main/java/app/novavpn/domain/model/VpnModels.kt b/app/src/main/java/app/novavpn/domain/model/VpnModels.kt
+index 46469b0..4ba1889 100644
+--- a/app/src/main/java/app/novavpn/domain/model/VpnModels.kt
++++ b/app/src/main/java/app/novavpn/domain/model/VpnModels.kt
+@@ -196,7 +196,7 @@ data class VpnProfile(
+     val tlsFragment: Boolean = false,
+     val customEndpoint: String = "",
+     val scanLevel: Int = 2, // 1 = Fast, 2 = Balanced, 3 = Deep
+-    val validateSecs: Int = 5,
++    val validateSecs: Int = VpnProfile.DEFAULT_VALIDATE_SECS, // Aether data-plane probe wait; 5s rejected healthy but cold gateways
+     val obfuscation: ObfuscationProfile = ObfuscationProfile.AUTO,
+     val ipv4Enabled: Boolean = true,
+     val ipv6Enabled: Boolean = false,
+@@ -221,6 +221,9 @@ data class VpnProfile(
+         get() = !requiresCountry || id == PRESET_AETHER_ID
+ 
+     companion object {
++        const val DEFAULT_VALIDATE_SECS = 8
++        /** Value shipped in v1.0.5 and persisted for existing users; migrated to [DEFAULT_VALIDATE_SECS]. */
++        const val LEGACY_VALIDATE_SECS = 5
+         const val PRESET_AETHER_ID = "preset-aether"
+     }
+ }
+diff --git a/app/src/main/java/app/novavpn/service/NovaVpnService.kt b/app/src/main/java/app/novavpn/service/NovaVpnService.kt
+index 605b9c3..3e82ae3 100644
+--- a/app/src/main/java/app/novavpn/service/NovaVpnService.kt
++++ b/app/src/main/java/app/novavpn/service/NovaVpnService.kt
+@@ -136,6 +136,12 @@ class NovaVpnService : VpnService() {
+             onFatalTunnelError = { summary ->
+                 if (!coordinator.isUserStopping && !coordinator.isPaused && coordinator.state == VpnState.CONNECTED) {
+                     LogRepository.w("NovaVpnService", "Fatal tunnel error ($summary); triggering immediate reconnect")
++                    // The cached gateway/endpoint just died: make the next connect skip the stale cache.
++                    serviceScope.launch {
++                        runCatching {
++                            ServiceLocator.settingsRepository.updateSettings { it.copy(lastConnectFailed = true) }
++                        }
++                    }
+                     val decision = reconnectMachine.onCoreDied()
+                     serviceScope.launch { handleReconnectDecision(decision) }
+                 }
+diff --git a/app/src/main/java/app/novavpn/service/VpnController.kt b/app/src/main/java/app/novavpn/service/VpnController.kt
+index 3ca5be2..c3e0424 100644
+--- a/app/src/main/java/app/novavpn/service/VpnController.kt
++++ b/app/src/main/java/app/novavpn/service/VpnController.kt
+@@ -102,6 +102,7 @@ class VpnController(
+             scope.launch {
+                 if (!proxyUserCancelled && _status.value.state == VpnState.CONNECTED) {
+                     LogRepository.w("ProxyMode", "Fatal tunnel error ($summary), stopping proxy mode")
++                    runCatching { settingsRepo.updateSettings { it.copy(lastConnectFailed = true) } }
+                     stateMutex.withLock {
+                         handleProxyStopLocked(
+                             DropReason.CORE_EXITED,
+diff --git a/app/src/test/java/app/novavpn/core/process/AetherCommandBuilderTest.kt b/app/src/test/java/app/novavpn/core/process/AetherCommandBuilderTest.kt
+index 82c7829..f2b06db 100644
+--- a/app/src/test/java/app/novavpn/core/process/AetherCommandBuilderTest.kt
++++ b/app/src/test/java/app/novavpn/core/process/AetherCommandBuilderTest.kt
+@@ -340,4 +340,82 @@ class AetherCommandBuilderTest {
+         ).getOrThrow()
+         assertTrue(pinnedPlan.stages.single().args.containsAll(listOf("--peer", "162.159.193.5:443")))
+     }
++
++    @Test
++    fun `fast cache attempt gets 16s budget and is extended once validation starts`() {
++        val nativeDir = tempFolder.newFolder("jni-fast")
++        val workDir = tempFolder.newFolder("work-fast")
++        val profile = VpnProfile(
++            id = "fast",
++            name = "Fast",
++            routeChain = RouteChain.AETHER,
++            aetherProtocol = AetherProtocol.MASQUE
++        )
++
++        val fast = AetherCommandBuilder.build(
++            nativeDir = nativeDir,
++            workDir = workDir,
++            profile = profile,
++            settings = AppSettings(),
++            resolvedRoute = RouteChain.AETHER,
++            useFreshScan = false,
++            forceQuickReconnect = true
++        ).getOrThrow().stages.single()
++
++        assertEquals(AetherCommandBuilder.FAST_CACHE_READINESS_MS, fast.readinessTimeoutMs)
++        assertEquals(16_000L, fast.readinessTimeoutMs)
++        assertEquals(AetherCommandBuilder.PROGRESS_EXTENSION_MS, fast.progressExtensionMs)
++        assertTrue(fast.args.contains("--quick-reconnect"))
++
++        val override = AetherCommandBuilder.build(
++            nativeDir = nativeDir,
++            workDir = workDir,
++            profile = profile,
++            settings = AppSettings(),
++            resolvedRoute = RouteChain.AETHER,
++            useFreshScan = false,
++            readinessTimeoutOverrideMs = 35_000L
++        ).getOrThrow().stages.single()
++        assertEquals(35_000L, override.readinessTimeoutMs)
++    }
++
++    @Test
++    fun `validate-secs defaults to 8 and is clamped before reaching the core env`() {
++        val nativeDir = tempFolder.newFolder("jni-vs")
++        val workDir = tempFolder.newFolder("work-vs")
++        assertEquals(8, VpnProfile(id = "d", name = "d").validateSecs)
++
++        fun envFor(secs: Int) = AetherCommandBuilder.build(
++            nativeDir = nativeDir,
++            workDir = workDir,
++            profile = VpnProfile(id = "v", name = "v", routeChain = RouteChain.AETHER, validateSecs = secs),
++            settings = AppSettings(),
++            resolvedRoute = RouteChain.AETHER,
++            useFreshScan = false
++        ).getOrThrow().stages.single().envVars
++
++        assertEquals("8", envFor(8)["AETHER_MASQUE_VALIDATE_SECS"])
++        assertEquals("8", envFor(8)["AETHER_WG_VALIDATE_SECS"])
++        assertEquals("2", envFor(0)["AETHER_MASQUE_VALIDATE_SECS"])
++        assertEquals("30", envFor(999)["AETHER_WG_VALIDATE_SECS"])
++    }
++
++    @Test
++    fun `validation progress lines match real Aether output but stale-cache lines do not`() {
++        val real = listOf(
++            "[+] profile 'balanced' passed handshake + data-plane (rtt 8.563151455s)",
++            "[*] validating WireGuard tunnel with 188.114.0.1:891 (handshake + data-plane) before serving socks5...",
++            "[h2] validating data-plane (end-to-end probe) before exposing socks5",
++            "[h2] connect-ip status: 200"
++        )
++        real.forEach { assertTrue(it, AetherCoreAdapter.isValidationProgressLine(it)) }
++
++        val notProgress = listOf(
++            "[*] verifying cached gateway 162.159.0.1:443 before reuse",
++            "[-] cached gateway 162.159.0.1:443 no longer answers; trying the next one",
++            "[-] no remembered gateway answers; scanning fresh",
++            "[+] obfuscation profile: light"
++        )
++        notProgress.forEach { assertFalse(it, AetherCoreAdapter.isValidationProgressLine(it)) }
++    }
+ }
+diff --git a/app/src/test/java/app/novavpn/data/store/SettingsMigrationTest.kt b/app/src/test/java/app/novavpn/data/store/SettingsMigrationTest.kt
+index b46e8f2..31455d2 100644
+--- a/app/src/test/java/app/novavpn/data/store/SettingsMigrationTest.kt
++++ b/app/src/test/java/app/novavpn/data/store/SettingsMigrationTest.kt
+@@ -97,4 +97,25 @@ class SettingsMigrationTest {
+         assertFalse(aether.requiresCountry)
+         assertTrue(aether.isCountryIndependent)
+     }
++
++    @Test
++    fun `migrates the old validateSecs default of 5 to 8 and keeps user-chosen values`() {
++        val profiles = listOf(
++            VpnProfile(id = "legacy", name = "Legacy", validateSecs = VpnProfile.LEGACY_VALIDATE_SECS),
++            VpnProfile(id = "custom", name = "Custom", validateSecs = 12),
++            VpnProfile(id = "new", name = "New")
++        )
++        val json = kotlinx.serialization.json.Json { encodeDefaults = true }
++        val raw = json.encodeToString(
++            kotlinx.serialization.builtins.ListSerializer(VpnProfile.serializer()),
++            profiles
++        )
++
++        val migrated = SettingsMigrator.migrateProfilesJson(raw).associateBy { it.id }
++
++        assertEquals(VpnProfile.DEFAULT_VALIDATE_SECS, migrated.getValue("legacy").validateSecs)
++        assertEquals(12, migrated.getValue("custom").validateSecs)
++        assertEquals(VpnProfile.DEFAULT_VALIDATE_SECS, migrated.getValue("new").validateSecs)
++        assertEquals(8, VpnProfile.DEFAULT_VALIDATE_SECS)
++    }
+ }

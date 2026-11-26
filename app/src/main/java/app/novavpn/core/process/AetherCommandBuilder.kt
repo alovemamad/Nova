@@ -16,7 +16,14 @@ data class LaunchStage(
     val preflightBinaries: List<File>,
     val envVars: Map<String, String> = emptyMap(),
     val readinessTimeoutMs: Long = 45_000L,
-    val readinessMatcher: ((String) -> Boolean)? = null
+    val readinessMatcher: ((String) -> Boolean)? = null,
+    /**
+     * Lines that prove the core is past discovery and is validating a chosen gateway. When one
+     * appears, the readiness deadline is pushed out (once, capped) so a nearly-finished attempt
+     * is not killed by a short fast-path timeout.
+     */
+    val progressMatcher: ((String) -> Boolean)? = null,
+    val progressExtensionMs: Long = 0L
 )
 
 data class BuiltLaunchPlan(
@@ -31,6 +38,12 @@ data class BuiltLaunchPlan(
 }
 
 object AetherCommandBuilder {
+
+    /** Readiness budget for attempts that reuse a cached/saved gateway (stale ones must fail fast). */
+    const val FAST_CACHE_READINESS_MS = 16_000L
+
+    /** Extra time granted once Aether reports it is validating the selected gateway. */
+    const val PROGRESS_EXTENSION_MS = 8_000L
 
     private val ENV_TOKEN_REGEX = Regex("""^[A-Z][A-Z0-9_]*=.*""")
 
@@ -103,7 +116,7 @@ object AetherCommandBuilder {
         val effectiveScanLevel = (scanLevelOverride ?: profile.scanLevel).coerceIn(1, 3)
         val baseAetherTimeoutMs = if (isMasqueFamily) 135_000L else 95_000L
         val computedAetherTimeoutMs = readinessTimeoutOverrideMs ?: when {
-            forceQuickReconnect == true -> 12_000L
+            forceQuickReconnect == true -> FAST_CACHE_READINESS_MS
             effectiveScanLevel >= 3 -> baseAetherTimeoutMs + 30_000L
             else -> baseAetherTimeoutMs
         }
@@ -134,7 +147,9 @@ object AetherCommandBuilder {
                     preflightBinaries = listOf(aetherBin),
                     envVars = aetherEnv,
                     readinessTimeoutMs = computedAetherTimeoutMs,
-                    readinessMatcher = AetherCoreAdapter::isReadinessLine
+                    readinessMatcher = AetherCoreAdapter::isReadinessLine,
+                    progressMatcher = AetherCoreAdapter::isValidationProgressLine,
+                    progressExtensionMs = PROGRESS_EXTENSION_MS
                 )
             }
 

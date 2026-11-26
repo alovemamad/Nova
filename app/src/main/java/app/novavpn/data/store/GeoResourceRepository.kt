@@ -491,6 +491,20 @@ class GeoResourceRepository(private val context: Context) {
         )
     }
 
+    /**
+     * Returns distinct `geoip:<tag>` / `geosite:<tag>` entries referenced by [profiles] that are
+     * currently unresolved against READY imported `.dat` resources (excluding built-in `"private"`).
+     */
+    suspend fun findUnresolvedGeoTags(profiles: List<VpnProfile>): List<String> = withContext(Dispatchers.IO) {
+        val readyItems = _resources.value.filter { it.status == GeoResourceStatus.READY }
+        findUnresolvedGeoTagsInItems(
+            profiles = profiles,
+            readyItems = readyItems,
+            resolveFile = { item -> File(storageDir, item.localFileName) },
+            compiledTagCache = compiledTagCache
+        )
+    }
+
     private suspend fun markStatus(id: String, status: GeoResourceStatus, error: String?) {
         indexMutex.withLock {
             val updated = _resources.value.map {
@@ -689,6 +703,69 @@ class GeoResourceRepository(private val context: Context) {
 
         private fun safeDiskName(name: String): String {
             return name.replace(Regex("[^A-Za-z0-9._-]"), "_").takeLast(64).ifBlank { "resource.dat" }
+        }
+
+        internal fun findUnresolvedGeoTagsInItems(
+            profiles: List<VpnProfile>,
+            readyItems: List<GeoResourceItem>,
+            resolveFile: (GeoResourceItem) -> File,
+            compiledTagCache: ConcurrentHashMap<String, GeoDatParser.ExtractedGeoRules>? = null
+        ): List<String> {
+            val wantedGeoIpTags = LinkedHashSet<String>()
+            val wantedGeoSiteTags = LinkedHashSet<String>()
+            for (profile in profiles) {
+                for (raw in listOf(profile.directRules, profile.blockRules)) {
+                    RoutingRuleParser.parse(raw).validRules.forEach { rule ->
+                        if (rule.value == "private") return@forEach
+                        when (rule.kind) {
+                            RuleKind.GEOIP -> wantedGeoIpTags.add(rule.value)
+                            RuleKind.GEOSITE -> wantedGeoSiteTags.add(rule.value)
+                            else -> Unit
+                        }
+                    }
+                }
+            }
+            if (wantedGeoIpTags.isEmpty() && wantedGeoSiteTags.isEmpty()) return emptyList()
+
+            val matchedGeoIp = LinkedHashSet<String>()
+            val matchedGeoSite = LinkedHashSet<String>()
+
+            fun extractCachedForKind(item: GeoResourceItem, wantedTags: Set<String>): Set<String> {
+                if (wantedTags.isEmpty()) return emptySet()
+                val file = resolveFile(item)
+                if (!file.isFile || file.length() <= 0L) return emptySet()
+                val key = "${item.id}:${item.sha256}:${wantedTags.sorted().joinToString(",")}:512"
+                compiledTagCache?.get(key)?.let { return it.matchedTags }
+                val extracted = GeoDatParser.extractRulesForTags(
+                    file = file,
+                    requestedTags = wantedTags,
+                    fileTagHint = item.name,
+                    maxRules = 512
+                )
+                if (compiledTagCache != null) {
+                    if (compiledTagCache.size > 64) compiledTagCache.clear()
+                    compiledTagCache[key] = extracted
+                }
+                return extracted.matchedTags
+            }
+
+            for (item in readyItems) {
+                if (wantedGeoIpTags.isNotEmpty() &&
+                    (item.format == GeoResourceFormat.V2RAY_GEOIP || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+                ) {
+                    matchedGeoIp.addAll(extractCachedForKind(item, wantedGeoIpTags))
+                }
+                if (wantedGeoSiteTags.isNotEmpty() &&
+                    (item.format == GeoResourceFormat.V2RAY_GEOSITE || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+                ) {
+                    matchedGeoSite.addAll(extractCachedForKind(item, wantedGeoSiteTags))
+                }
+            }
+
+            return buildList {
+                wantedGeoSiteTags.filterNot { it in matchedGeoSite }.forEach { add("geosite:$it") }
+                wantedGeoIpTags.filterNot { it in matchedGeoIp }.forEach { add("geoip:$it") }
+            }
         }
     }
 }

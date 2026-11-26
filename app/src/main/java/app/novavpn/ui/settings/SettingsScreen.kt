@@ -94,6 +94,7 @@ fun SettingsScreen(
     batteryOptimizationIgnored: Boolean,
     geoResources: List<GeoResourceItem> = emptyList(),
     isUpdatingGeoResources: Boolean = false,
+    unresolvedGeoTags: List<String> = emptyList(),
     geoActionError: String? = null,
     onRefreshBatteryOptimizationState: () -> Unit = {},
     onUpdateSettings: ((AppSettings) -> AppSettings) -> Unit,
@@ -250,7 +251,7 @@ fun SettingsScreen(
                     onCheckedChange = { checked -> onUpdateSettings { it.copy(shareProxyOnLan = checked) } }
                 )
                 GlassDivider()
-                val hasGeoErrors = geoResources.any { it.status == GeoResourceStatus.ERROR }
+                val hasGeoErrors = geoResources.any { it.status == GeoResourceStatus.ERROR } || unresolvedGeoTags.isNotEmpty()
                 GlassRow(
                     title = stringResource(R.string.settings_geo_resources),
                     subtitle = stringResource(R.string.settings_geo_resources_desc),
@@ -848,6 +849,7 @@ fun SettingsScreen(
         GeoResourcesDialog(
             resources = geoResources,
             isUpdatingAll = isUpdatingGeoResources,
+            unresolvedTags = unresolvedGeoTags,
             errorMessage = geoActionError,
             onClearError = onClearGeoError,
             onAddFromFile = onAddGeoFromUri,

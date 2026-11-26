@@ -8,6 +8,7 @@ import android.net.TrafficStats
 import android.net.VpnService
 import android.os.Build
 import android.os.Process
+import android.os.SystemClock
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
 import app.novavpn.core.SessionProxyAuth
@@ -102,6 +103,7 @@ class VpnController(
             scope.launch {
                 if (!proxyUserCancelled && _status.value.state == VpnState.CONNECTED) {
                     LogRepository.w("ProxyMode", "Fatal tunnel error ($summary), stopping proxy mode")
+                    runCatching { settingsRepo.updateSettings { it.copy(lastConnectFailed = true) } }
                     stateMutex.withLock {
                         handleProxyStopLocked(
                             DropReason.CORE_EXITED,
@@ -304,6 +306,7 @@ class VpnController(
     }
 
     private suspend fun startProxyOnlyLocked(settings: AppSettings, profile: VpnProfile, useFreshScan: Boolean) {
+        val connectStartMs = SystemClock.elapsedRealtime()
         val networkKey = ConnectivityHelper.currentNetworkKey(context)
         val outcome = orchestrator.startCoreAndProbe(
             coreManager = proxyProcessManager,
@@ -318,6 +321,18 @@ class VpnController(
 
         when (outcome) {
             is CoreProbeOutcome.Ready -> {
+                val elapsedMs = SystemClock.elapsedRealtime() - connectStartMs
+                LogRepository.i(
+                    "ConnectSummary",
+                    TunnelStartOrchestrator.formatConnectSummary(
+                        route = outcome.route,
+                        carrier = outcome.carrierLabel.ifBlank { profile.aetherProtocol.name },
+                        usedSavedEndpoint = outcome.usedSavedEndpoint,
+                        usedQuickCache = outcome.usedQuickCache,
+                        winningCandidate = outcome.winningCandidate,
+                        timeToConnectedMs = elapsedMs
+                    )
+                )
                 currentSessionAuth = outcome.auth
                 proxySessionStartMs = System.currentTimeMillis()
                 _status.update {

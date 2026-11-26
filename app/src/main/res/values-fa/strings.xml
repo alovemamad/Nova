@@ -297,6 +297,8 @@
     <string name="geo_delete">حذف</string>
     <string name="geo_format_info">%1$s · %2$d مدخل%3$s</string>
     <string name="geo_core_compat">سازگار با هسته Aether و Sing-box</string>
+    <string name="geo_unresolved_warning_title">برچسب‌های جغرافیایی بدون فایل منبع</string>
+    <string name="geo_unresolved_warning_body">فایل .dat برای قوانین %1$s یافت نشد. این قوانین هنگام اتصال نادیده گرفته می‌شوند تا زمانی که فایل .dat متناظر وارد شود.</string>
 
     <!-- 3-Day Auto Update Prompt -->
     <string name="update_modal_title">نسخه جدید در دسترس است</string>

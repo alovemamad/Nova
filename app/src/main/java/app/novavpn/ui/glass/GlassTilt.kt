@@ -37,6 +37,7 @@ fun rememberGlassTilt(enabled: Boolean): State<Offset> {
         }.getOrNull()
 
         if (sensorManager == null || gravity == null) {
+            tiltState.value = Offset.Zero
             return@DisposableEffect onDispose {}
         }
 
@@ -72,6 +73,9 @@ fun rememberGlassTilt(enabled: Boolean): State<Offset> {
                 runCatching { sensorManager.unregisterListener(listener) }
                 isRegistered = false
             }
+            lastCommittedX = 0f
+            lastCommittedY = 0f
+            tiltState.value = Offset.Zero
         }
 
         val observer = LifecycleEventObserver { _, event ->
@@ -96,4 +100,3 @@ fun rememberGlassTilt(enabled: Boolean): State<Offset> {
 
 fun glassTiltAngleDegrees(tilt: Offset): Float =
     45f + (tilt.x * 35f - tilt.y * 20f).coerceIn(-55f, 55f)
-

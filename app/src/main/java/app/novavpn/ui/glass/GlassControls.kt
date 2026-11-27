@@ -1,10 +1,10 @@
 package app.novavpn.ui.glass
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -42,7 +42,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -62,6 +61,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import app.novavpn.domain.model.GlassConnectControl
 import app.novavpn.domain.model.VpnState
 import com.example.R
@@ -96,10 +98,14 @@ private fun NovaOrbControl(
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
+    val wallBackdrop = LocalGlassChrome.current?.wall
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    val isResumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     val isConnected = vpnState == VpnState.CONNECTED
     val isBusy = vpnState == VpnState.CONNECTING || vpnState == VpnState.RECONNECTING
     val isError = vpnState == VpnState.ERROR
     val isPaused = vpnState == VpnState.PAUSED
+    val animateMotion = (isConnected || isBusy) && isResumed
 
     val ringColor by animateColorAsState(
         targetValue = when {
@@ -115,7 +121,7 @@ private fun NovaOrbControl(
 
     val pulse: Float
     val sweep: Float
-    if (isConnected || isBusy) {
+    if (animateMotion) {
         val inf = rememberInfiniteTransition(label = "orb_pulse")
         val animPulse by inf.animateFloat(
             initialValue = 1f,
@@ -158,7 +164,14 @@ private fun NovaOrbControl(
             .testTag("connect_orb_button"),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.fillMaxSize().scale(pulse)) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = pulse
+                    scaleY = pulse
+                }
+        ) {
             val r = size.minDimension / 2f
             drawCircle(
                 brush = Brush.radialGradient(
@@ -190,8 +203,11 @@ private fun NovaOrbControl(
             modifier = Modifier
                 .size(154.dp)
                 .glassPress(source, scale = 0.93f)
-                .scale(btnScale)
-                .liquidGlass(shape = CircleShape, elevated = true)
+                .graphicsLayer {
+                    scaleX = btnScale
+                    scaleY = btnScale
+                }
+                .liquidGlass(shape = CircleShape, elevated = true, backdrop = wallBackdrop)
                 .clickable(
                     interactionSource = source,
                     indication = null,
@@ -244,10 +260,14 @@ private fun NovaZedGlassControl(
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
+    val wallBackdrop = LocalGlassChrome.current?.wall
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    val isResumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     val isConnected = vpnState == VpnState.CONNECTED
     val isBusy = vpnState == VpnState.CONNECTING || vpnState == VpnState.RECONNECTING
     val isPaused = vpnState == VpnState.PAUSED
     val isError = vpnState == VpnState.ERROR
+    val animateMotion = (isConnected || isBusy) && isResumed
     val shape = RoundedCornerShape(46.dp)
 
     val glowColor by animateColorAsState(
@@ -264,7 +284,7 @@ private fun NovaZedGlassControl(
 
     val shinePhase: Float
     val breathe: Float
-    if (isConnected || isBusy) {
+    if (animateMotion) {
         val inf = rememberInfiniteTransition(label = "zed_motion")
         val animShine by inf.animateFloat(
             initialValue = -0.35f,
@@ -322,7 +342,8 @@ private fun NovaZedGlassControl(
                 .liquidGlass(
                     shape = shape,
                     elevated = true,
-                    tintOverride = if (isConnected) look.accent.copy(alpha = 0.18f) else null
+                    tintOverride = if (isConnected) look.accent.copy(alpha = 0.18f) else null,
+                    backdrop = wallBackdrop
                 )
                 .clickable(
                     interactionSource = source,
@@ -332,7 +353,7 @@ private fun NovaZedGlassControl(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            if (isConnected || isBusy) {
+            if (animateMotion) {
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
@@ -396,6 +417,7 @@ private fun NovaPillButtonControl(
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
+    val wallBackdrop = LocalGlassChrome.current?.wall
     val isConnected = vpnState == VpnState.CONNECTED
     val source = remember { MutableInteractionSource() }
     val bg = if (isConnected) look.accent.copy(alpha = 0.24f) else look.secondaryAccent.copy(alpha = 0.22f)
@@ -404,7 +426,7 @@ private fun NovaPillButtonControl(
             .fillMaxWidth()
             .height(64.dp)
             .glassPress(source, scale = 0.97f)
-            .liquidGlass(shape = RoundedCornerShape(32.dp), elevated = true, tintOverride = bg)
+            .liquidGlass(shape = RoundedCornerShape(32.dp), elevated = true, tintOverride = bg, backdrop = wallBackdrop)
             .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onToggle)
             .testTag("connect_pill_button"),
         contentAlignment = Alignment.Center
@@ -432,10 +454,14 @@ private fun NovaSwitchControl(
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
+    val wallBackdrop = LocalGlassChrome.current?.wall
+    val density = LocalDensity.current
     val isConnected = vpnState == VpnState.CONNECTED || vpnState == VpnState.CONNECTING || vpnState == VpnState.RECONNECTING
     val source = remember { MutableInteractionSource() }
-    val thumbOffset by animateDpAsState(
-        targetValue = if (isConnected) 74.dp else 8.dp,
+    val startPx = with(density) { 8.dp.toPx() }
+    val endPx = with(density) { 74.dp.toPx() }
+    val thumbX by animateFloatAsState(
+        targetValue = if (isConnected) endPx else startPx,
         animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
         label = "switch_thumb"
     )
@@ -447,7 +473,8 @@ private fun NovaSwitchControl(
             .liquidGlass(
                 shape = RoundedCornerShape(37.dp),
                 elevated = true,
-                tintOverride = if (isConnected) look.accent.copy(alpha = 0.25f) else null
+                tintOverride = if (isConnected) look.accent.copy(alpha = 0.25f) else null,
+                backdrop = wallBackdrop
             )
             .clickable(interactionSource = source, indication = null, role = Role.Switch, onClick = onToggle)
             .testTag("connect_switch_button"),
@@ -455,7 +482,7 @@ private fun NovaSwitchControl(
     ) {
         Box(
             modifier = Modifier
-                .offset(x = thumbOffset)
+                .offset { IntOffset(thumbX.roundToInt(), 0) }
                 .size(58.dp)
                 .clip(CircleShape)
                 .background(if (isConnected) look.accent else look.textSecondary.copy(alpha = 0.7f))
@@ -478,6 +505,7 @@ private fun NovaSlideControl(
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
+    val wallBackdrop = LocalGlassChrome.current?.wall
     val isConnected = vpnState == VpnState.CONNECTED
     val density = LocalDensity.current
     var dragX by remember { mutableFloatStateOf(0f) }
@@ -486,7 +514,7 @@ private fun NovaSlideControl(
         modifier = modifier
             .fillMaxWidth()
             .height(64.dp)
-            .liquidGlass(shape = RoundedCornerShape(32.dp), elevated = true)
+            .liquidGlass(shape = RoundedCornerShape(32.dp), elevated = true, backdrop = wallBackdrop)
             .testTag("connect_slide_button")
     ) {
         val maxOffsetPx = with(density) { (maxWidth - 64.dp).toPx().coerceAtLeast(1f) }

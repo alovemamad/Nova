@@ -3,6 +3,8 @@ package app.novavpn.ui.glass
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import app.novavpn.domain.model.GlassMaterial
 import app.novavpn.domain.model.GlassPrefs
 import app.novavpn.domain.model.GlassTint
 import app.novavpn.domain.model.GlassWallpaper
@@ -64,5 +66,59 @@ class GlassThemeTest {
         val (expectedAccent, expectedSecondary) = resolveGlassTintColor(GlassTint.ORANGE, isDark = false)
         assertEquals(expectedAccent, look.accent)
         assertEquals(expectedSecondary, look.secondaryAccent)
+    }
+
+    @Test
+    fun `textPrimary and textSecondary maintain WCAG AA 4_5 contrast across all wallpapers tints modes and materials`() {
+        for (isDark in listOf(false, true)) {
+            for (wallpaper in GlassWallpaper.entries) {
+                for (tint in GlassTint.entries) {
+                    for (material in GlassMaterial.entries) {
+                        for (reduced in listOf(false, true)) {
+                            val prefs = GlassPrefs(
+                                tint = tint,
+                                wallpaper = wallpaper,
+                                material = material,
+                                reduceTransparency = reduced
+                            )
+                            val look = computeGlassLook(
+                                isDark = isDark,
+                                glassPrefs = prefs,
+                                dynamicColor = false
+                            )
+                            val stops = wallpaperStops(wallpaper, isDark = isDark)
+                            val (glowA, glowB) = wallpaperGlowPair(
+                                wallpaper = wallpaper,
+                                isDark = isDark,
+                                dynamicColor = false,
+                                accent = look.accent,
+                                secondaryAccent = look.secondaryAccent
+                            )
+                            val wallSamples = stops + listOf(
+                                glowA.compositeOver(stops.first()),
+                                glowB.compositeOver(stops.last())
+                            )
+                            val surfaces = listOf(look.cardSurface, look.pillSurface, look.solidSurface)
+
+                            for (wallBg in wallSamples) {
+                                for (surface in surfaces) {
+                                    val compositedSurface = surface.compositeOver(wallBg)
+                                    val primaryRatio = wcagContrastRatio(look.textPrimary, compositedSurface)
+                                    val secondaryRatio = wcagContrastRatio(look.textSecondary, compositedSurface)
+                                    assertTrue(
+                                        "textPrimary contrast $primaryRatio < 4.5 for isDark=$isDark wallpaper=$wallpaper tint=$tint material=$material reduced=$reduced",
+                                        primaryRatio >= 4.5f
+                                    )
+                                    assertTrue(
+                                        "textSecondary contrast $secondaryRatio < 4.5 for isDark=$isDark wallpaper=$wallpaper tint=$tint material=$material reduced=$reduced",
+                                        secondaryRatio >= 4.5f
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

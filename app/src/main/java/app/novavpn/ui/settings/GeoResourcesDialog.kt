@@ -6,7 +6,9 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -33,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -45,7 +48,6 @@ import app.novavpn.domain.model.GeoResourceStatus
 import app.novavpn.domain.model.GeoSourceType
 import app.novavpn.ui.glass.GlassBadge
 import app.novavpn.ui.glass.GlassCapsuleButton
-import app.novavpn.ui.glass.GlassCard
 import app.novavpn.ui.glass.GlassCircleButton
 import app.novavpn.ui.glass.GlassDivider
 import app.novavpn.ui.glass.GlassIcons
@@ -178,13 +180,15 @@ fun GeoResourcesDialog(
         }
 
         AnimatedVisibility(visible = unresolvedTags.isNotEmpty()) {
-            GlassCard(
+            val bannerShape = RoundedCornerShape(16.dp)
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 10.dp)
-                    .testTag("geo_unresolved_warning_banner"),
-                cornerRadius = 16.dp,
-                tintOverride = look.warning.copy(alpha = 0.16f)
+                    .clip(bannerShape)
+                    .background(look.warning.copy(alpha = 0.14f), bannerShape)
+                    .border(0.8.dp, look.warning.copy(alpha = 0.36f), bannerShape)
+                    .testTag("geo_unresolved_warning_banner")
             ) {
                 Row(
                     modifier = Modifier.padding(12.dp),
@@ -219,13 +223,15 @@ fun GeoResourcesDialog(
         }
 
         AnimatedVisibility(visible = !errorMessage.isNullOrBlank()) {
-            GlassCard(
+            val errorShape = RoundedCornerShape(16.dp)
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 10.dp)
-                    .testTag("geo_error_banner"),
-                cornerRadius = 16.dp,
-                tintOverride = look.danger.copy(alpha = 0.16f)
+                    .clip(errorShape)
+                    .background(look.danger.copy(alpha = 0.14f), errorShape)
+                    .border(0.8.dp, look.danger.copy(alpha = 0.36f), errorShape)
+                    .testTag("geo_error_banner")
             ) {
                 Row(
                     modifier = Modifier.padding(12.dp),
@@ -253,9 +259,13 @@ fun GeoResourcesDialog(
         Spacer(modifier = Modifier.height(10.dp))
 
         if (resources.isEmpty()) {
-            GlassCard(
-                modifier = Modifier.fillMaxWidth(),
-                cornerRadius = 18.dp
+            val emptyShape = RoundedCornerShape(18.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(emptyShape)
+                    .background(look.fill2, emptyShape)
+                    .border(0.8.dp, look.separator, emptyShape)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
@@ -298,11 +308,14 @@ fun GeoResourcesDialog(
                         fmtDigits(dateFormatter.format(Date(item.lastUpdatedMs)))
                     } else "—"
 
-                    GlassCard(
+                    val itemShape = RoundedCornerShape(18.dp)
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("geo_item_${item.id}"),
-                        cornerRadius = 18.dp
+                            .clip(itemShape)
+                            .background(look.fill2, itemShape)
+                            .border(0.8.dp, look.separator, itemShape)
+                            .testTag("geo_item_${item.id}")
                     ) {
                         Row(
                             modifier = Modifier

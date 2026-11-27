@@ -63,10 +63,9 @@ import app.novavpn.ui.glass.GlassTopEdge
 import app.novavpn.ui.glass.GlassWallpaperLayer
 import app.novavpn.ui.glass.LocalGlassChrome
 import app.novavpn.ui.glass.LocalGlassLook
-import app.novavpn.ui.glass.LocalGlassTiltAngle
-import app.novavpn.ui.glass.LocalGlassTiltOffset
+import app.novavpn.ui.glass.LocalGlassTiltState
 import app.novavpn.ui.glass.NovaDestination
-import app.novavpn.ui.glass.glassTiltAngleDegrees
+import app.novavpn.ui.glass.layerBackdrop
 import app.novavpn.ui.glass.rememberGlassChromeBackdrops
 import app.novavpn.ui.glass.rememberGlassTilt
 import app.novavpn.ui.home.HomeScreen
@@ -196,16 +195,14 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
     NovaVpnTheme(settings = settings) {
         val look = LocalGlassLook.current
         val chrome = rememberGlassChromeBackdrops()
-        val tilt by rememberGlassTilt(settings.glass.motionHighlights)
-        val tiltAngle = glassTiltAngleDegrees(tilt)
+        val tiltState = rememberGlassTilt(settings.glass.motionHighlights && !look.reduced)
 
         CompositionLocalProvider(
             LocalGlassChrome provides chrome,
-            LocalGlassTiltOffset provides tilt,
-            LocalGlassTiltAngle provides tiltAngle
+            LocalGlassTiltState provides tiltState
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
-                GlassWallpaperLayer()
+                GlassWallpaperLayer(backdrop = chrome.wall)
 
                 AnimatedContent(
                     targetState = settings.onboardingCompleted,
@@ -271,7 +268,11 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                     }
 
                                     Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                                        Box(modifier = Modifier.fillMaxSize()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .layerBackdrop(chrome.content)
+                                        ) {
                                             NavHost(
                                                 navController = navController,
                                                 startDestination = NovaDestination.Home,
@@ -414,6 +415,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                 current = currentDest,
                                                 onSelect = navigateTo,
                                                 shrunk = tabBarShrunk && settings.glass.shrinkTabBar,
+                                                backdrop = chrome.combined,
                                                 modifier = Modifier.align(Alignment.BottomCenter)
                                             )
                                         }

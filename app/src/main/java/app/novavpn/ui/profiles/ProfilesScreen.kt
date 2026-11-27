@@ -61,6 +61,7 @@ import app.novavpn.ui.glass.GlassCircleButton
 import app.novavpn.ui.glass.GlassDivider
 import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
+import app.novavpn.ui.glass.LocalGlassChrome
 import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.glassHighlight
@@ -143,12 +144,14 @@ fun ProfilesScreen(
                         onClick = {
                             qrImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         },
+                        backdrop = LocalGlassChrome.current?.wall,
                         modifier = Modifier.testTag("import_qr_gallery_button")
                     )
                     GlassCircleButton(
                         icon = GlassIcons.Clipboard,
                         contentDescription = stringResource(R.string.profiles_import_title),
                         onClick = { showImportTextDialog = true },
+                        backdrop = LocalGlassChrome.current?.wall,
                         modifier = Modifier.testTag("import_text_button")
                     )
                     GlassCircleButton(
@@ -156,6 +159,7 @@ fun ProfilesScreen(
                         contentDescription = stringResource(R.string.profiles_new),
                         onClick = { showCreateDialog = true },
                         tint = look.accent,
+                        backdrop = LocalGlassChrome.current?.wall,
                         modifier = Modifier.testTag("add_profile_button")
                     )
                 }

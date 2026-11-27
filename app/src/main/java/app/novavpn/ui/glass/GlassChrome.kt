@@ -3,22 +3,33 @@ package app.novavpn.ui.glass
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.unit.dp
 import app.novavpn.domain.model.GlassWallpaper
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
 
 @Immutable
 class GlassChromeBackdrops(
@@ -27,7 +38,8 @@ class GlassChromeBackdrops(
     val combined: CombinedBackdrop
 )
 
-val LocalGlassChrome = compositionLocalOf<GlassChromeBackdrops?> { null }
+val LocalGlassChrome = staticCompositionLocalOf<GlassChromeBackdrops?> { null }
+val LocalGlassTiltState = staticCompositionLocalOf<State<Offset>?> { null }
 val LocalGlassTiltOffset = compositionLocalOf { Offset.Zero }
 val LocalGlassTiltAngle = compositionLocalOf { 45f }
 
@@ -43,7 +55,7 @@ fun rememberGlassChromeBackdrops(): GlassChromeBackdrops {
 
 @Composable
 fun GlassWallpaperLayer(
-    backdrop: LayerBackdrop? = null,
+    backdrop: LayerBackdrop? = LocalGlassChrome.current?.wall,
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
@@ -51,7 +63,23 @@ fun GlassWallpaperLayer(
     val stops = remember(look.prefs.wallpaper, look.isDark, look.dynamicColor, colorScheme) {
         wallpaperStops(look.prefs.wallpaper, look.isDark, look.dynamicColor, colorScheme)
     }
-    val tilt = LocalGlassTiltOffset.current
+    val glowPair = remember(
+        look.prefs.wallpaper,
+        look.isDark,
+        look.dynamicColor,
+        look.accent,
+        look.secondaryAccent
+    ) {
+        wallpaperGlowPair(
+            wallpaper = look.prefs.wallpaper,
+            isDark = look.isDark,
+            dynamicColor = look.dynamicColor,
+            accent = look.accent,
+            secondaryAccent = look.secondaryAccent
+        )
+    }
+    val tiltState = LocalGlassTiltState.current
+    val fallbackTilt = LocalGlassTiltOffset.current
 
     Box(
         modifier = modifier
@@ -61,51 +89,23 @@ fun GlassWallpaperLayer(
     ) {
         if (look.prefs.wallpaper != GlassWallpaper.PLAIN) {
             Canvas(modifier = Modifier.fillMaxSize()) {
+                val tilt = tiltState?.value ?: fallbackTilt
                 val tiltX = tilt.x * 0.04f
                 val tiltY = tilt.y * 0.03f
-
-                val (topGlow, bottomGlow) = when {
-                    look.dynamicColor -> {
-                        val a = look.accent.copy(alpha = if (look.isDark) 0.28f else 0.24f)
-                        val b = look.secondaryAccent.copy(alpha = if (look.isDark) 0.24f else 0.20f)
-                        a to b
-                    }
-                    look.prefs.wallpaper == GlassWallpaper.LAGOON -> {
-                        val a = if (look.isDark) Color(0x730091FF) else Color(0x520088FF)
-                        val b = if (look.isDark) Color(0x4700D2E0) else Color(0x4200C3D0)
-                        a to b
-                    }
-                    look.prefs.wallpaper == GlassWallpaper.DUSK -> {
-                        val a = if (look.isDark) Color(0x61FF9230) else Color(0x52FF8D28)
-                        val b = if (look.isDark) Color(0x52DB34F2) else Color(0x38CB30E0)
-                        a to b
-                    }
-                    look.prefs.wallpaper == GlassWallpaper.GRAPHITE -> {
-                        val a = if (look.isDark) Color(0x3D98989D) else Color(0x75FFFFFF)
-                        val b = look.accent.copy(alpha = if (look.isDark) 0.16f else 0.12f)
-                        a to b
-                    }
-                    look.prefs.wallpaper == GlassWallpaper.MIST -> {
-                        val a = look.accent.copy(alpha = if (look.isDark) 0.24f else 0.18f)
-                        val b = look.secondaryAccent.copy(alpha = if (look.isDark) 0.22f else 0.16f)
-                        a to b
-                    }
-                    else -> Color.Transparent to Color.Transparent
-                }
 
                 ellipseGlow(
                     cx = 0.74f + tiltX,
                     cy = 0.10f + tiltY,
                     rx = 0.86f,
                     ry = 0.44f,
-                    color = topGlow
+                    color = glowPair.first
                 )
                 ellipseGlow(
                     cx = 0.18f - tiltX,
                     cy = 0.62f - tiltY,
                     rx = 0.82f,
                     ry = 0.42f,
-                    color = bottomGlow
+                    color = glowPair.second
                 )
             }
         }
@@ -135,10 +135,12 @@ private fun DrawScope.ellipseGlow(cx: Float, cy: Float, rx: Float, ry: Float, co
 
 @Composable
 fun GlassTopEdge(
-    backdrop: GlassBackdrop? = null,
+    backdrop: GlassBackdrop? = LocalGlassChrome.current?.combined,
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
+    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val height = if (top > 0.dp) top + 14.dp else 28.dp
     val base = wallpaperStops(
         look.prefs.wallpaper,
         look.isDark,
@@ -146,14 +148,40 @@ fun GlassTopEdge(
         MaterialTheme.colorScheme
     ).first()
 
+    if (backdrop == null || look.reduced || !isGlassRenderEffectSupported()) {
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(height)
+                .drawBehind {
+                    drawRect(
+                        Brush.verticalGradient(
+                            0f to base.copy(alpha = 0.88f),
+                            0.55f to base.copy(alpha = 0.56f),
+                            1f to Color.Transparent
+                        )
+                    )
+                }
+        )
+        return
+    }
+
+    val fade = remember {
+        Brush.verticalGradient(0f to Color.Black, 0.55f to Color.Black, 1f to Color.Transparent)
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(28.dp)
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(base.copy(alpha = 0.80f), Color.Transparent)
-                )
+            .height(height)
+            .clip(RectangleShape)
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { RectangleShape },
+                effects = { blur(10.dp.toPx()) },
+                highlight = null,
+                shadow = null,
+                onDrawSurface = { drawRect(base.copy(alpha = 0.34f)) },
+                onDrawFront = { drawRect(fade, blendMode = BlendMode.DstIn) }
             )
     )
 }

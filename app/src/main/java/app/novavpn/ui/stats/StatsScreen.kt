@@ -51,6 +51,7 @@ import app.novavpn.ui.glass.GlassDivider
 import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.GlassSegmented
+import app.novavpn.ui.glass.LocalGlassChrome
 import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.theme.JetBrainsMonoFamily
@@ -106,7 +107,8 @@ fun StatsScreen(
                     contentDescription = stringResource(R.string.common_clear),
                     onClick = onClearStats,
                     size = 42.dp,
-                    tint = look.textSecondary
+                    tint = look.textSecondary,
+                    backdrop = LocalGlassChrome.current?.wall
                 )
             }
         }

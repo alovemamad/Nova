@@ -83,6 +83,7 @@ import app.novavpn.ui.glass.GlassDivider
 import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.GlassSheet
+import app.novavpn.ui.glass.LocalGlassChrome
 import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.NovaConnectControl
 import app.novavpn.ui.glass.ReportScrollShrink
@@ -219,6 +220,7 @@ fun HomeScreen(
                         onClick = onOpenLogs,
                         size = 42.dp,
                         tint = look.textPrimary,
+                        backdrop = LocalGlassChrome.current?.wall,
                         modifier = Modifier.testTag("home_logs_button")
                     )
                     GlassCircleButton(
@@ -227,6 +229,7 @@ fun HomeScreen(
                         onClick = onRefreshTelemetry,
                         size = 42.dp,
                         tint = if (testingTelemetry) look.accent else look.textPrimary,
+                        backdrop = LocalGlassChrome.current?.wall,
                         modifier = Modifier.testTag("home_refresh_telemetry_button")
                     )
                 }
@@ -335,6 +338,7 @@ fun HomeScreen(
                                     icon = if (status.state == VpnState.PAUSED) GlassIcons.Play else GlassIcons.Pause,
                                     prominent = status.state == VpnState.PAUSED,
                                     onClick = onPauseResume,
+                                    backdrop = LocalGlassChrome.current?.wall,
                                     modifier = Modifier.testTag("pause_resume_button")
                                 )
                             }
@@ -343,6 +347,7 @@ fun HomeScreen(
                                 contentDescription = stringResource(R.string.home_fresh_scan),
                                 onClick = onFreshScanReconnect,
                                 tint = look.accent,
+                                backdrop = LocalGlassChrome.current?.wall,
                                 modifier = Modifier.testTag("fresh_scan_button")
                             )
                         }
@@ -888,7 +893,7 @@ private fun HeaderModeTogglePill(
     val capsule = RoundedCornerShape(50)
     Row(
         modifier = Modifier
-            .liquidGlass(shape = capsule, elevated = true)
+            .liquidGlass(shape = capsule, elevated = true, backdrop = LocalGlassChrome.current?.wall)
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically

@@ -124,6 +124,7 @@ android {
 dependencies {
   implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
   implementation(platform(libs.androidx.compose.bom))
+  implementation(libs.kyant.backdrop)
   // implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)

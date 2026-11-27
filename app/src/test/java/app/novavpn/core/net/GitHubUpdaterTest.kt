@@ -51,7 +51,8 @@ class GitHubUpdaterTest {
         val info = GitHubUpdater.parseLatestReleaseJson(
             body = payload,
             currentVersion = "1.0.1",
-            supportedAbis = listOf("arm64-v8a", "armeabi-v7a")
+            supportedAbis = listOf("arm64-v8a", "armeabi-v7a"),
+            isTv = false
         )
         assertTrue(info.updateAvailable)
         assertEquals("v1.2.0", info.latestTag)
@@ -63,7 +64,8 @@ class GitHubUpdaterTest {
         val upToDate = GitHubUpdater.parseLatestReleaseJson(
             body = payload,
             currentVersion = "1.2.0",
-            supportedAbis = listOf("arm64-v8a")
+            supportedAbis = listOf("arm64-v8a"),
+            isTv = false
         )
         assertFalse(upToDate.updateAvailable)
     }
@@ -74,16 +76,16 @@ class GitHubUpdaterTest {
             ReleaseApkAsset("Nova-x86_64.apk", "https://example.com/x86_64.apk", 10L),
             ReleaseApkAsset("Nova-universal-release.apk", "https://example.com/uni.apk", 20L)
         )
-        val chosen = GitHubUpdater.selectBestApkAsset(assets, listOf("arm64-v8a"))
+        val chosen = GitHubUpdater.selectBestApkAsset(assets, listOf("arm64-v8a"), isTv = false)
         assertEquals("Nova-universal-release.apk", chosen?.name)
-        val x86Chosen = GitHubUpdater.selectBestApkAsset(assets, listOf("x86"))
+        val x86Chosen = GitHubUpdater.selectBestApkAsset(assets, listOf("x86"), isTv = false)
         assertEquals("Nova-universal-release.apk", x86Chosen?.name)
-        assertNull(GitHubUpdater.selectBestApkAsset(emptyList(), listOf("arm64-v8a")))
+        assertNull(GitHubUpdater.selectBestApkAsset(emptyList(), listOf("arm64-v8a"), isTv = false))
 
         val mismatchedOnly = listOf(
             ReleaseApkAsset("Nova-armeabi-v7a-release.apk", "https://example.com/v7a.apk", 10L)
         )
-        assertNull(GitHubUpdater.selectBestApkAsset(mismatchedOnly, listOf("arm64-v8a")))
+        assertNull(GitHubUpdater.selectBestApkAsset(mismatchedOnly, listOf("arm64-v8a"), isTv = false))
     }
 
     @Test
@@ -126,7 +128,7 @@ class GitHubUpdaterTest {
               ]
             }
         """.trimIndent()
-        val parsedDigest = GitHubUpdater.parseLatestReleaseJson(withDigest, "1.0.1", listOf("arm64-v8a"))
+        val parsedDigest = GitHubUpdater.parseLatestReleaseJson(withDigest, "1.0.1", listOf("arm64-v8a"), isTv = false)
         assertEquals(digestHex, parsedDigest.expectedSha256)
 
         val withNotes = """
@@ -143,7 +145,80 @@ class GitHubUpdaterTest {
               ]
             }
         """.trimIndent()
-        val parsedNotes = GitHubUpdater.parseLatestReleaseJson(withNotes, "1.0.1", listOf("arm64-v8a"))
+        val parsedNotes = GitHubUpdater.parseLatestReleaseJson(withNotes, "1.0.1", listOf("arm64-v8a"), isTv = false)
         assertEquals(notesHex, parsedNotes.expectedSha256)
+    }
+
+    @Test
+    fun `selectBestApkAsset strictly separates phone and TV APKs in combined release`() {
+        val mixedAssets = listOf(
+            ReleaseApkAsset("SHA256SUMS.txt", "https://example.com/SHA256SUMS.txt", 256L),
+            ReleaseApkAsset("NovaVPN-v2.1.0-arm64-v8a.apk", "https://example.com/phone-arm64.apk", 26_000_000L),
+            ReleaseApkAsset("NovaVPN-v2.1.0-armeabi-v7a.apk", "https://example.com/phone-v7a.apk", 24_000_000L),
+            ReleaseApkAsset("NovaVPN-v2.1.0-x86_64.apk", "https://example.com/phone-x86_64.apk", 25_000_000L),
+            ReleaseApkAsset("NovaVPN-v2.1.0-universal.apk", "https://example.com/phone-uni.apk", 48_000_000L),
+            ReleaseApkAsset("NovaVPN-TV-v2.1.0-arm64-v8a.apk", "https://example.com/tv-arm64.apk", 26_100_000L),
+            ReleaseApkAsset("NovaVPN-TV-v2.1.0-armeabi-v7a.apk", "https://example.com/tv-v7a.apk", 24_100_000L),
+            ReleaseApkAsset("NovaVPN-TV-v2.1.0-x86_64.apk", "https://example.com/tv-x86_64.apk", 25_100_000L),
+            ReleaseApkAsset("NovaVPN-TV-v2.1.0-universal.apk", "https://example.com/tv-uni.apk", 48_100_000L)
+        )
+
+        // Phone build (isTv = false) picks only phone APKs
+        assertEquals("NovaVPN-v2.1.0-arm64-v8a.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("arm64-v8a"), isTv = false)?.name)
+        assertEquals("NovaVPN-v2.1.0-armeabi-v7a.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("armeabi-v7a"), isTv = false)?.name)
+        assertEquals("NovaVPN-v2.1.0-x86_64.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("x86_64"), isTv = false)?.name)
+        assertEquals("NovaVPN-v2.1.0-universal.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("riscv64"), isTv = false)?.name)
+
+        // TV build (isTv = true) picks only TV APKs
+        assertEquals("NovaVPN-TV-v2.1.0-arm64-v8a.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("arm64-v8a"), isTv = true)?.name)
+        assertEquals("NovaVPN-TV-v2.1.0-armeabi-v7a.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("armeabi-v7a"), isTv = true)?.name)
+        assertEquals("NovaVPN-TV-v2.1.0-x86_64.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("x86_64"), isTv = true)?.name)
+        assertEquals("NovaVPN-TV-v2.1.0-universal.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("riscv64"), isTv = true)?.name)
+    }
+
+    @Test
+    fun `tv build returns null when release has no TV assets and never selects SHA256SUMS`() {
+        val phoneOnlyJson = """
+            {
+              "tag_name": "v2.2.0",
+              "html_url": "https://github.com/alovemamad/Nova/releases/tag/v2.2.0",
+              "body": "Phone release only",
+              "assets": [
+                {
+                  "name": "SHA256SUMS.txt",
+                  "browser_download_url": "https://example.com/SHA256SUMS.txt",
+                  "size": 512
+                },
+                {
+                  "name": "NovaVPN-v2.2.0-arm64-v8a.apk",
+                  "browser_download_url": "https://example.com/phone-arm64.apk",
+                  "size": 26500000
+                },
+                {
+                  "name": "NovaVPN-v2.2.0-universal.apk",
+                  "browser_download_url": "https://example.com/phone-uni.apk",
+                  "size": 48000000
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val tvInfo = GitHubUpdater.parseLatestReleaseJson(
+            body = phoneOnlyJson,
+            currentVersion = "1.0.0",
+            supportedAbis = listOf("arm64-v8a"),
+            isTv = true
+        )
+        assertTrue(tvInfo.updateAvailable)
+        assertNull(tvInfo.apkDownloadUrl)
+        assertNull(tvInfo.apkAssetName)
+
+        // Direct call with TV asset named with SHA256SUMS.txt suffix is still rejected
+        val textAssetsOnly = listOf(
+            ReleaseApkAsset("NovaVPN-TV-v2.2.0-arm64-v8a-SHA256SUMS.txt", "https://example.com/sums.txt", 128L),
+            ReleaseApkAsset("SHA256SUMS.txt", "https://example.com/SHA256SUMS.txt", 128L)
+        )
+        assertNull(GitHubUpdater.selectBestApkAsset(textAssetsOnly, listOf("arm64-v8a"), isTv = true))
+        assertNull(GitHubUpdater.selectBestApkAsset(textAssetsOnly, listOf("arm64-v8a"), isTv = false))
     }
 }

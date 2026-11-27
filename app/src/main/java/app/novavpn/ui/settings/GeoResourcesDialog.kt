@@ -36,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -54,7 +56,10 @@ import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.GlassSheet
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.LocalIsTv
 import app.novavpn.ui.glass.novaOutlinedTextFieldColors
+import app.novavpn.ui.glass.tvFocusVisual
+import app.novavpn.ui.glass.tvReadOnlyFocusable
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.fmtDigits
 import app.novavpn.ui.theme.formatBytes
@@ -77,9 +82,13 @@ fun GeoResourcesDialog(
     onUpdateAll: () -> Unit,
     onRefreshSingle: (String) -> Unit,
     onDeleteResource: (String) -> Unit,
+    onPostMessage: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val addUrlFocus = remember { FocusRequester() }
     var showUrlInputDialog by remember { mutableStateOf(false) }
     var urlInput by remember { mutableStateOf("") }
     var customNameInput by remember { mutableStateOf("") }
@@ -108,7 +117,8 @@ fun GeoResourcesDialog(
     GlassSheet(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.geo_title),
-        icon = GlassIcons.Globe
+        icon = GlassIcons.Globe,
+        initialFocusRequester = addUrlFocus
     ) {
         Text(
             text = stringResource(R.string.geo_subtitle),
@@ -128,13 +138,18 @@ fun GeoResourcesDialog(
                 icon = GlassIcons.Archive,
                 onClick = {
                     onClearError()
-                    filePicker.launch(arrayOf("application/octet-stream", "*/*"))
+                    runCatching {
+                        filePicker.launch(arrayOf("application/octet-stream", "*/*"))
+                    }.onFailure {
+                        onPostMessage(context.getString(R.string.msg_file_picker_unavailable))
+                    }
                 },
                 modifier = Modifier.testTag("geo_add_file_button")
             )
             GlassCapsuleButton(
                 text = stringResource(R.string.geo_add_url),
                 icon = GlassIcons.Link,
+                focusRequester = addUrlFocus,
                 onClick = {
                     onClearError()
                     urlValidationError = null
@@ -142,15 +157,17 @@ fun GeoResourcesDialog(
                 },
                 modifier = Modifier.testTag("geo_add_url_button")
             )
-            GlassCapsuleButton(
-                text = stringResource(R.string.geo_scan_qr),
-                icon = GlassIcons.Qr,
-                onClick = {
-                    onClearError()
-                    qrPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                },
-                modifier = Modifier.testTag("geo_scan_qr_button")
-            )
+            if (!isTv) {
+                GlassCapsuleButton(
+                    text = stringResource(R.string.geo_scan_qr),
+                    icon = GlassIcons.Qr,
+                    onClick = {
+                        onClearError()
+                        qrPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    modifier = Modifier.testTag("geo_scan_qr_button")
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -285,7 +302,7 @@ fun GeoResourcesDialog(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 320.dp),
+                    .heightIn(max = if (isTv) 175.dp else 320.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(resources, key = { it.id }) { item ->
@@ -315,6 +332,7 @@ fun GeoResourcesDialog(
                             .clip(itemShape)
                             .background(look.fill2, itemShape)
                             .border(0.8.dp, look.separator, itemShape)
+                            .tvReadOnlyFocusable(itemShape)
                             .testTag("geo_item_${item.id}")
                     ) {
                         Row(
@@ -425,10 +443,12 @@ fun GeoResourcesDialog(
     }
 
     if (showUrlInputDialog) {
+        val urlFocus = remember { FocusRequester() }
         GlassModalDialog(
             onDismissRequest = { showUrlInputDialog = false },
             title = stringResource(R.string.geo_url_dialog_title),
-            icon = GlassIcons.Link
+            icon = GlassIcons.Link,
+            initialFocusRequester = urlFocus
         ) {
             OutlinedTextField(
                 value = urlInput,
@@ -442,6 +462,11 @@ fun GeoResourcesDialog(
                 colors = novaOutlinedTextFieldColors(),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .tvFocusVisual(
+                        shape = RoundedCornerShape(14.dp),
+                        scaleOnFocus = 1.01f,
+                        focusRequester = urlFocus
+                    )
                     .testTag("geo_url_input")
             )
             Spacer(modifier = Modifier.height(10.dp))
@@ -452,7 +477,9 @@ fun GeoResourcesDialog(
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 colors = novaOutlinedTextFieldColors(),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .tvFocusVisual(shape = RoundedCornerShape(14.dp), scaleOnFocus = 1.01f)
             )
             if (!urlValidationError.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))

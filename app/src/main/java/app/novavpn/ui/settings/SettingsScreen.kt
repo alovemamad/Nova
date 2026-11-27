@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -51,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import app.novavpn.core.DevicePlatform
 import app.novavpn.core.net.GitHubUpdater
 import app.novavpn.domain.model.AppLanguage
 import app.novavpn.domain.model.AppSettings
@@ -77,8 +80,11 @@ import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.GlassSegmented
 import app.novavpn.ui.glass.GlassSwitchRow
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.LocalIsTv
 import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.resolveGlassTintColor
+import app.novavpn.ui.glass.tvFocusable
+import app.novavpn.ui.glass.tvReadOnlyFocusable
 import app.novavpn.ui.theme.fmtDigits
 import app.novavpn.ui.theme.formatBytes
 import com.example.BuildConfig
@@ -114,13 +120,22 @@ fun SettingsScreen(
     onUpdateAllGeoResources: () -> Unit = {},
     onRefreshSingleGeoResource: (String) -> Unit = {},
     onDeleteGeoResource: (String) -> Unit = {},
+    onPostMessage: (String) -> Unit = {},
     onTabBarShrinkChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val contentMaxWidth = if (isTv) 960.dp else 600.dp
     val lifecycleOwner = LocalLifecycleOwner.current
     val listState = rememberLazyListState()
     ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
+    val firstSettingFocus = remember { FocusRequester() }
+    LaunchedEffect(isTv) {
+        if (isTv) {
+            runCatching { firstSettingFocus.requestFocus() }
+        }
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -145,8 +160,12 @@ fun SettingsScreen(
         state = listState,
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp),
+            .then(if (isTv) Modifier else Modifier.statusBarsPadding()),
+        contentPadding = if (isTv) {
+            PaddingValues(start = 24.dp, end = 48.dp, top = 36.dp, bottom = 48.dp)
+        } else {
+            PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp)
+        },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -155,7 +174,7 @@ fun SettingsScreen(
                 text = stringResource(R.string.settings_title),
                 style = MaterialTheme.typography.headlineMedium,
                 color = look.textPrimary,
-                modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth()
+                modifier = Modifier.widthIn(max = contentMaxWidth).fillMaxWidth()
             )
         }
 
@@ -163,7 +182,7 @@ fun SettingsScreen(
         item {
             GlassGroup(
                 title = stringResource(R.string.settings_cat_connection),
-                modifier = Modifier.widthIn(max = 600.dp)
+                modifier = Modifier.widthIn(max = contentMaxWidth)
             ) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                     Text(
@@ -179,6 +198,7 @@ fun SettingsScreen(
                         ),
                         selected = settings.vpnMode,
                         onSelect = { mode -> onUpdateSettings { it.copy(vpnMode = mode) } },
+                        firstOptionFocusRequester = firstSettingFocus,
                         modifier = Modifier.testTag("settings_mode_segmented")
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -233,7 +253,7 @@ fun SettingsScreen(
         item {
             GlassGroup(
                 title = stringResource(R.string.settings_cat_network),
-                modifier = Modifier.widthIn(max = 600.dp)
+                modifier = Modifier.widthIn(max = contentMaxWidth)
             ) {
                 GlassRow(
                     title = stringResource(R.string.settings_split_tunnel),
@@ -291,7 +311,7 @@ fun SettingsScreen(
         item {
             GlassGroup(
                 title = stringResource(R.string.settings_cat_appearance),
-                modifier = Modifier.widthIn(max = 600.dp)
+                modifier = Modifier.widthIn(max = contentMaxWidth)
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -408,7 +428,7 @@ fun SettingsScreen(
                                         color = if (selected) look.textPrimary else Color.Transparent,
                                         shape = CircleShape
                                     )
-                                    .clickable {
+                                    .tvFocusable(shape = CircleShape, scaleOnFocus = 1.12f) {
                                         onUpdateSettings {
                                             it.copy(
                                                 dynamicColor = false,
@@ -476,7 +496,7 @@ fun SettingsScreen(
         item {
             GlassGroup(
                 title = stringResource(R.string.settings_cat_privacy),
-                modifier = Modifier.widthIn(max = 600.dp)
+                modifier = Modifier.widthIn(max = contentMaxWidth)
             ) {
                 GlassSwitchRow(
                     title = stringResource(R.string.settings_keep_tun_reconnect),
@@ -521,7 +541,7 @@ fun SettingsScreen(
         item {
             GlassGroup(
                 title = stringResource(R.string.settings_cat_updates),
-                modifier = Modifier.widthIn(max = 600.dp)
+                modifier = Modifier.widthIn(max = contentMaxWidth)
             ) {
                 Column(
                     modifier = Modifier
@@ -670,7 +690,9 @@ fun SettingsScreen(
                                                     icon = GlassIcons.Link,
                                                     onClick = {
                                                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.releaseUrl))
-                                                        runCatching { context.startActivity(intent) }
+                                                        if (!DevicePlatform.safeStartActivity(context, intent)) {
+                                                            onPostMessage(context.getString(R.string.msg_no_app_available))
+                                                        }
                                                     }
                                                 )
                                             }
@@ -704,18 +726,20 @@ fun SettingsScreen(
         item {
             GlassGroup(
                 title = stringResource(R.string.settings_cat_about),
-                modifier = Modifier.widthIn(max = 600.dp)
+                modifier = Modifier.widthIn(max = contentMaxWidth)
             ) {
                 GlassRow(
                     title = stringResource(R.string.about_version),
                     subtitle = fmtDigits("v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"),
-                    icon = GlassIcons.Info
+                    icon = GlassIcons.Info,
+                    modifier = Modifier.tvReadOnlyFocusable(RoundedCornerShape(14.dp))
                 )
                 GlassDivider()
                 GlassRow(
                     title = stringResource(R.string.about_engines),
                     subtitle = stringResource(R.string.about_engines_list),
-                    icon = GlassIcons.Code
+                    icon = GlassIcons.Code,
+                    modifier = Modifier.tvReadOnlyFocusable(RoundedCornerShape(14.dp))
                 )
                 GlassDivider()
                 GlassRow(
@@ -724,7 +748,9 @@ fun SettingsScreen(
                     icon = GlassIcons.Link,
                     onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(GitHubUpdater.REPO_HTML_URL))
-                        runCatching { context.startActivity(intent) }
+                        if (!DevicePlatform.safeStartActivity(context, intent)) {
+                            onPostMessage(context.getString(R.string.msg_no_app_available))
+                        }
                     }
                 )
                 GlassDivider()
@@ -738,7 +764,9 @@ fun SettingsScreen(
                         text = stringResource(R.string.about_notice_text),
                         style = MaterialTheme.typography.bodyMedium,
                         color = look.textPrimary,
-                        modifier = Modifier.testTag("about_notice_text")
+                        modifier = Modifier
+                            .tvReadOnlyFocusable(RoundedCornerShape(12.dp))
+                            .testTag("about_notice_text")
                     )
                     val telegramUrl = stringResource(R.string.about_telegram_url)
                     GlassCapsuleButton(
@@ -748,7 +776,9 @@ fun SettingsScreen(
                         tint = Color(0xFF2AABEE),
                         onClick = {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(telegramUrl))
-                            runCatching { context.startActivity(intent) }
+                            if (!DevicePlatform.safeStartActivity(context, intent)) {
+                                onPostMessage(context.getString(R.string.msg_no_app_available))
+                            }
                         },
                         modifier = Modifier.testTag("about_telegram_button")
                     )
@@ -819,6 +849,7 @@ fun SettingsScreen(
         LogsViewerDialog(
             logs = logs,
             onClear = onClearLogs,
+            onPostMessage = onPostMessage,
             onDismiss = { showLogs = false }
         )
     }
@@ -858,6 +889,7 @@ fun SettingsScreen(
             onUpdateAll = onUpdateAllGeoResources,
             onRefreshSingle = onRefreshSingleGeoResource,
             onDeleteResource = onDeleteGeoResource,
+            onPostMessage = onPostMessage,
             onDismiss = {
                 onClearGeoError()
                 showGeoResourcesDialog = false
@@ -883,7 +915,7 @@ private fun SettingsOptionPill(
                 color = if (selected) look.accent.copy(alpha = 0.65f) else look.separator,
                 shape = shape
             )
-            .clickable(onClick = onClick)
+            .tvFocusable(shape = shape, scaleOnFocus = 1.05f, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

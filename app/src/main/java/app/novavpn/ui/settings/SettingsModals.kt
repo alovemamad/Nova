@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -35,12 +37,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import app.novavpn.core.DevicePlatform
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.AutoConnectSettings
 import app.novavpn.domain.model.InstalledAppInfo
@@ -52,7 +56,11 @@ import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.GlassSegmented
 import app.novavpn.ui.glass.GlassSwitch
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.LocalIsTv
 import app.novavpn.ui.glass.novaOutlinedTextFieldColors
+import app.novavpn.ui.glass.tvFocusVisual
+import app.novavpn.ui.glass.tvFocusable
+import app.novavpn.ui.glass.tvReadOnlyFocusable
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.tr
 import com.example.R
@@ -72,6 +80,8 @@ fun SplitTunnelPickerDialog(
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val searchFocus = remember { FocusRequester() }
     var localMode by remember { mutableStateOf(mode) }
     var localSelected by remember { mutableStateOf(selectedPackages) }
     var query by remember { mutableStateOf("") }
@@ -92,7 +102,8 @@ fun SplitTunnelPickerDialog(
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.settings_split_tunnel),
-        icon = GlassIcons.Apps
+        icon = GlassIcons.Apps,
+        initialFocusRequester = searchFocus
     ) {
         GlassSegmented(
             options = listOf(
@@ -114,11 +125,29 @@ fun SplitTunnelPickerDialog(
             singleLine = true,
             shape = RoundedCornerShape(14.dp),
             colors = novaOutlinedTextFieldColors(),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .tvFocusVisual(
+                    shape = RoundedCornerShape(14.dp),
+                    scaleOnFocus = 1.01f,
+                    focusRequester = searchFocus
+                )
         )
         Spacer(modifier = Modifier.height(8.dp))
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .then(
+                    if (isTv) {
+                        Modifier.tvFocusable(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.02f) {
+                            showSystem = !showSystem
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -127,14 +156,17 @@ fun SplitTunnelPickerDialog(
                 style = MaterialTheme.typography.bodySmall,
                 color = look.textSecondary
             )
-            GlassSwitch(checked = showSystem, onCheckedChange = { showSystem = it })
+            GlassSwitch(
+                checked = showSystem,
+                onCheckedChange = if (isTv) null else { { showSystem = it } }
+            )
         }
         errorMsg?.let { err ->
             Spacer(modifier = Modifier.height(4.dp))
             Text(err, color = look.danger, style = MaterialTheme.typography.bodySmall)
         }
         Spacer(modifier = Modifier.height(6.dp))
-        LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
+        LazyColumn(modifier = Modifier.heightIn(max = if (isTv) 170.dp else 280.dp)) {
             items(filtered, key = { it.packageName }) { app ->
                 val checked = app.packageName in localSelected
                 val iconImg by produceState<ImageBitmap?>(
@@ -156,11 +188,12 @@ fun SplitTunnelPickerDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
+                        .clip(RoundedCornerShape(12.dp))
+                        .tvFocusable(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.02f) {
                             errorMsg = null
                             localSelected = if (checked) localSelected - app.packageName else localSelected + app.packageName
                         }
-                        .padding(vertical = 6.dp),
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (iconImg != null) {
@@ -177,9 +210,13 @@ fun SplitTunnelPickerDialog(
                     }
                     Checkbox(
                         checked = checked,
-                        onCheckedChange = { c ->
-                            errorMsg = null
-                            localSelected = if (c) localSelected + app.packageName else localSelected - app.packageName
+                        onCheckedChange = if (isTv) {
+                            null
+                        } else {
+                            { c ->
+                                errorMsg = null
+                                localSelected = if (c) localSelected + app.packageName else localSelected - app.packageName
+                            }
                         }
                     )
                 }
@@ -217,6 +254,8 @@ fun AutoConnectDialog(
     onDismiss: () -> Unit
 ) {
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val firstFocus = remember { FocusRequester() }
     var startOnBoot by remember { mutableStateOf(current.startOnBoot) }
     var onUntrustedWifi by remember { mutableStateOf(current.onUntrustedWifi) }
     var trustedSsidsText by remember { mutableStateOf(current.trustedWifiSsids.joinToString("\n")) }
@@ -226,16 +265,55 @@ fun AutoConnectDialog(
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.settings_auto_connect),
-        icon = GlassIcons.Sync
+        icon = GlassIcons.Sync,
+        initialFocusRequester = firstFocus
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = if (isTv) 320.dp else 460.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .then(
+                        if (isTv) {
+                            Modifier.tvFocusable(
+                                shape = RoundedCornerShape(12.dp),
+                                scaleOnFocus = 1.02f,
+                                focusRequester = firstFocus
+                            ) { startOnBoot = !startOnBoot }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(tr("Start on device boot", "اجرا هنگام روشن شدن دستگاه"), color = look.textPrimary)
-                GlassSwitch(checked = startOnBoot, onCheckedChange = { startOnBoot = it })
+                GlassSwitch(checked = startOnBoot, onCheckedChange = if (isTv) null else { { startOnBoot = it } })
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .then(
+                        if (isTv) {
+                            Modifier.tvFocusable(RoundedCornerShape(12.dp), 1.02f) { onUntrustedWifi = !onUntrustedWifi }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(tr("Connect on untrusted Wi-Fi", "اتصال در وای‌فای نامطمئن"), color = look.textPrimary)
-                GlassSwitch(checked = onUntrustedWifi, onCheckedChange = { onUntrustedWifi = it })
+                GlassSwitch(checked = onUntrustedWifi, onCheckedChange = if (isTv) null else { { onUntrustedWifi = it } })
             }
             if (onUntrustedWifi) {
                 OutlinedTextField(
@@ -246,12 +324,26 @@ fun AutoConnectDialog(
                     maxLines = 4,
                     shape = RoundedCornerShape(14.dp),
                     colors = novaOutlinedTextFieldColors(),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                 )
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .then(
+                        if (isTv) {
+                            Modifier.tvFocusable(RoundedCornerShape(12.dp), 1.02f) { onAppLaunch = !onAppLaunch }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(tr("Trigger on selected apps", "اتصال هنگام باز شدن برنامه‌ها"), color = look.textPrimary)
-                GlassSwitch(checked = onAppLaunch, onCheckedChange = { onAppLaunch = it })
+                GlassSwitch(checked = onAppLaunch, onCheckedChange = if (isTv) null else { { onAppLaunch = it } })
             }
             if (onAppLaunch) {
                 OutlinedTextField(
@@ -262,7 +354,7 @@ fun AutoConnectDialog(
                     maxLines = 4,
                     shape = RoundedCornerShape(14.dp),
                     colors = novaOutlinedTextFieldColors(),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
@@ -296,18 +388,22 @@ fun AutoConnectDialog(
 fun LogsViewerDialog(
     logs: List<LogEntry>,
     onClear: () -> Unit,
+    onPostMessage: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val closeFocus = remember { FocusRequester() }
     val formatted = remember(logs) { app.novavpn.data.log.LogRepository.exportText() }
 
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = tr("Redacted Logs", "لاگ‌های سیستم (سانسورشده)"),
-        icon = GlassIcons.Logs
+        icon = GlassIcons.Logs,
+        initialFocusRequester = closeFocus
     ) {
-        LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+        LazyColumn(modifier = Modifier.heightIn(max = if (isTv) 210.dp else 320.dp)) {
             if (logs.isEmpty()) {
                 item {
                     Text(
@@ -321,7 +417,10 @@ fun LogsViewerDialog(
                         text = "[${entry.level.name.first()}] ${entry.tag}: ${entry.message}",
                         style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
                         color = look.textPrimary,
-                        modifier = Modifier.padding(vertical = 2.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tvReadOnlyFocusable(RoundedCornerShape(8.dp))
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
                     )
                 }
             }
@@ -333,24 +432,35 @@ fun LogsViewerDialog(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = {
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    cm?.setPrimaryClip(ClipData.newPlainText("Nova VPN Logs", formatted))
-                }) { Text(stringResource(R.string.common_copy)) }
-                TextButton(onClick = {
-                    val share = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, formatted)
-                    }
-                    runCatching {
-                        context.startActivity(Intent.createChooser(share, "Share Nova VPN Logs"))
-                    }
-                }) { Text(stringResource(R.string.common_share)) }
-                TextButton(onClick = onClear) { Text(stringResource(R.string.common_clear)) }
+                TextButton(
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        cm?.setPrimaryClip(ClipData.newPlainText("Nova VPN Logs", formatted))
+                    },
+                    modifier = Modifier.tvFocusVisual(RoundedCornerShape(12.dp), 1.04f)
+                ) { Text(stringResource(R.string.common_copy)) }
+                TextButton(
+                    onClick = {
+                        val share = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, formatted)
+                        }
+                        val chooser = Intent.createChooser(share, "Share Nova VPN Logs")
+                        if (!DevicePlatform.safeStartActivity(context, chooser)) {
+                            onPostMessage(context.getString(R.string.msg_no_app_available))
+                        }
+                    },
+                    modifier = Modifier.tvFocusVisual(RoundedCornerShape(12.dp), 1.04f)
+                ) { Text(stringResource(R.string.common_share)) }
+                TextButton(
+                    onClick = onClear,
+                    modifier = Modifier.tvFocusVisual(RoundedCornerShape(12.dp), 1.04f)
+                ) { Text(stringResource(R.string.common_clear)) }
             }
             GlassCapsuleButton(
                 text = stringResource(R.string.common_close),
                 prominent = true,
+                focusRequester = closeFocus,
                 onClick = onDismiss
             )
         }
@@ -364,12 +474,14 @@ fun BackupRestoreDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val inputFocus = remember { FocusRequester() }
     var inputText by remember(exportedJson) { mutableStateOf(exportedJson.orEmpty()) }
 
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.settings_backup_restore),
-        icon = GlassIcons.Archive
+        icon = GlassIcons.Archive,
+        initialFocusRequester = inputFocus
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
@@ -380,18 +492,30 @@ fun BackupRestoreDialog(
                 maxLines = 8,
                 shape = RoundedCornerShape(14.dp),
                 colors = novaOutlinedTextFieldColors(),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .tvFocusVisual(
+                        shape = RoundedCornerShape(14.dp),
+                        scaleOnFocus = 1.01f,
+                        focusRequester = inputFocus
+                    )
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = {
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    cm?.setPrimaryClip(ClipData.newPlainText("Nova VPN Backup", inputText))
-                }) { Text(stringResource(R.string.common_copy)) }
-                TextButton(onClick = {
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-                    if (clip.isNotBlank()) inputText = clip
-                }) { Text(stringResource(R.string.common_paste)) }
+                TextButton(
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        cm?.setPrimaryClip(ClipData.newPlainText("Nova VPN Backup", inputText))
+                    },
+                    modifier = Modifier.tvFocusVisual(RoundedCornerShape(12.dp), 1.04f)
+                ) { Text(stringResource(R.string.common_copy)) }
+                TextButton(
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                        if (clip.isNotBlank()) inputText = clip
+                    },
+                    modifier = Modifier.tvFocusVisual(RoundedCornerShape(12.dp), 1.04f)
+                ) { Text(stringResource(R.string.common_paste)) }
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 GlassCapsuleButton(
@@ -416,6 +540,7 @@ fun PortsEditorDialog(
     onDismiss: () -> Unit
 ) {
     val look = LocalGlassLook.current
+    val socksFocus = remember { FocusRequester() }
     var socks by remember { mutableStateOf(settings.localSocksPort.toString()) }
     var http by remember { mutableStateOf(settings.localHttpPort.toString()) }
     var err by remember { mutableStateOf<String?>(null) }
@@ -423,7 +548,8 @@ fun PortsEditorDialog(
     GlassModalDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.settings_local_ports),
-        icon = GlassIcons.Server
+        icon = GlassIcons.Server,
+        initialFocusRequester = socksFocus
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
@@ -433,7 +559,13 @@ fun PortsEditorDialog(
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 colors = novaOutlinedTextFieldColors(),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .tvFocusVisual(
+                        shape = RoundedCornerShape(14.dp),
+                        scaleOnFocus = 1.01f,
+                        focusRequester = socksFocus
+                    )
             )
             OutlinedTextField(
                 value = http,
@@ -442,7 +574,9 @@ fun PortsEditorDialog(
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 colors = novaOutlinedTextFieldColors(),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .tvFocusVisual(shape = RoundedCornerShape(14.dp), scaleOnFocus = 1.01f)
             )
             err?.let { Text(it, color = look.danger, style = MaterialTheme.typography.bodySmall) }
             Spacer(modifier = Modifier.height(6.dp))

@@ -420,6 +420,9 @@ class DiagnosticsEngine {
         return fixed to "Applied safe fixes: MTU=1280, IPv6 off, DoH=Cloudflare, Obfuscation=Auto"
     }
 
-    suspend fun checkForUpdates(currentVersion: String): UpdateInfo =
-        GitHubUpdater.checkLatestRelease(currentVersion)
+    suspend fun checkForUpdates(
+        currentVersion: String,
+        isTv: Boolean = com.example.BuildConfig.IS_TV
+    ): UpdateInfo =
+        GitHubUpdater.checkLatestRelease(currentVersion, isTv = isTv)
 }

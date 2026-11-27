@@ -34,17 +34,25 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Run Nova VPN unit tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+      - name: Run Nova VPN unit tests (Phone & TV)
+        run: |
+          ./gradlew :app:testDebugUnitTest --stacktrace
+          ./gradlew :app:testDebugUnitTest -PtvBuild=true --stacktrace
 
-      - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace
+      - name: Build Debug APKs (Phone & TV)
+        run: |
+          mkdir -p ci-debug-apks/phone ci-debug-apks/tv
+          ./gradlew :app:assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/*.apk ci-debug-apks/phone/
+          rm -rf app/build/outputs/apk
+          ./gradlew :app:assembleDebug -PtvBuild=true --stacktrace
+          cp app/build/outputs/apk/debug/*.apk ci-debug-apks/tv/
 
-      - name: Upload Debug APK artifact
+      - name: Upload Debug APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: nova-vpn-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: ci-debug-apks/**/*.apk
 
   publish-github-release:
     needs: test-and-build-debug
@@ -124,48 +132,69 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Build Multi-ABI APKs (arm64-v8a, armeabi-v7a, x86_64, universal)
+      - name: Build Multi-ABI Phone & TV APKs (arm64-v8a, armeabi-v7a, x86_64, universal)
         id: build_apks
         run: |
           set -euo pipefail
           mkdir -p dist
           TAG="${{ steps.ver.outputs.tag }}"
+          shopt -s nullglob
+
+          copy_split_apks() {
+            local apk_dir="$1"
+            local prefix="$2"
+            local variant="$3"
+            for apk in "${apk_dir}"/*.apk; do
+              base="$(basename "$apk")"
+              case "$base" in
+                *arm64-v8a*)   cp "$apk" "dist/${prefix}-${TAG}-arm64-v8a.apk" ;;
+                *armeabi-v7a*) cp "$apk" "dist/${prefix}-${TAG}-armeabi-v7a.apk" ;;
+                *x86_64*)      cp "$apk" "dist/${prefix}-${TAG}-x86_64.apk" ;;
+                *universal*)   cp "$apk" "dist/${prefix}-${TAG}-universal.apk" ;;
+                *)             cp "$apk" "dist/${prefix}-${TAG}-${variant}.apk" ;;
+              esac
+            done
+          }
 
           if [[ -n "${KEYSTORE_BASE64}" && -n "${KEYSTORE_PASSWORD}" && -n "${KEY_PASSWORD}" && -n "${KEY_ALIAS}" ]]; then
             # اصلاح: نام فایل به پسوند p12 تغییر کرد
             echo "${KEYSTORE_BASE64}" | base64 --decode > release-key.p12
-            
-            # اصلاح: پاس دادن مسیر و اطلاعات کلید به Gradle
+
+            # Phone split APKs
             ./gradlew :app:assembleRelease -PsplitApks=true \
               -Pandroid.injected.signing.store.file="${PWD}/release-key.p12" \
               -Pandroid.injected.signing.store.password="${KEYSTORE_PASSWORD}" \
               -Pandroid.injected.signing.key.alias="${KEY_ALIAS}" \
               -Pandroid.injected.signing.key.password="${KEY_PASSWORD}" \
               --stacktrace
-            
+            copy_split_apks "app/build/outputs/apk/release" "NovaVPN" "release"
+
+            # Clean APK outputs before TV build so artifacts cannot collide
+            rm -rf app/build/outputs/apk
+
+            # Android TV split APKs (same signing certificate & version)
+            ./gradlew :app:assembleRelease -PsplitApks=true -PtvBuild=true \
+              -Pandroid.injected.signing.store.file="${PWD}/release-key.p12" \
+              -Pandroid.injected.signing.store.password="${KEYSTORE_PASSWORD}" \
+              -Pandroid.injected.signing.key.alias="${KEY_ALIAS}" \
+              -Pandroid.injected.signing.key.password="${KEY_PASSWORD}" \
+              --stacktrace
+            copy_split_apks "app/build/outputs/apk/release" "NovaVPN-TV" "release"
+
             rm -f release-key.p12
-            APK_DIR="app/build/outputs/apk/release"
-            VARIANT="release"
           else
             if [[ -f debug.keystore.base64 && ! -f debug.keystore ]]; then
               base64 --decode debug.keystore.base64 > debug.keystore
             fi
-            ./gradlew :app:assembleDebug -PsplitApks=true --stacktrace
-            APK_DIR="app/build/outputs/apk/debug"
-            VARIANT="debug"
-          fi
 
-          shopt -s nullglob
-          for apk in "${APK_DIR}"/*.apk; do
-            base="$(basename "$apk")"
-            case "$base" in
-              *arm64-v8a*)  cp "$apk" "dist/NovaVPN-${TAG}-arm64-v8a.apk" ;;
-              *armeabi-v7a*) cp "$apk" "dist/NovaVPN-${TAG}-armeabi-v7a.apk" ;;
-              *x86_64*)     cp "$apk" "dist/NovaVPN-${TAG}-x86_64.apk" ;;
-              *universal*)  cp "$apk" "dist/NovaVPN-${TAG}-universal.apk" ;;
-              *)            cp "$apk" "dist/NovaVPN-${TAG}-${VARIANT}.apk" ;;
-            esac
-          done
+            ./gradlew :app:assembleDebug -PsplitApks=true --stacktrace
+            copy_split_apks "app/build/outputs/apk/debug" "NovaVPN" "debug"
+
+            rm -rf app/build/outputs/apk
+
+            ./gradlew :app:assembleDebug -PsplitApks=true -PtvBuild=true --stacktrace
+            copy_split_apks "app/build/outputs/apk/debug" "NovaVPN-TV" "debug"
+          fi
 
           (cd dist && sha256sum *.apk > SHA256SUMS.txt)
           ls -lh dist/
@@ -181,7 +210,7 @@ jobs:
             git push || true
           fi
 
-      - name: Create GitHub Release with ABI APKs
+      - name: Create GitHub Release with Phone & TV ABI APKs
         run: |
           TAG="${{ steps.ver.outputs.tag }}"
           if gh release view "${TAG}" >/dev/null 2>&1; then
@@ -189,6 +218,7 @@ jobs:
           else
             gh release create "${TAG}" dist/*.apk dist/SHA256SUMS.txt \
               --title "Nova VPN ${TAG}" \
+              --notes "Android TV: download NovaVPN-TV-${TAG}-arm64-v8a.apk (most TV boxes) or -armeabi-v7a.apk (older boxes)." \
               --generate-notes \
               --latest
           fi

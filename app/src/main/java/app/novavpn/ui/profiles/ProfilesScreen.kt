@@ -34,6 +34,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
@@ -63,9 +65,11 @@ import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassModalDialog
 import app.novavpn.ui.glass.LocalGlassChrome
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.LocalIsTv
 import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.glassHighlight
 import app.novavpn.ui.glass.novaOutlinedTextFieldColors
+import app.novavpn.ui.glass.tvFocusVisual
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
 import com.example.R
@@ -81,6 +85,7 @@ fun ProfilesScreen(
     onDuplicateProfile: (String) -> Unit,
     onDeleteProfile: (String) -> Unit,
     onImportText: (String) -> Unit,
+    onImportFile: (Uri) -> Unit = {},
     onImportQrImage: (Uri) -> Unit,
     onGenerateQr: suspend (VpnProfile) -> Pair<String, android.graphics.Bitmap?>,
     onNotify: (String) -> Unit,
@@ -88,9 +93,18 @@ fun ProfilesScreen(
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val contentMaxWidth = if (isTv) 960.dp else 600.dp
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
+
+    val addFocus = remember { FocusRequester() }
+    LaunchedEffect(isTv) {
+        if (isTv) {
+            runCatching { addFocus.requestFocus() }
+        }
+    }
 
     var editingProfile by remember { mutableStateOf<VpnProfile?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -107,19 +121,31 @@ fun ProfilesScreen(
         }
     }
 
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            onImportFile(uri)
+        }
+    }
+
     LazyColumn(
         state = listState,
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp),
+            .then(if (isTv) Modifier else Modifier.statusBarsPadding()),
+        contentPadding = if (isTv) {
+            PaddingValues(start = 24.dp, end = 48.dp, top = 36.dp, bottom = 48.dp)
+        } else {
+            PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp)
+        },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
             Row(
                 modifier = Modifier
-                    .widthIn(max = 600.dp)
+                    .widthIn(max = contentMaxWidth)
                     .fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -138,15 +164,17 @@ fun ProfilesScreen(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GlassCircleButton(
-                        icon = GlassIcons.Qr,
-                        contentDescription = stringResource(R.string.profiles_import),
-                        onClick = {
-                            qrImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        },
-                        backdrop = LocalGlassChrome.current?.wall,
-                        modifier = Modifier.testTag("import_qr_gallery_button")
-                    )
+                    if (!isTv) {
+                        GlassCircleButton(
+                            icon = GlassIcons.Qr,
+                            contentDescription = stringResource(R.string.profiles_import),
+                            onClick = {
+                                qrImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            },
+                            backdrop = LocalGlassChrome.current?.wall,
+                            modifier = Modifier.testTag("import_qr_gallery_button")
+                        )
+                    }
                     GlassCircleButton(
                         icon = GlassIcons.Clipboard,
                         contentDescription = stringResource(R.string.profiles_import_title),
@@ -160,6 +188,7 @@ fun ProfilesScreen(
                         onClick = { showCreateDialog = true },
                         tint = look.accent,
                         backdrop = LocalGlassChrome.current?.wall,
+                        focusRequester = addFocus,
                         modifier = Modifier.testTag("add_profile_button")
                     )
                 }
@@ -186,7 +215,7 @@ fun ProfilesScreen(
             GlassCard(
                 modifier = Modifier
                     .animateItem()
-                    .widthIn(max = 600.dp)
+                    .widthIn(max = contentMaxWidth)
                     .fillMaxWidth()
                     .testTag("profile_card_${profile.id}"),
                 elevated = isActive,
@@ -360,28 +389,76 @@ fun ProfilesScreen(
     }
 
     if (showImportTextDialog) {
+        val inputFocus = remember { FocusRequester() }
         GlassModalDialog(
             onDismissRequest = { showImportTextDialog = false },
             title = stringResource(R.string.profiles_import_title),
-            icon = GlassIcons.Clipboard
+            icon = GlassIcons.Clipboard,
+            initialFocusRequester = inputFocus
         ) {
             OutlinedTextField(
                 value = importInputText,
                 onValueChange = { importInputText = it },
-                label = { Text("novavpn://profile?data=… or JSON") },
+                label = { Text(stringResource(R.string.profiles_import_input_hint)) },
                 minLines = 3,
                 maxLines = 6,
                 shape = RoundedCornerShape(16.dp),
                 colors = novaOutlinedTextFieldColors(),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .tvFocusVisual(
+                        shape = RoundedCornerShape(16.dp),
+                        scaleOnFocus = 1.01f,
+                        focusRequester = inputFocus
+                    )
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            TextButton(onClick = {
-                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-                if (clip.isNotBlank()) importInputText = clip
-            }) {
-                Text(stringResource(R.string.profiles_paste_clipboard))
+            Spacer(modifier = Modifier.height(10.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                GlassCapsuleButton(
+                    text = stringResource(R.string.profiles_import_clipboard_now),
+                    icon = GlassIcons.Clipboard,
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                        if (clip.isNotBlank()) {
+                            onImportText(clip)
+                            importInputText = ""
+                            showImportTextDialog = false
+                        } else {
+                            onNotify(context.getString(R.string.profiles_clipboard_empty))
+                        }
+                    }
+                )
+                GlassCapsuleButton(
+                    text = stringResource(R.string.profiles_import_file),
+                    icon = GlassIcons.Archive,
+                    onClick = {
+                        runCatching {
+                            filePicker.launch(arrayOf("text/*", "application/json", "*/*"))
+                        }.onSuccess {
+                            showImportTextDialog = false
+                        }.onFailure {
+                            onNotify(context.getString(R.string.msg_file_picker_unavailable))
+                        }
+                    }
+                )
+                TextButton(
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                        if (clip.isNotBlank()) {
+                            importInputText = clip
+                        } else {
+                            onNotify(context.getString(R.string.profiles_clipboard_empty))
+                        }
+                    },
+                    modifier = Modifier.tvFocusVisual(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
+                ) {
+                    Text(stringResource(R.string.profiles_paste_clipboard))
+                }
             }
             Spacer(modifier = Modifier.height(12.dp))
             Row(

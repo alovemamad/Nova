@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import app.novavpn.ServiceLocator
+import app.novavpn.core.DevicePlatform
 import app.novavpn.domain.model.VpnState
 import com.example.MainActivity
 
@@ -15,6 +16,7 @@ import com.example.MainActivity
  */
 class NovaWidgetActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (DevicePlatform.isTv(context)) return
         if (intent.action != ACTION_WIDGET_TOGGLE) return
         ServiceLocator.init(context.applicationContext)
         val controller = ServiceLocator.vpnController
@@ -22,7 +24,8 @@ class NovaWidgetActionReceiver : BroadcastReceiver() {
 
         if (state == VpnState.DISCONNECTED || state == VpnState.ERROR) {
             if (controller.needsVpnPermission()) {
-                context.startActivity(
+                DevicePlatform.safeStartActivity(
+                    context,
                     Intent(context, MainActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }

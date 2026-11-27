@@ -310,4 +310,17 @@
     <string name="about_notice_text">برای این برنامه توسط توسعه‌دهنده زحمت زیادی کشیده شده است. شرعاً استفاده از آن برای کوچکی مجاز نمی‌باشد. اگر یک کوچکی هستید فوراً برنامه را ترک کنید.</string>
     <string name="about_telegram_support">پشتیبانی تلگرام (momo1f@)</string>
     <string name="about_telegram_url">https://t.me/momo1f</string>
+
+    <!-- Android TV & Safe Intent Fallbacks -->
+    <string name="msg_system_settings_unavailable">صفحه تنظیمات سیستم در این دستگاه در دسترس نیست.</string>
+    <string name="msg_battery_settings_unavailable">تنظیمات بهینه‌سازی باتری در این دستگاه در دسترس نیست.</string>
+    <string name="msg_vpn_consent_unavailable">پنجره مجوز VPN در این دستگاه قابل باز شدن نیست.</string>
+    <string name="msg_no_app_available">برنامه سازگاری برای باز کردن این مورد یافت نشد.</string>
+    <string name="msg_file_picker_unavailable">انتخاب‌گر فایل در این دستگاه در دسترس نیست. از لینک URL یا کلیپ‌بورد استفاده کنید.</string>
+    <string name="profiles_import_clipboard_now">وارد کردن از کلیپ‌بورد</string>
+    <string name="profiles_import_file">وارد کردن از فایل</string>
+    <string name="profiles_import_input_hint">لینک novavpn://، آدرس https:// یا JSON</string>
+    <string name="profiles_clipboard_empty">کلیپ‌بورد خالی است</string>
+    <string name="ctrl_press_to_toggle">برای اتصال دکمه تایید را بزنید</string>
+    <string name="ctrl_press_to_disconnect">متصل · برای قطع دکمه تایید را بزنید</string>
 </resources>

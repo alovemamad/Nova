@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,6 +53,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import app.novavpn.core.DevicePlatform
 import app.novavpn.domain.model.SuggestedFixAction
 import app.novavpn.domain.model.VpnState
 import app.novavpn.ui.glass.GlassCapsuleButton
@@ -64,6 +66,8 @@ import app.novavpn.ui.glass.GlassWallpaperLayer
 import app.novavpn.ui.glass.LocalGlassChrome
 import app.novavpn.ui.glass.LocalGlassLook
 import app.novavpn.ui.glass.LocalGlassTiltState
+import app.novavpn.ui.glass.LocalIsTv
+import app.novavpn.ui.glass.LocalLastTvFocusRequester
 import app.novavpn.ui.glass.NovaDestination
 import app.novavpn.ui.glass.layerBackdrop
 import app.novavpn.ui.glass.rememberGlassChromeBackdrops
@@ -166,26 +170,34 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
         viewModel.maybeAutoCheckUpdates3Days(BuildConfig.VERSION_NAME)
     }
 
-    val handleConnectOrFix = remember(viewModel, vpnPermissionLauncher) {
+    val handleConnectOrFix: () -> Unit = remember(viewModel, vpnPermissionLauncher, context) {
         {
             val prep = viewModel.prepareVpnIntent()
             if (prep != null) {
                 pendingRegionConnect = null
                 pendingStartAfterPermission = true
-                vpnPermissionLauncher.launch(prep)
+                runCatching { vpnPermissionLauncher.launch(prep) }.onFailure {
+                    pendingStartAfterPermission = false
+                    viewModel.postMessage(context.getString(R.string.msg_vpn_consent_unavailable))
+                }
             } else {
                 viewModel.toggleConnect()
             }
+            Unit
         }
     }
 
-    val handleSelectCountryAndConnect: (String) -> Unit = remember(viewModel, vpnPermissionLauncher) {
+    val handleSelectCountryAndConnect: (String) -> Unit = remember(viewModel, vpnPermissionLauncher, context) {
         { regionCode ->
             val prep = viewModel.prepareVpnIntent()
             if (prep != null) {
                 pendingRegionConnect = regionCode
                 pendingStartAfterPermission = true
-                vpnPermissionLauncher.launch(prep)
+                runCatching { vpnPermissionLauncher.launch(prep) }.onFailure {
+                    pendingRegionConnect = null
+                    pendingStartAfterPermission = false
+                    viewModel.postMessage(context.getString(R.string.msg_vpn_consent_unavailable))
+                }
             } else {
                 viewModel.selectCountryAndConnect(regionCode)
             }
@@ -193,13 +205,16 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
     }
 
     NovaVpnTheme(settings = settings) {
+        val isTv = LocalIsTv.current
         val look = LocalGlassLook.current
         val chrome = rememberGlassChromeBackdrops()
-        val tiltState = rememberGlassTilt(settings.glass.motionHighlights && !look.reduced)
+        val tiltState = rememberGlassTilt(settings.glass.motionHighlights && !look.reduced && !isTv)
+        val lastTvFocus = remember { mutableStateOf<FocusRequester?>(null) }
 
         CompositionLocalProvider(
             LocalGlassChrome provides chrome,
-            LocalGlassTiltState provides tiltState
+            LocalGlassTiltState provides tiltState,
+            LocalLastTvFocusRequester provides lastTvFocus
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 GlassWallpaperLayer(backdrop = chrome.wall)
@@ -216,6 +231,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                             prepareVpnIntent = { viewModel.prepareVpnIntent() },
                             onOpenBatterySettings = { viewModel.openBatteryOptimizationSettings() },
                             onOpenVpnSettings = { viewModel.openVpnSystemSettings() },
+                            onPostMessage = { msg -> viewModel.postMessage(msg) },
                             onFinish = { viewModel.completeOnboarding() }
                         )
                     } else {
@@ -248,7 +264,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                         }
 
                         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                            val useRail = maxWidth >= 600.dp
+                            val useRail = isTv || maxWidth >= 600.dp
 
                             Scaffold(
                                 containerColor = Color.Transparent,
@@ -353,6 +369,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         onDuplicateProfile = { id -> viewModel.duplicateProfile(id) },
                                                         onDeleteProfile = { id -> viewModel.deleteProfile(id) },
                                                         onImportText = { raw -> viewModel.importProfileFromText(raw) },
+                                                        onImportFile = { uri -> viewModel.importProfileFromUri(uri) },
                                                         onImportQrImage = { uri -> viewModel.importProfileFromQrImage(uri) },
                                                         onGenerateQr = { prof -> viewModel.exportProfileQrBitmap(prof) },
                                                         onNotify = { msg -> viewModel.postMessage(msg) },
@@ -399,6 +416,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         onUpdateAllGeoResources = { viewModel.refreshAllGeoResources() },
                                                         onRefreshSingleGeoResource = { id -> viewModel.refreshGeoResource(id) },
                                                         onDeleteGeoResource = { id -> viewModel.deleteGeoResource(id) },
+                                                        onPostMessage = { msg -> viewModel.postMessage(msg) },
                                                         onTabBarShrinkChanged = { tabBarShrunk = it }
                                                     )
                                                 }
@@ -433,10 +451,12 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                         }
 
                         pendingDeepLinkProfile?.let { incoming ->
+                            val confirmFocus = remember { FocusRequester() }
                             GlassModalDialog(
                                 onDismissRequest = { viewModel.dismissDeepLinkImport() },
                                 title = stringResource(R.string.deeplink_import_title),
-                                icon = GlassIcons.Download
+                                icon = GlassIcons.Download,
+                                initialFocusRequester = confirmFocus
                             ) {
                                 Text(
                                     text = stringResource(
@@ -461,19 +481,22 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                     GlassCapsuleButton(
                                         text = stringResource(R.string.deeplink_import_confirm),
                                         onClick = { viewModel.confirmDeepLinkImport() },
-                                        prominent = true
+                                        prominent = true,
+                                        focusRequester = confirmFocus
                                     )
                                 }
                             }
                         }
 
                         if (updateInfo.isAutoPrompt && updateInfo.updateAvailable) {
+                            val updateFocus = remember { FocusRequester() }
                             GlassModalDialog(
                                 onDismissRequest = {
                                     if (!updateInfo.downloading) viewModel.snoozeUpdatePrompt()
                                 },
                                 title = stringResource(R.string.update_modal_title),
-                                icon = GlassIcons.Download
+                                icon = GlassIcons.Download,
+                                initialFocusRequester = updateFocus
                             ) {
                                 Text(
                                     text = fmtDigits(
@@ -539,6 +562,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                     icon = GlassIcons.Shield,
                                                     prominent = true,
                                                     tint = look.warning,
+                                                    focusRequester = updateFocus,
                                                     onClick = { viewModel.retryInstallDownloadedApk() }
                                                 )
                                             }
@@ -547,6 +571,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                     text = stringResource(R.string.updates_install_now),
                                                     icon = GlassIcons.Box,
                                                     prominent = true,
+                                                    focusRequester = updateFocus,
                                                     onClick = { viewModel.retryInstallDownloadedApk() }
                                                 )
                                             }
@@ -555,6 +580,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                     text = stringResource(R.string.update_modal_download),
                                                     icon = GlassIcons.Download,
                                                     prominent = true,
+                                                    focusRequester = updateFocus,
                                                     onClick = { viewModel.downloadAndInstallUpdate() }
                                                 )
                                             }
@@ -563,12 +589,17 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                     text = stringResource(R.string.update_modal_download),
                                                     icon = GlassIcons.Link,
                                                     prominent = true,
+                                                    focusRequester = updateFocus,
                                                     onClick = {
                                                         val intent = Intent(
                                                             Intent.ACTION_VIEW,
                                                             Uri.parse(updateInfo.releaseUrl)
                                                         )
-                                                        runCatching { context.startActivity(intent) }
+                                                        if (!DevicePlatform.safeStartActivity(context, intent)) {
+                                                            viewModel.postMessage(
+                                                                "${context.getString(R.string.msg_no_app_available)} (${updateInfo.releaseUrl})"
+                                                            )
+                                                        }
                                                         viewModel.dismissUpdatePrompt()
                                                     }
                                                 )

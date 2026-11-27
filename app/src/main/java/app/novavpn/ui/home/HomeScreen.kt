@@ -75,6 +75,8 @@ import app.novavpn.domain.model.VpnMode
 import app.novavpn.domain.model.VpnProfile
 import app.novavpn.domain.model.VpnRuntimeStatus
 import app.novavpn.domain.model.VpnState
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusRequester
 import app.novavpn.ui.glass.GlassBadge
 import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
@@ -85,6 +87,7 @@ import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.GlassSheet
 import app.novavpn.ui.glass.LocalGlassChrome
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.LocalIsTv
 import app.novavpn.ui.glass.NovaConnectControl
 import app.novavpn.ui.glass.ReportScrollShrink
 import app.novavpn.ui.glass.SpeedSparkline
@@ -92,6 +95,8 @@ import app.novavpn.ui.glass.glassHighlight
 import app.novavpn.ui.glass.novaOutlinedTextFieldColors
 import app.novavpn.ui.glass.glassPress
 import app.novavpn.ui.glass.liquidGlass
+import app.novavpn.ui.glass.tvFocusVisual
+import app.novavpn.ui.glass.tvFocusable
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
@@ -127,8 +132,18 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val contentMaxWidth = if (isTv) 960.dp else 600.dp
     val faUi = isPersianUi()
     var showCountrySheet by remember { mutableStateOf(false) }
+
+    val connectFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(isTv) {
+        if (isTv) {
+            delay(60)
+            runCatching { connectFocusRequester.requestFocus() }
+        }
+    }
 
     val listState = rememberLazyListState()
     ReportScrollShrink(listState = listState, onShrinkChanged = onTabBarShrinkChanged)
@@ -170,8 +185,12 @@ fun HomeScreen(
         state = listState,
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp),
+            .then(if (!isTv) Modifier.statusBarsPadding() else Modifier),
+        contentPadding = if (isTv) {
+            PaddingValues(start = 24.dp, end = 48.dp, top = 36.dp, bottom = 48.dp)
+        } else {
+            PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp)
+        },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -179,7 +198,7 @@ fun HomeScreen(
         item {
             Row(
                 modifier = Modifier
-                    .widthIn(max = 600.dp)
+                    .widthIn(max = contentMaxWidth)
                     .fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -240,7 +259,7 @@ fun HomeScreen(
         item {
             Column(
                 modifier = Modifier
-                    .widthIn(max = 600.dp)
+                    .widthIn(max = contentMaxWidth)
                     .fillMaxWidth()
                     .padding(top = 4.dp, bottom = 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -248,7 +267,8 @@ fun HomeScreen(
                 NovaConnectControl(
                     controlType = settings.glass.connectControl,
                     vpnState = status.state,
-                    onToggle = onToggleConnect
+                    onToggle = onToggleConnect,
+                    focusRequester = connectFocusRequester
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -361,7 +381,7 @@ fun HomeScreen(
             item {
                 GlassCard(
                     modifier = Modifier
-                        .widthIn(max = 600.dp)
+                        .widthIn(max = contentMaxWidth)
                         .fillMaxWidth()
                         .testTag("pause_warning_banner"),
                     tintOverride = look.warning.copy(alpha = 0.16f)
@@ -442,7 +462,7 @@ fun HomeScreen(
 
                 GlassCard(
                     modifier = Modifier
-                        .widthIn(max = 600.dp)
+                        .widthIn(max = contentMaxWidth)
                         .fillMaxWidth()
                         .testTag("proxy_credentials_card")
                 ) {
@@ -461,11 +481,14 @@ fun HomeScreen(
                                     color = look.textPrimary
                                 )
                             }
-                            TextButton(onClick = {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                cm?.setPrimaryClip(ClipData.newPlainText("Nova Proxy", clipValue))
-                                onPostMessage(copiedMsg)
-                            }) {
+                            TextButton(
+                                onClick = {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    cm?.setPrimaryClip(ClipData.newPlainText("Nova Proxy", clipValue))
+                                    onPostMessage(copiedMsg)
+                                },
+                                modifier = Modifier.tvFocusVisual(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
+                            ) {
                                 Icon(GlassIcons.Copy, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(copyLabel)
@@ -496,12 +519,16 @@ fun HomeScreen(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable {
-                                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                                cm?.setPrimaryClip(ClipData.newPlainText("Nova LAN Proxy", "${addr.ip}:${status.socksPort}"))
-                                                onPostMessage(copiedMsg)
-                                            }
-                                            .padding(vertical = 4.dp),
+                                            .tvFocusable(
+                                                shape = RoundedCornerShape(10.dp),
+                                                scaleOnFocus = 1.02f,
+                                                onClick = {
+                                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                    cm?.setPrimaryClip(ClipData.newPlainText("Nova LAN Proxy", "${addr.ip}:${status.socksPort}"))
+                                                    onPostMessage(copiedMsg)
+                                                }
+                                            )
+                                            .padding(horizontal = 6.dp, vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
@@ -537,7 +564,7 @@ fun HomeScreen(
             item {
                 GlassCard(
                     modifier = Modifier
-                        .widthIn(max = 600.dp)
+                        .widthIn(max = contentMaxWidth)
                         .fillMaxWidth(),
                     tintOverride = look.danger.copy(alpha = 0.14f)
                 ) {
@@ -587,7 +614,7 @@ fun HomeScreen(
             item {
                 GlassCard(
                     modifier = Modifier
-                        .widthIn(max = 600.dp)
+                        .widthIn(max = contentMaxWidth)
                         .fillMaxWidth()
                 ) {
                     Column {
@@ -765,7 +792,7 @@ fun HomeScreen(
 
             GlassCard(
                 modifier = Modifier
-                    .widthIn(max = 600.dp)
+                    .widthIn(max = contentMaxWidth)
                     .fillMaxWidth()
                     .testTag("home_country_picker_card")
             ) {
@@ -889,11 +916,13 @@ private fun HeaderModeTogglePill(
     onSelect: (VpnMode) -> Unit
 ) {
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
     val haptic = LocalHapticFeedback.current
     val capsule = RoundedCornerShape(50)
     Row(
         modifier = Modifier
             .liquidGlass(shape = capsule, elevated = true, backdrop = LocalGlassChrome.current?.wall)
+            .then(if (isTv) Modifier.focusGroup() else Modifier)
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -911,7 +940,9 @@ private fun HeaderModeTogglePill(
                         if (selected) look.accent.copy(alpha = 0.28f)
                         else look.fill2.copy(alpha = 0f)
                     )
-                    .clickable(
+                    .tvFocusable(
+                        shape = capsule,
+                        scaleOnFocus = 1.05f,
                         role = Role.Tab,
                         onClick = {
                             if (!selected) {
@@ -962,7 +993,9 @@ private fun CountryFlagPill(
             .background(bg)
             .glassHighlight(shape, look.highlight, 0.7.dp)
             .border(1.dp, borderColor, shape)
-            .clickable(
+            .tvFocusable(
+                shape = shape,
+                scaleOnFocus = 1.05f,
                 interactionSource = source,
                 indication = ripple(bounded = true, color = look.accent),
                 role = Role.Button,
@@ -996,6 +1029,8 @@ private fun CountryPickerSheet(
     onDismiss: () -> Unit
 ) {
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val searchFocus = remember { FocusRequester() }
     var query by remember { mutableStateOf("") }
     val filtered = remember(query) {
         val q = query.trim()
@@ -1010,7 +1045,8 @@ private fun CountryPickerSheet(
     GlassSheet(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.home_country_picker_title),
-        icon = GlassIcons.Globe
+        icon = GlassIcons.Globe,
+        initialFocusRequester = searchFocus
     ) {
         Text(
             text = stringResource(R.string.home_country_picker_sub),
@@ -1026,13 +1062,19 @@ private fun CountryPickerSheet(
             singleLine = true,
             shape = RoundedCornerShape(16.dp),
             colors = novaOutlinedTextFieldColors(),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .tvFocusVisual(
+                    shape = RoundedCornerShape(16.dp),
+                    scaleOnFocus = 1.02f,
+                    focusRequester = searchFocus
+                )
         )
         Spacer(modifier = Modifier.height(10.dp))
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 420.dp),
+                .heightIn(max = if (isTv) 220.dp else 420.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(filtered, key = { it.code }) { region ->
@@ -1051,7 +1093,9 @@ private fun CountryPickerSheet(
                             color = if (isSelected) look.accent.copy(alpha = 0.65f) else look.separator,
                             shape = shape
                         )
-                        .clickable(
+                        .tvFocusable(
+                            shape = shape,
+                            scaleOnFocus = 1.02f,
                             interactionSource = source,
                             indication = ripple(color = look.accent),
                             role = Role.Button,

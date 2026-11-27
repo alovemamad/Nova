@@ -310,4 +310,17 @@
     <string name="about_notice_text">برای این برنامه توسط توسعه‌دهنده زحمت زیادی کشیده شده است. شرعاً استفاده از آن برای کوچکی مجاز نمی‌باشد. اگر یک کوچکی هستید فوراً برنامه را ترک کنید.</string>
     <string name="about_telegram_support">Telegram Support (@momo1f)</string>
     <string name="about_telegram_url">https://t.me/momo1f</string>
+
+    <!-- Android TV & Safe Intent Fallbacks -->
+    <string name="msg_system_settings_unavailable">System settings screen is not available on this device.</string>
+    <string name="msg_battery_settings_unavailable">Battery optimization settings are not available on this device.</string>
+    <string name="msg_vpn_consent_unavailable">VPN permission dialog could not be opened on this device.</string>
+    <string name="msg_no_app_available">No compatible app found to open this item.</string>
+    <string name="msg_file_picker_unavailable">File picker is not available on this device. Use URL or clipboard instead.</string>
+    <string name="profiles_import_clipboard_now">Import from Clipboard</string>
+    <string name="profiles_import_file">Import from File</string>
+    <string name="profiles_import_input_hint">novavpn://profile?data=…, https://… URL, or JSON</string>
+    <string name="profiles_clipboard_empty">Clipboard is empty</string>
+    <string name="ctrl_press_to_toggle">Press OK to connect</string>
+    <string name="ctrl_press_to_disconnect">Connected · Press OK to disconnect</string>
 </resources>

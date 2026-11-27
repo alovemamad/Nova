@@ -9,9 +9,11 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
+import app.novavpn.core.DevicePlatform
 import app.novavpn.core.runCatchingCancellable
 import app.novavpn.data.log.LogRepository
 import app.novavpn.domain.model.UpdateInfo
+import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -60,7 +62,8 @@ object GitHubUpdater {
 
     suspend fun checkLatestRelease(
         currentVersion: String,
-        supportedAbis: List<String> = Build.SUPPORTED_ABIS.toList()
+        supportedAbis: List<String> = Build.SUPPORTED_ABIS.toList(),
+        isTv: Boolean = BuildConfig.IS_TV
     ): UpdateInfo = withContext(Dispatchers.IO) {
         runCatchingCancellable {
             val client = httpClient()
@@ -85,7 +88,8 @@ object GitHubUpdater {
                                 return@withContext parseLatestReleaseJson(
                                     firstObj.toString(),
                                     currentVersion,
-                                    supportedAbis
+                                    supportedAbis,
+                                    isTv = isTv
                                 )
                             }
                         }
@@ -102,7 +106,7 @@ object GitHubUpdater {
                     )
                 }
                 val body = resp.body?.string() ?: error("Empty response from GitHub")
-                parseLatestReleaseJson(body, currentVersion, supportedAbis)
+                parseLatestReleaseJson(body, currentVersion, supportedAbis, isTv = isTv)
             }
         }.getOrElse { err ->
             UpdateInfo(checking = false, error = err.message ?: "Update check failed")
@@ -112,7 +116,8 @@ object GitHubUpdater {
     internal fun parseLatestReleaseJson(
         body: String,
         currentVersion: String,
-        supportedAbis: List<String> = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        supportedAbis: List<String> = listOf("arm64-v8a", "armeabi-v7a", "x86_64"),
+        isTv: Boolean = BuildConfig.IS_TV
     ): UpdateInfo {
         val obj = json.parseToJsonElement(body).jsonObject
         val tag = obj["tag_name"]?.jsonPrimitive?.content.orEmpty()
@@ -124,7 +129,7 @@ object GitHubUpdater {
 
         val assetsArr = obj["assets"] as? JsonArray
         val apks = parseApkAssets(assetsArr)
-        val matchedAsset = selectBestApkAsset(apks, supportedAbis)
+        val matchedAsset = selectBestApkAsset(apks, supportedAbis, isTv = isTv)
         val expectedSha = matchedAsset?.sha256 ?: extractSha256FromReleaseNotes(notes, matchedAsset?.name)
 
         return UpdateInfo(
@@ -173,9 +178,15 @@ object GitHubUpdater {
 
     internal fun selectBestApkAsset(
         assets: List<ReleaseApkAsset>,
-        supportedAbis: List<String>
+        supportedAbis: List<String>,
+        isTv: Boolean = BuildConfig.IS_TV
     ): ReleaseApkAsset? {
-        if (assets.isEmpty()) return null
+        val filtered = assets.filter { asset ->
+            if (!asset.name.endsWith(".apk", ignoreCase = true)) return@filter false
+            val isTvAsset = asset.name.contains("-TV-", ignoreCase = true)
+            if (isTv) isTvAsset else !isTvAsset
+        }
+        if (filtered.isEmpty()) return null
         val abiPatterns = mapOf(
             "arm64-v8a" to listOf("arm64-v8a", "arm64", "aarch64"),
             "armeabi-v7a" to listOf("armeabi-v7a", "armeabi", "armv7"),
@@ -185,7 +196,7 @@ object GitHubUpdater {
         for (abi in supportedAbis) {
             val normalizedAbi = abi.lowercase(Locale.US)
             val aliases = abiPatterns[normalizedAbi] ?: listOf(normalizedAbi)
-            val found = assets.firstOrNull { asset ->
+            val found = filtered.firstOrNull { asset ->
                 val lower = asset.name.lowercase(Locale.US)
                 if (normalizedAbi == "x86") {
                     Regex("(^|[-_])x86(?!_?64)([-_.]|$)").containsMatchIn(lower)
@@ -197,8 +208,8 @@ object GitHubUpdater {
         }
 
         // Universal or ABI-neutral APK fallback — never pick an explicitly incompatible ABI APK
-        return assets.firstOrNull { it.name.contains("universal", ignoreCase = true) }
-            ?: assets.firstOrNull { asset ->
+        return filtered.firstOrNull { it.name.contains("universal", ignoreCase = true) }
+            ?: filtered.firstOrNull { asset ->
                 val lower = asset.name.lowercase(Locale.US)
                 !hasExplicitAbiTag(lower)
             }
@@ -420,7 +431,9 @@ object GitHubUpdater {
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                 Uri.parse("package:${context.packageName}")
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(permIntent)
+            check(DevicePlatform.safeStartActivity(context, permIntent)) {
+                "Install-unknown-apps settings screen is unavailable on this device."
+            }
             return false
         }
 
@@ -438,7 +451,9 @@ object GitHubUpdater {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(installIntent)
+        check(DevicePlatform.safeStartActivity(context, installIntent)) {
+            "Package installer is unavailable on this device."
+        }
         return true
     }
 }

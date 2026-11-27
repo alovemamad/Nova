@@ -61,6 +61,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.focus.FocusRequester
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
@@ -74,7 +75,8 @@ fun NovaConnectControl(
     controlType: GlassConnectControl,
     vpnState: VpnState,
     onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val triggeredToggle = {
@@ -83,11 +85,11 @@ fun NovaConnectControl(
     }
 
     when (controlType) {
-        GlassConnectControl.ORB -> NovaOrbControl(vpnState, triggeredToggle, modifier)
-        GlassConnectControl.ZED_GLASS -> NovaZedGlassControl(vpnState, triggeredToggle, modifier)
-        GlassConnectControl.BUTTON -> NovaPillButtonControl(vpnState, triggeredToggle, modifier)
-        GlassConnectControl.SWITCH -> NovaSwitchControl(vpnState, triggeredToggle, modifier)
-        GlassConnectControl.SLIDER -> NovaSlideControl(vpnState, triggeredToggle, modifier)
+        GlassConnectControl.ORB -> NovaOrbControl(vpnState, triggeredToggle, modifier, focusRequester)
+        GlassConnectControl.ZED_GLASS -> NovaZedGlassControl(vpnState, triggeredToggle, modifier, focusRequester)
+        GlassConnectControl.BUTTON -> NovaPillButtonControl(vpnState, triggeredToggle, modifier, focusRequester)
+        GlassConnectControl.SWITCH -> NovaSwitchControl(vpnState, triggeredToggle, modifier, focusRequester)
+        GlassConnectControl.SLIDER -> NovaSlideControl(vpnState, triggeredToggle, modifier, focusRequester)
     }
 }
 
@@ -95,7 +97,8 @@ fun NovaConnectControl(
 private fun NovaOrbControl(
     vpnState: VpnState,
     onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null
 ) {
     val look = LocalGlassLook.current
     val wallBackdrop = LocalGlassChrome.current?.wall
@@ -208,10 +211,13 @@ private fun NovaOrbControl(
                     scaleY = btnScale
                 }
                 .liquidGlass(shape = CircleShape, elevated = true, backdrop = wallBackdrop)
-                .clickable(
+                .tvFocusable(
+                    shape = CircleShape,
+                    scaleOnFocus = 1.06f,
                     interactionSource = source,
                     indication = null,
                     role = Role.Button,
+                    focusRequester = focusRequester,
                     onClick = onToggle
                 ),
             contentAlignment = Alignment.Center
@@ -257,7 +263,8 @@ private fun NovaOrbControl(
 private fun NovaZedGlassControl(
     vpnState: VpnState,
     onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null
 ) {
     val look = LocalGlassLook.current
     val wallBackdrop = LocalGlassChrome.current?.wall
@@ -345,10 +352,13 @@ private fun NovaZedGlassControl(
                     tintOverride = if (isConnected) look.accent.copy(alpha = 0.18f) else null,
                     backdrop = wallBackdrop
                 )
-                .clickable(
+                .tvFocusable(
+                    shape = shape,
+                    scaleOnFocus = 1.06f,
                     interactionSource = source,
                     indication = null,
                     role = Role.Button,
+                    focusRequester = focusRequester,
                     onClick = onToggle
                 ),
             contentAlignment = Alignment.Center
@@ -414,20 +424,30 @@ private fun NovaZedGlassControl(
 private fun NovaPillButtonControl(
     vpnState: VpnState,
     onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null
 ) {
     val look = LocalGlassLook.current
     val wallBackdrop = LocalGlassChrome.current?.wall
     val isConnected = vpnState == VpnState.CONNECTED
     val source = remember { MutableInteractionSource() }
     val bg = if (isConnected) look.accent.copy(alpha = 0.24f) else look.secondaryAccent.copy(alpha = 0.22f)
+    val pillShape = RoundedCornerShape(32.dp)
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(64.dp)
             .glassPress(source, scale = 0.97f)
-            .liquidGlass(shape = RoundedCornerShape(32.dp), elevated = true, tintOverride = bg, backdrop = wallBackdrop)
-            .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onToggle)
+            .liquidGlass(shape = pillShape, elevated = true, tintOverride = bg, backdrop = wallBackdrop)
+            .tvFocusable(
+                shape = pillShape,
+                scaleOnFocus = 1.04f,
+                interactionSource = source,
+                indication = null,
+                role = Role.Button,
+                focusRequester = focusRequester,
+                onClick = onToggle
+            )
             .testTag("connect_pill_button"),
         contentAlignment = Alignment.Center
     ) {
@@ -451,7 +471,8 @@ private fun NovaPillButtonControl(
 private fun NovaSwitchControl(
     vpnState: VpnState,
     onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null
 ) {
     val look = LocalGlassLook.current
     val wallBackdrop = LocalGlassChrome.current?.wall
@@ -465,18 +486,27 @@ private fun NovaSwitchControl(
         animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
         label = "switch_thumb"
     )
+    val switchShape = RoundedCornerShape(37.dp)
     Box(
         modifier = modifier
             .width(148.dp)
             .height(74.dp)
             .glassPress(source, scale = 0.95f)
             .liquidGlass(
-                shape = RoundedCornerShape(37.dp),
+                shape = switchShape,
                 elevated = true,
                 tintOverride = if (isConnected) look.accent.copy(alpha = 0.25f) else null,
                 backdrop = wallBackdrop
             )
-            .clickable(interactionSource = source, indication = null, role = Role.Switch, onClick = onToggle)
+            .tvFocusable(
+                shape = switchShape,
+                scaleOnFocus = 1.06f,
+                interactionSource = source,
+                indication = null,
+                role = Role.Switch,
+                focusRequester = focusRequester,
+                onClick = onToggle
+            )
             .testTag("connect_switch_button"),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -502,19 +532,35 @@ private fun NovaSwitchControl(
 private fun NovaSlideControl(
     vpnState: VpnState,
     onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null
 ) {
+    val isTv = LocalIsTv.current
     val look = LocalGlassLook.current
     val wallBackdrop = LocalGlassChrome.current?.wall
     val isConnected = vpnState == VpnState.CONNECTED
     val density = LocalDensity.current
     var dragX by remember { mutableFloatStateOf(0f) }
+    val slideShape = RoundedCornerShape(32.dp)
 
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .height(64.dp)
-            .liquidGlass(shape = RoundedCornerShape(32.dp), elevated = true, backdrop = wallBackdrop)
+            .liquidGlass(shape = slideShape, elevated = true, backdrop = wallBackdrop)
+            .then(
+                if (isTv) {
+                    Modifier.tvFocusable(
+                        shape = slideShape,
+                        scaleOnFocus = 1.04f,
+                        role = Role.Button,
+                        focusRequester = focusRequester,
+                        onClick = onToggle
+                    )
+                } else {
+                    Modifier
+                }
+            )
             .testTag("connect_slide_button")
     ) {
         val maxOffsetPx = with(density) { (maxWidth - 64.dp).toPx().coerceAtLeast(1f) }
@@ -522,7 +568,14 @@ private fun NovaSlideControl(
         val currentOffset = (baseOffset + dragX).coerceIn(0f, maxOffsetPx)
 
         Text(
-            text = stringResource(if (isConnected) R.string.slide_to_disconnect else R.string.slide_to_connect),
+            text = stringResource(
+                when {
+                    isTv && isConnected -> R.string.ctrl_press_to_disconnect
+                    isTv -> R.string.ctrl_press_to_toggle
+                    isConnected -> R.string.slide_to_disconnect
+                    else -> R.string.slide_to_connect
+                }
+            ),
             style = MaterialTheme.typography.titleMedium,
             color = look.textSecondary,
             modifier = Modifier.align(Alignment.Center)
@@ -536,19 +589,25 @@ private fun NovaSlideControl(
                 .clip(CircleShape)
                 .background(if (isConnected) look.danger else look.accent)
                 .glassHighlight(CircleShape, Color.White.copy(alpha = 0.55f), 0.8.dp)
-                .pointerInput(isConnected, maxOffsetPx) {
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            val threshold = maxOffsetPx * 0.45f
-                            if ((!isConnected && dragX > threshold) || (isConnected && dragX < -threshold)) {
-                                onToggle()
-                            }
-                            dragX = 0f
-                        },
-                        onDragCancel = { dragX = 0f },
-                        onHorizontalDrag = { _, delta -> dragX += delta }
-                    )
-                },
+                .then(
+                    if (!isTv) {
+                        Modifier.pointerInput(isConnected, maxOffsetPx) {
+                            detectHorizontalDragGestures(
+                                onDragEnd = {
+                                    val threshold = maxOffsetPx * 0.45f
+                                    if ((!isConnected && dragX > threshold) || (isConnected && dragX < -threshold)) {
+                                        onToggle()
+                                    }
+                                    dragX = 0f
+                                },
+                                onDragCancel = { dragX = 0f },
+                                onHorizontalDrag = { _, delta -> dragX += delta }
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+                ),
             contentAlignment = Alignment.Center
         ) {
             Icon(

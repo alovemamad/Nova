@@ -25,18 +25,20 @@ class BootReceiver : BroadcastReceiver() {
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_LOCKED_BOOT_COMPLETED) return
 
         val appCtx = context.applicationContext
-        NovaVpnApplication.createNotificationChannels(appCtx)
-        ServiceLocator.init(appCtx)
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                runCatching { NovaVpnApplication.createNotificationChannels(appCtx) }
+                ServiceLocator.init(appCtx)
+                if (ServiceLocator.initError != null) return@launch
                 val settings = ServiceLocator.settingsRepository.getSettings()
                 if (!settings.autoConnect.startOnBoot) return@launch
 
-                val prepared = settings.vpnMode == VpnMode.PROXY_ONLY || VpnService.prepare(appCtx) == null
+                val prepared = settings.vpnMode == VpnMode.PROXY_ONLY ||
+                    runCatching { VpnService.prepare(appCtx) == null }.getOrDefault(false)
                 if (!prepared) {
                     LogRepository.w("BootReceiver", "Cannot auto-start on boot: VPN permission not granted")
-                    postOpenAppNotification(appCtx)
+                    runCatching { postOpenAppNotification(appCtx) }
                     return@launch
                 }
 
@@ -46,14 +48,16 @@ class BootReceiver : BroadcastReceiver() {
                 } catch (e: Exception) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e is ForegroundServiceStartNotAllowedException) {
                         LogRepository.w("BootReceiver", "Android 12+ blocked background FGS start on boot; posting prompt notification")
-                        postOpenAppNotification(appCtx)
+                        runCatching { postOpenAppNotification(appCtx) }
                     } else if (e is IllegalStateException) {
                         LogRepository.w("BootReceiver", "Background FGS start rejected on boot (${e.message}); posting prompt notification")
-                        postOpenAppNotification(appCtx)
+                        runCatching { postOpenAppNotification(appCtx) }
                     } else {
                         LogRepository.e("BootReceiver", "Boot auto-start error: ${e.message}")
                     }
                 }
+            } catch (t: Throwable) {
+                runCatching { LogRepository.w("BootReceiver", "Boot check failed safely: ${t.message}") }
             } finally {
                 pending.finish()
             }

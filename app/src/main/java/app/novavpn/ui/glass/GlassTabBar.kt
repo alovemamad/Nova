@@ -12,8 +12,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -270,6 +273,7 @@ private fun GlassBottomTabPill(
     modifier: Modifier = Modifier
 ) {
     if (tabs.isEmpty()) return
+    val isTv = LocalIsTv.current
     val look = LocalGlassLook.current
     val tiltState = LocalGlassTiltState.current
     val fallbackTilt = LocalGlassTiltOffset.current
@@ -361,9 +365,11 @@ private fun GlassBottomTabPill(
                         )
                     }
                 )
-                .pointerInput(tabs, rtl, tabPx, padPx) {
-                    val slop = viewConfiguration.touchSlop
-                    awaitEachGesture {
+                .then(
+                    if (!isTv) {
+                        Modifier.pointerInput(tabs, rtl, tabPx, padPx) {
+                            val slop = viewConfiguration.touchSlop
+                            awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture
 
@@ -420,7 +426,11 @@ private fun GlassBottomTabPill(
                         }
                     }
                 }
-        ) {
+            } else {
+                Modifier
+            }
+        )
+    ) {
             Box(
                 modifier = Modifier
                     .padding(pad)
@@ -448,6 +458,7 @@ private fun GlassBottomTabPill(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(pad)
+                    .then(if (isTv) Modifier.focusGroup() else Modifier)
             ) {
                 tabs.forEachIndexed { index, tab ->
                     val isSelected = tab.dest == current
@@ -465,6 +476,22 @@ private fun GlassBottomTabPill(
                         label = label,
                         modifier = Modifier
                             .testTag(tab.tag)
+                            .then(
+                                if (isTv) {
+                                    Modifier.tvFocusable(
+                                        shape = shape,
+                                        scaleOnFocus = 1.04f,
+                                        role = Role.Tab,
+                                        onClick = {
+                                            if (!isSelected) {
+                                                navigate(tab.dest)
+                                            }
+                                        }
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            )
                             .semantics(mergeDescendants = true) {
                                 role = Role.Tab
                                 selected = isSelected
@@ -608,34 +635,103 @@ fun GlassNavigationRail(
     modifier: Modifier = Modifier
 ) {
     val look = LocalGlassLook.current
-    NavigationRail(
-        modifier = modifier,
-        containerColor = look.pillSurface
+    val isTv = LocalIsTv.current
+    if (!isTv) {
+        NavigationRail(
+            modifier = modifier,
+            containerColor = look.pillSurface
+        ) {
+            Spacer(modifier = Modifier.height(16.dp))
+            novaTabs.forEach { tab ->
+                val selected = current == tab.dest
+                val label = stringResource(tab.titleRes)
+                NavigationRailItem(
+                    selected = selected,
+                    onClick = { onSelect(tab.dest) },
+                    icon = {
+                        Icon(
+                            imageVector = if (selected) tab.iconSelected else tab.iconUnselected,
+                            contentDescription = label,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    label = { Text(label, maxLines = 1) },
+                    colors = NavigationRailItemDefaults.colors(
+                        selectedIconColor = look.accent,
+                        selectedTextColor = look.textPrimary,
+                        indicatorColor = look.accent.copy(alpha = 0.2f),
+                        unselectedIconColor = look.textSecondary,
+                        unselectedTextColor = look.textSecondary
+                    ),
+                    modifier = Modifier.testTag(tab.tag)
+                )
+            }
+        }
+        return
+    }
+
+    val railShape = RoundedCornerShape(24.dp)
+    val itemShape = RoundedCornerShape(18.dp)
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .padding(start = 24.dp, top = 36.dp, bottom = 36.dp, end = 8.dp)
+            .width(124.dp)
+            .liquidGlass(shape = railShape, elevated = true, tintOverride = look.pillSurface, backdrop = null)
+            .focusGroup()
+            .padding(horizontal = 10.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(16.dp))
         novaTabs.forEach { tab ->
-            val selected = current == tab.dest
+            val isSelected = current == tab.dest
             val label = stringResource(tab.titleRes)
-            NavigationRailItem(
-                selected = selected,
-                onClick = { onSelect(tab.dest) },
-                icon = {
-                    Icon(
-                        imageVector = if (selected) tab.iconSelected else tab.iconUnselected,
-                        contentDescription = label,
-                        modifier = Modifier.size(22.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 64.dp)
+                    .clip(itemShape)
+                    .background(
+                        if (isSelected) look.accent.copy(alpha = 0.24f) else Color.Transparent,
+                        itemShape
                     )
-                },
-                label = { Text(label, maxLines = 1) },
-                colors = NavigationRailItemDefaults.colors(
-                    selectedIconColor = look.accent,
-                    selectedTextColor = look.textPrimary,
-                    indicatorColor = look.accent.copy(alpha = 0.2f),
-                    unselectedIconColor = look.textSecondary,
-                    unselectedTextColor = look.textSecondary
-                ),
-                modifier = Modifier.testTag(tab.tag)
-            )
+                    .border(
+                        width = if (isSelected) 1.dp else 0.dp,
+                        color = if (isSelected) look.accent.copy(alpha = 0.55f) else Color.Transparent,
+                        shape = itemShape
+                    )
+                    .tvFocusable(
+                        shape = itemShape,
+                        scaleOnFocus = 1.05f,
+                        role = Role.Tab,
+                        onClick = { onSelect(tab.dest) }
+                    )
+                    .padding(horizontal = 8.dp, vertical = 10.dp)
+                    .testTag(tab.tag)
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Tab
+                        selected = isSelected
+                        contentDescription = label
+                    },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = if (isSelected) tab.iconSelected else tab.iconUnselected,
+                    contentDescription = null,
+                    tint = if (isSelected) look.accent else look.textSecondary,
+                    modifier = Modifier.size(26.dp)
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isSelected) look.textPrimary else look.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }

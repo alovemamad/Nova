@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Dark backdrop gradient matching Nova launcher background -->
+    <path android:pathData="M0,0h320v180h-320z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="320"
+                android:endY="180"
+                android:startX="0"
+                android:startY="0"
+                android:type="linear">
+                <item
+                    android:color="#FF070E1C"
+                    android:offset="0.0" />
+                <item
+                    android:color="#FF0B182E"
+                    android:offset="0.52" />
+                <item
+                    android:color="#FF102240"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Subtle aura glow rings -->
+    <path
+        android:fillColor="#1600E5CC"
+        android:pathData="M160,26a64,64 0 1,0 0,128a64,64 0 1,0 0,-128z" />
+    <path
+        android:fillColor="#127C5CFF"
+        android:pathData="M160,42a48,48 0 1,0 0,96a48,48 0 1,0 0,-96z" />
+
+    <!-- Centered Nova Shield Emblem (scaled cleanly from ic_launcher_foreground safe zone) -->
+    <group
+        android:translateX="106"
+        android:translateY="26"
+        android:scaleX="1.0"
+        android:scaleY="1.0">
+        <path
+            android:fillType="evenOdd"
+            android:pathData="M54,23 L79,32.5 L79,55.5 C79,69.5 67.8,79.8 54,85 C40.2,79.8 29,69.5 29,55.5 L29,32.5 Z M42,40 L42,68 L48,68 L48,51.5 L60,68 L66,68 L66,40 L60,40 L60,56.5 L48,40 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:endX="79"
+                    android:endY="85"
+                    android:startX="29"
+                    android:startY="23"
+                    android:type="linear">
+                    <item
+                        android:color="#FF00E5CC"
+                        android:offset="0.0" />
+                    <item
+                        android:color="#FF38BDF8"
+                        android:offset="0.45" />
+                    <item
+                        android:color="#FF7C5CFF"
+                        android:offset="1.0" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
+
+    <!-- Subtle bottom accent bar (safe inside overscan margin) -->
+    <path
+        android:pathData="M124,132 L196,132 C197.6,132 199,133.4 199,135 C199,136.6 197.6,138 196,138 L124,138 C122.4,138 121,136.6 121,135 C121,133.4 122.4,132 124,132 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="199"
+                android:endY="135"
+                android:startX="121"
+                android:startY="135"
+                android:type="linear">
+                <item
+                    android:color="#FF00E5CC"
+                    android:offset="0.0" />
+                <item
+                    android:color="#FF7C5CFF"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+</vector>

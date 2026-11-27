@@ -21,8 +21,11 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
@@ -33,12 +36,18 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import app.novavpn.core.DevicePlatform
 import app.novavpn.domain.model.AppLanguage
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.AppThemeMode
 import app.novavpn.ui.glass.GlassThemeProvider
+import app.novavpn.ui.glass.LocalIsTv
 import com.example.R
 import java.util.Locale
+
+private object NoOpHapticFeedback : HapticFeedback {
+    override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) = Unit
+}
 
 val NovaTeal = Color(0xFF00E5CC)
 val NovaViolet = Color(0xFF7C5CFF)
@@ -116,8 +125,23 @@ private val NovaShapes = Shapes(
     extraLarge = RoundedCornerShape(32.dp)
 )
 
-private fun buildTypography(isFa: Boolean): Typography {
+private fun buildTypography(isFa: Boolean, isTv: Boolean = false): Typography {
     val bodyFamily = if (isFa) VazirmatnFamily else PlusJakartaFamily
+    if (isTv) {
+        return Typography(
+            displaySmall = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.Bold, fontSize = 34.sp, lineHeight = 40.sp),
+            headlineMedium = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 34.sp),
+            headlineSmall = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 30.sp),
+            titleLarge = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 28.sp),
+            titleMedium = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, lineHeight = 24.sp),
+            bodyLarge = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.Normal, fontSize = 17.sp, lineHeight = 24.sp),
+            bodyMedium = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 22.sp),
+            bodySmall = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 19.sp),
+            labelLarge = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 22.sp),
+            labelMedium = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 19.sp),
+            labelSmall = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.Medium, fontSize = 13.sp, lineHeight = 17.sp)
+        )
+    }
     return Typography(
         displaySmall = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.Bold, fontSize = 32.sp, lineHeight = 38.sp),
         headlineMedium = TextStyle(fontFamily = bodyFamily, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 30.sp),
@@ -193,22 +217,37 @@ fun NovaVpnTheme(
     }
 
     val dynamicActive = settings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val isTv = remember(baseContext) { DevicePlatform.isTv(baseContext) }
+    val effectiveGlassPrefs = remember(settings.glass, isTv) {
+        if (isTv) {
+            settings.glass.copy(
+                reduceTransparency = true,
+                motionHighlights = false,
+                shrinkTabBar = false
+            )
+        } else {
+            settings.glass
+        }
+    }
+    val haptic = if (isTv) NoOpHapticFeedback else LocalHapticFeedback.current
 
     CompositionLocalProvider(
         LocalContext provides localizedContext,
         LocalConfiguration provides localizedContext.resources.configuration,
         LocalAppLanguage provides settings.language,
         LocalDigitMode provides settings.digitMode,
-        LocalLayoutDirection provides direction
+        LocalLayoutDirection provides direction,
+        LocalIsTv provides isTv,
+        LocalHapticFeedback provides haptic
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = buildTypography(isFa),
+            typography = buildTypography(isFa = isFa, isTv = isTv),
             shapes = NovaShapes
         ) {
             GlassThemeProvider(
                 isDark = isDark,
-                glassPrefs = settings.glass,
+                glassPrefs = effectiveGlassPrefs,
                 dynamicColor = dynamicActive,
                 colorScheme = colorScheme,
                 latin = !isFa,

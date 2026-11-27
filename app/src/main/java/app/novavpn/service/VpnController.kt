@@ -11,6 +11,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
+import app.novavpn.core.DevicePlatform
 import app.novavpn.core.SessionProxyAuth
 import app.novavpn.core.net.ConnectivityHelper
 import app.novavpn.core.net.DiagnosticsEngine
@@ -522,6 +523,7 @@ class VpnController(
     }
 
     internal fun notifySystemSurfaces() {
+        if (DevicePlatform.isTv(context)) return
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 TileService.requestListeningState(

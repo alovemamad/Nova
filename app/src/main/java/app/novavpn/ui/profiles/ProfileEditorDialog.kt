@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -56,7 +57,10 @@ import app.novavpn.ui.glass.GlassSegmented
 import app.novavpn.ui.glass.GlassSheet
 import app.novavpn.ui.glass.GlassSwitch
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.LocalIsTv
 import app.novavpn.ui.glass.novaOutlinedTextFieldColors
+import app.novavpn.ui.glass.tvFocusVisual
+import app.novavpn.ui.glass.tvFocusable
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.isPersianUi
 import app.novavpn.ui.theme.tr
@@ -71,8 +75,10 @@ fun ProfileEditorDialog(
     onDismiss: () -> Unit
 ) {
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
     val faUi = isPersianUi()
     val isNew = initial == null
+    val nameFocus = remember { FocusRequester() }
 
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var routeChain by remember { mutableStateOf(initial?.routeChain ?: RouteChain.SMART_AUTO) }
@@ -202,12 +208,13 @@ fun ProfileEditorDialog(
     GlassSheet(
         onDismissRequest = onDismiss,
         title = stringResource(if (isNew) R.string.profiles_new else R.string.profiles_edit),
-        icon = GlassIcons.Pencil
+        icon = GlassIcons.Pencil,
+        initialFocusRequester = nameFocus
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 520.dp)
+                .heightIn(max = if (isTv) 295.dp else 520.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -225,7 +232,14 @@ fun ProfileEditorDialog(
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         colors = novaOutlinedTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth().testTag("profile_name_input")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tvFocusVisual(
+                                shape = RoundedCornerShape(14.dp),
+                                scaleOnFocus = 1.01f,
+                                focusRequester = nameFocus
+                            )
+                            .testTag("profile_name_input")
                     )
 
                     Text(
@@ -256,7 +270,21 @@ fun ProfileEditorDialog(
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .then(
+                                if (isTv) {
+                                    Modifier.tvFocusable(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.02f) {
+                                        if (!isPresetAether) {
+                                            requiresCountry = !requiresCountry
+                                        }
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -274,9 +302,13 @@ fun ProfileEditorDialog(
                         }
                         GlassSwitch(
                             checked = !isPresetAether && requiresCountry,
-                            onCheckedChange = { checked ->
-                                if (!isPresetAether) {
-                                    requiresCountry = checked
+                            onCheckedChange = if (isTv) {
+                                null
+                            } else {
+                                { checked ->
+                                    if (!isPresetAether) {
+                                        requiresCountry = checked
+                                    }
                                 }
                             },
                             modifier = Modifier.testTag("profile_requires_country_switch")
@@ -358,7 +390,19 @@ fun ProfileEditorDialog(
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .then(
+                                if (isTv) {
+                                    Modifier.tvFocusable(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.02f) {
+                                        tlsFragment = !tlsFragment
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -376,7 +420,7 @@ fun ProfileEditorDialog(
                         }
                         GlassSwitch(
                             checked = tlsFragment,
-                            onCheckedChange = { tlsFragment = it },
+                            onCheckedChange = if (isTv) null else { { tlsFragment = it } },
                             modifier = Modifier.testTag("profile_tls_fragment_switch")
                         )
                     }
@@ -408,7 +452,7 @@ fun ProfileEditorDialog(
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         colors = novaOutlinedTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                     )
 
                     Text(
@@ -443,7 +487,7 @@ fun ProfileEditorDialog(
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
                             colors = novaOutlinedTextFieldColors(),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f).tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                         )
                         OutlinedTextField(
                             value = tcpBufText,
@@ -452,7 +496,7 @@ fun ProfileEditorDialog(
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
                             colors = novaOutlinedTextFieldColors(),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f).tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                         )
                     }
 
@@ -464,7 +508,7 @@ fun ProfileEditorDialog(
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
                             colors = novaOutlinedTextFieldColors(),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f).tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                         )
                         OutlinedTextField(
                             value = pingLimitText,
@@ -473,7 +517,7 @@ fun ProfileEditorDialog(
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
                             colors = novaOutlinedTextFieldColors(),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f).tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                         )
                     }
 
@@ -482,23 +526,61 @@ fun ProfileEditorDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .then(
+                                    if (isTv) {
+                                        Modifier.tvFocusable(RoundedCornerShape(12.dp), 1.04f) { ipv4 = !ipv4 }
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .padding(horizontal = 4.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text("IPv4", color = look.textPrimary)
-                            GlassSwitch(checked = ipv4, onCheckedChange = { ipv4 = it })
+                            GlassSwitch(checked = ipv4, onCheckedChange = if (isTv) null else { { ipv4 = it } })
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .then(
+                                    if (isTv) {
+                                        Modifier.tvFocusable(RoundedCornerShape(12.dp), 1.04f) { ipv6 = !ipv6 }
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .padding(horizontal = 4.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text("IPv6", color = look.textPrimary)
-                            GlassSwitch(checked = ipv6, onCheckedChange = { ipv6 = it })
+                            GlassSwitch(checked = ipv6, onCheckedChange = if (isTv) null else { { ipv6 = it } })
                         }
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .then(
+                                if (isTv) {
+                                    Modifier.tvFocusable(RoundedCornerShape(12.dp), 1.02f) {
+                                        torUseBridges = !torUseBridges
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(tr("Use Custom Tor Bridges", "استفاده از پل‌های Tor"), color = look.textPrimary)
-                        GlassSwitch(checked = torUseBridges, onCheckedChange = { torUseBridges = it })
+                        GlassSwitch(checked = torUseBridges, onCheckedChange = if (isTv) null else { { torUseBridges = it } })
                     }
 
                     AnimatedVisibility(visible = torUseBridges) {
@@ -510,7 +592,7 @@ fun ProfileEditorDialog(
                             maxLines = 4,
                             shape = RoundedCornerShape(14.dp),
                             colors = novaOutlinedTextFieldColors(),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                         )
                     }
                 }
@@ -536,7 +618,7 @@ fun ProfileEditorDialog(
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         colors = novaOutlinedTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                     )
                     OutlinedTextField(
                         value = dnsSecondary,
@@ -545,7 +627,7 @@ fun ProfileEditorDialog(
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         colors = novaOutlinedTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                     )
                     OutlinedTextField(
                         value = upstreamProxy,
@@ -554,7 +636,7 @@ fun ProfileEditorDialog(
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         colors = novaOutlinedTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                     )
                     OutlinedTextField(
                         value = extraArgs,
@@ -563,7 +645,7 @@ fun ProfileEditorDialog(
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         colors = novaOutlinedTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                     )
                 }
             }
@@ -583,7 +665,7 @@ fun ProfileEditorDialog(
                         maxLines = 4,
                         shape = RoundedCornerShape(14.dp),
                         colors = novaOutlinedTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                     )
                     OutlinedTextField(
                         value = blockRules,
@@ -593,7 +675,7 @@ fun ProfileEditorDialog(
                         maxLines = 4,
                         shape = RoundedCornerShape(14.dp),
                         colors = novaOutlinedTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().tvFocusVisual(RoundedCornerShape(14.dp), 1.01f)
                     )
                 }
             }
@@ -646,7 +728,7 @@ private fun GlassOptionPill(
                 color = if (selected) look.accent.copy(alpha = 0.65f) else look.separator,
                 shape = shape
             )
-            .clickable(onClick = onClick)
+            .tvFocusable(shape = shape, scaleOnFocus = 1.05f, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

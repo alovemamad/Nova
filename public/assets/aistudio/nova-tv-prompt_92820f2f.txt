@@ -1,0 +1,62 @@
+TASK: Add an Android TV version of Nova VPN and publish it in the same GitHub Release as the phone APKs.
+
+Do NOT touch: the Aether/Psiphon/Tor core logic, connection-speed logic (TunnelStartOrchestrator, AetherCommandBuilder, CoreProcessManager), geo rules, the existing signingConfigs block (keep it exactly as is), or any secret handling. Never write passwords/keystores into code or logs. Do not change versionCode/versionName logic (app/version.properties stays the single source for both builds). Do not break the phone build: the default build (no TV property) must behave exactly as today.
+
+------------------------------------------------------------
+PART 1 - How the TV build is selected (keep it simple, follow the existing `splitApks` pattern)
+------------------------------------------------------------
+- Add a Gradle property `tvBuild` (read like `splitApks`: providers.gradleProperty("tvBuild").orNull == "true").
+- Add `buildConfigField("boolean", "IS_TV", "true|false")`. Phone default = false.
+- Same applicationId and SAME signing as the phone build (so the certificate is identical). Do not add a product flavor if it complicates CI/test task names; a property + a manifest overlay (e.g. app/src/tv/AndroidManifest.xml added via sourceSets only when tvBuild=true) is preferred.
+- ABIs for TV: arm64-v8a, armeabi-v7a (and x86_64 for emulator/Android TV x86 boxes) + universal, same as phone.
+
+------------------------------------------------------------
+PART 2 - Manifest / TV requirements
+------------------------------------------------------------
+- Main activity: add `<category android:name="android.intent.category.LEANBACK_LAUNCHER"/>` (TV build only) and an `android:banner` (320x180 xdpi banner drawable, simple Nova logo on dark background; generate it as a vector/PNG drawable, no external assets).
+- `<uses-feature android:name="android.software.leanback" android:required="false"/>`, and `android.hardware.touchscreen`, `android.hardware.camera`, `android.hardware.camera.autofocus`, `android.hardware.sensor.*`, `android.hardware.telephony`, `android.hardware.wifi`, `android.hardware.bluetooth` all `required="false"` (TV boxes have none of these). Check the merged manifest of BOTH builds and make sure the phone build is not made worse.
+- Android TV has no notification shade UX and often no battery-optimization screen: every call to a system settings Intent (battery optimization, notification settings, app settings, install-unknown-apps) must be wrapped in try/catch + resolveActivity check and fall back to a short in-app message instead of crashing.
+- VpnService.prepare() consent dialog must work with a remote (the system dialog is focusable by D-pad; just make sure our launch path handles ActivityNotFound and result codes).
+- Disable on TV (guard with BuildConfig.IS_TV or `PackageManager.FEATURE_LEANBACK`): home-screen widget, Quick Settings tile, GlassTilt/sensor effects, haptics. BootReceiver auto-start may stay (useful on TV) but must not crash if a setting is missing.
+- Keep the screen on while the app is in the foreground on TV (FLAG_KEEP_SCREEN_ON on the activity) so the TV does not sleep during use.
+
+------------------------------------------------------------
+PART 3 - D-pad / remote UI (this is the big part)
+------------------------------------------------------------
+Nova is a touch-first Compose UI (Glass theme: GlassKit, GlassTabBar, GlassBackdrop). On TV:
+1. Every interactive element must be focusable and show a clear focus state (bright glass outline/scale 1.05 + brighter tint). Implement ONE reusable modifier, e.g. `Modifier.tvFocusable(onClick)`, in the glass package and apply it to: Connect button, profile cards, switches/toggles, text-field rows, dropdowns, dialog buttons, tab items, list rows in Settings/Stats/Profiles.
+2. Bottom tab bar: on TV, show it as a plain focusable row (or a left/top navigation rail). NO drag gesture on TV: LEFT/RIGHT moves focus between tabs, OK/ENTER selects. Tab tags `tab_*` must stay unchanged.
+3. Default focus: on first composition of each screen request focus on the main action (Home -> Connect button). Use FocusRequester + `focusProperties`/`focusGroup` so that DOWN/UP/LEFT/RIGHT navigation is predictable and never gets trapped. Dialogs (ProfileEditorDialog, GeoResourcesDialog, update dialog) must take focus when opened and return it when closed; BACK must close them.
+4. Lists must scroll to keep the focused item visible (bring-into-view) - LazyColumn with focus should auto-scroll.
+5. Text input: on TV, text fields open the system IME with the remote. Also provide alternatives to typing a profile: "Import from clipboard" (if available), "Import from URL/subscription link", and "Import from file". QR scanning by camera is not available on TV - hide the camera/QR-scan button on TV. Nova currently only decodes QR from an image (zxing core), so make sure nothing on TV launches a camera intent. Keep "show my profile as QR" (so a phone can scan it) if it exists.
+6. Layout: TV is landscape 1080p/720p at 10-foot distance. Use larger text (min body ~16sp, titles 24sp+), 48dp safe-area padding (overscan), and a max content width (~960dp) centered, so phone layouts do not look stretched. The existing phone layout must remain unchanged when IS_TV is false.
+7. Performance: remove or reduce heavy blur/lens effects on TV (many TV SoCs are weak). When IS_TV, use the "reduceTransparency"/plain glass path of GlassTheme by default (solid translucent panels, no real-time blur) and keep the wallpaper gradient.
+8. Orientation: lock TV build to landscape.
+
+------------------------------------------------------------
+PART 4 - Release & CI (.github/workflows/android-ci.yml)
+------------------------------------------------------------
+Currently the workflow builds split phone APKs named `NovaVPN-${TAG}-{arm64-v8a|armeabi-v7a|x86_64|universal}.apk` + SHA256SUMS.txt and uploads them with `gh release create/upload`.
+- Add a TV build step in the same release job (or a job that the release job needs): run the same assemble command with `-PsplitApks=true -PtvBuild=true`, with the SAME injected signing as the phone build (reuse the existing secrets/steps; do not print or echo secrets).
+- Name TV assets EXACTLY: `NovaVPN-TV-${TAG}-{arm64-v8a|armeabi-v7a|x86_64|universal}.apk`. The phone assets keep their current names.
+- Both builds must write to separate output directories so one does not overwrite the other (clean between builds or use different build dirs).
+- Include TV APKs in SHA256SUMS.txt (one file with all assets) and upload them to the SAME release (`gh release upload --clobber`). Release notes: add a short line "Android TV: download NovaVPN-TV-...-arm64-v8a.apk (most TV boxes) or -armeabi-v7a.apk (older boxes)".
+- AI Studio cannot publish a release by itself: the release is created by the workflow when I push a tag / run workflow_dispatch exactly as it works today. Do not try to call the GitHub API from the app code. Just make the workflow produce both sets of assets.
+
+------------------------------------------------------------
+PART 5 - In-app updater must not mix phone and TV APKs (IMPORTANT)
+------------------------------------------------------------
+File: app/src/main/java/app/novavpn/core/net/GitHubUpdater.kt (`selectBestApkAsset`). It chooses by ABI alias and falls back to "universal" or an APK without an ABI tag. With TV assets in the same release, a phone could download `NovaVPN-TV-...-universal.apk` (or the reverse).
+- Phone build (IS_TV=false): ignore every asset whose name contains `-TV-` (case-insensitive).
+- TV build (IS_TV=true): consider ONLY assets whose name contains `-TV-`; same ABI selection logic inside that set.
+- Make the function pure/testable by passing `isTv` as a parameter (default BuildConfig.IS_TV).
+- Extend app/src/test/java/app/novavpn/core/net/GitHubUpdaterTest.kt: a release containing both phone and TV assets -> phone picks only phone asset for arm64-v8a, armeabi-v7a, x86_64 and universal fallback; TV picks only the TV one; a release with NO TV assets -> TV returns null (no update, no crash); SHA256SUMS.txt is never chosen.
+- On TV, the update flow's "install" step uses the same installer path; guard the unknown-sources settings intent with try/catch as described above and show a message with the release page URL if it cannot be opened.
+
+------------------------------------------------------------
+PART 6 - Tests & final checks
+------------------------------------------------------------
+- Run: ./gradlew testDebugUnitTest and assembleDebug for the phone build, and again with `-PtvBuild=true`. Both must pass.
+- Verify the merged manifest of the TV build contains LEANBACK_LAUNCHER, banner, and all uses-feature required=false; verify the phone merged manifest has no LEANBACK_LAUNCHER.
+- Verify names of produced files match the patterns above (list them in the final answer).
+- Final answer: list changed files, anything you could NOT test (e.g. real TV hardware / D-pad behavior), and how to test on the Android TV emulator (AVD "Television (1080p)") or a real box with `adb install`.

@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
 import app.novavpn.ServiceLocator
+import app.novavpn.core.DevicePlatform
 import app.novavpn.domain.model.VpnState
 import com.example.MainActivity
 import com.example.R
@@ -14,6 +15,7 @@ import com.example.R
 class NovaVpnWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        if (DevicePlatform.isTv(context)) return
         ServiceLocator.init(context.applicationContext)
         val status = ServiceLocator.vpnController.status.value
 

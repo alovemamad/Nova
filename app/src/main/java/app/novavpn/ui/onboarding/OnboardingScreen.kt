@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +44,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +57,8 @@ import app.novavpn.ui.glass.GlassDivider
 import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.LocalIsTv
+import app.novavpn.ui.glass.tvFocusVisual
 import com.example.R
 
 @Composable
@@ -61,12 +66,22 @@ fun OnboardingScreen(
     prepareVpnIntent: () -> android.content.Intent?,
     onOpenBatterySettings: () -> Unit,
     onOpenVpnSettings: () -> Unit,
+    onPostMessage: (String) -> Unit = {},
     onFinish: () -> Unit
 ) {
+    val context = LocalContext.current
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val continueFocus = remember { FocusRequester() }
     var page by remember { mutableIntStateOf(0) }
     var vpnGranted by remember { mutableStateOf(prepareVpnIntent() == null) }
     var notifGranted by remember { mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) }
+
+    LaunchedEffect(isTv) {
+        if (isTv) {
+            runCatching { continueFocus.requestFocus() }
+        }
+    }
 
     val vpnLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -83,14 +98,13 @@ fun OnboardingScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(20.dp),
+            .then(if (isTv) Modifier else Modifier.statusBarsPadding().navigationBarsPadding())
+            .padding(if (isTv) 48.dp else 20.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
             modifier = Modifier
-                .widthIn(max = 520.dp)
+                .widthIn(max = if (isTv) 760.dp else 520.dp)
                 .fillMaxSize(),
             verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.CenterHorizontally
@@ -99,7 +113,12 @@ fun OnboardingScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
             ) {
-                TextButton(onClick = onFinish, modifier = Modifier.testTag("onboarding_skip")) {
+                TextButton(
+                    onClick = onFinish,
+                    modifier = Modifier
+                        .tvFocusVisual(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.05f)
+                        .testTag("onboarding_skip")
+                ) {
                     Text(stringResource(R.string.onb_skip), color = look.textSecondary)
                 }
             }
@@ -189,7 +208,14 @@ fun OnboardingScreen(
                                     subtitle = stringResource(if (vpnGranted) R.string.onb_vpn_granted else R.string.onb_vpn_required),
                                     icon = GlassIcons.Lock,
                                     onClick = {
-                                        prepareVpnIntent()?.let { vpnLauncher.launch(it) }
+                                        val intent = prepareVpnIntent()
+                                        if (intent != null) {
+                                            runCatching { vpnLauncher.launch(intent) }.onFailure {
+                                                onPostMessage(context.getString(R.string.msg_vpn_consent_unavailable))
+                                            }
+                                        } else {
+                                            vpnGranted = true
+                                        }
                                     }
                                 ) {
                                     if (vpnGranted) {
@@ -204,7 +230,13 @@ fun OnboardingScreen(
                                         title = stringResource(R.string.onb_notif_perm),
                                         subtitle = stringResource(if (notifGranted) R.string.onb_notif_allowed else R.string.onb_notif_desc),
                                         icon = GlassIcons.Bell,
-                                        onClick = { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                                        onClick = {
+                                            runCatching {
+                                                notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                            }.onFailure {
+                                                onPostMessage(context.getString(R.string.msg_no_app_available))
+                                            }
+                                        }
                                     ) {
                                         if (notifGranted) {
                                             Icon(GlassIcons.CheckCircle, contentDescription = null, tint = look.success)
@@ -269,6 +301,7 @@ fun OnboardingScreen(
                     GlassCapsuleButton(
                         text = stringResource(if (page < 2) R.string.onb_continue else R.string.onb_finish),
                         prominent = true,
+                        focusRequester = continueFocus,
                         onClick = {
                             if (page < 2) page++ else onFinish()
                         },

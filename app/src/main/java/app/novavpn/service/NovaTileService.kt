@@ -6,6 +6,7 @@ import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import app.novavpn.ServiceLocator
+import app.novavpn.core.DevicePlatform
 import app.novavpn.domain.model.VpnState
 import com.example.MainActivity
 import com.example.R
@@ -14,12 +15,14 @@ class NovaTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
+        if (DevicePlatform.isTv(this)) return
         ServiceLocator.init(applicationContext)
         refreshTile()
     }
 
     override fun onClick() {
         super.onClick()
+        if (DevicePlatform.isTv(this)) return
         ServiceLocator.init(applicationContext)
         val controller = ServiceLocator.vpnController
         val status = controller.status.value

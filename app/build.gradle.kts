@@ -29,6 +29,7 @@ plugins {
 }
 
 val splitApks = providers.gradleProperty("splitApks").orNull == "true"
+val tvBuild = providers.gradleProperty("tvBuild").orNull == "true"
 
 android {
   namespace = "com.example"
@@ -42,6 +43,7 @@ android {
     versionName = appVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    buildConfigField("boolean", "IS_TV", tvBuild.toString())
 
     if (!splitApks) {
       ndk {
@@ -117,6 +119,15 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
+  }
+
+  if (tvBuild) {
+    listOf("debug", "release").forEach { bt ->
+      sourceSets.getByName(bt).apply {
+        manifest.srcFile("src/tv/AndroidManifest.xml")
+        res.srcDir("src/tv/res")
+      }
+    }
   }
 }
 

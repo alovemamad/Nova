@@ -1,5 +1,6 @@
 package app.novavpn.ui.glass
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
@@ -18,6 +19,7 @@ import androidx.compose.foundation.IndicationNodeFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -57,6 +59,7 @@ import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -84,6 +88,7 @@ import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -102,6 +107,7 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.shadow.Shadow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -417,16 +423,21 @@ fun GlassRow(
     iconTint: Color? = null,
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
     trailing: (@Composable () -> Unit)? = null
 ) {
     val look = LocalGlassLook.current
     val source = remember { MutableInteractionSource() }
     val pressIndication = glassRowIndication()
+    val rowShape = RoundedCornerShape(14.dp)
     val clickableMod = if (onClick != null) {
-        modifier.clickable(
+        modifier.tvFocusable(
+            shape = rowShape,
+            scaleOnFocus = 1.02f,
             interactionSource = source,
             indication = pressIndication,
             role = Role.Button,
+            focusRequester = focusRequester,
             onClick = onClick
         )
     } else {
@@ -537,10 +548,18 @@ fun GlassSwitch(
     )
 
     val capsule = CircleShape
+    val isTv = LocalIsTv.current
     Box(
         modifier = modifier
             .size(width = 58.dp, height = 28.dp)
             .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .then(
+                if (isTv && onCheckedChange != null) {
+                    Modifier.tvFocusVisual(shape = capsule, scaleOnFocus = 1.08f)
+                } else {
+                    Modifier
+                }
+            )
             .clip(capsule)
             .background(track)
             .border(0.6.dp, if (checked) look.accent else look.separator, capsule)
@@ -584,6 +603,7 @@ fun GlassSwitchRow(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isTv = LocalIsTv.current
     val haptic = LocalHapticFeedback.current
     val source = remember { MutableInteractionSource() }
     GlassRow(
@@ -598,9 +618,13 @@ fun GlassSwitchRow(
     ) {
         GlassSwitch(
             checked = checked,
-            onCheckedChange = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onCheckedChange(it)
+            onCheckedChange = if (isTv) {
+                null
+            } else {
+                {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onCheckedChange(it)
+                }
             },
             interactionSource = source
         )
@@ -612,9 +636,11 @@ fun <T> GlassSegmented(
     options: List<Pair<T, String>>,
     selected: T,
     onSelect: (T) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    firstOptionFocusRequester: FocusRequester? = null
 ) {
     if (options.isEmpty()) return
+    val isTv = LocalIsTv.current
     val look = LocalGlassLook.current
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
@@ -626,7 +652,7 @@ fun <T> GlassSegmented(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(if (isTv) 50.dp else 44.dp)
             .clip(capsule)
             .background(look.fill2)
             .border(0.8.dp, look.separator, capsule)
@@ -670,14 +696,20 @@ fun <T> GlassSegmented(
         Row(
             modifier = Modifier
                 .fillMaxSize()
+                .then(if (isTv) Modifier.focusGroup() else Modifier)
                 .selectableGroup()
         ) {
-            options.forEach { (value, label) ->
+            options.forEachIndexed { index, (value, label) ->
                 val isSelected = value == selected
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
+                        .tvFocusVisual(
+                            shape = thumbShape,
+                            scaleOnFocus = 1.04f,
+                            focusRequester = if (index == 0) firstOptionFocusRequester else null
+                        )
                         .clip(thumbShape)
                         .selectable(
                             selected = isSelected,
@@ -717,7 +749,8 @@ fun GlassCircleButton(
     modifier: Modifier = Modifier,
     size: Dp = 48.dp,
     tint: Color? = null,
-    backdrop: GlassBackdrop? = null
+    backdrop: GlassBackdrop? = null,
+    focusRequester: FocusRequester? = null
 ) {
     val look = LocalGlassLook.current
     val source = remember { MutableInteractionSource() }
@@ -727,10 +760,13 @@ fun GlassCircleButton(
             .glassPress(source, scale = 0.92f)
             .size(size)
             .liquidGlass(shape = CircleShape, elevated = true, backdrop = backdrop)
-            .clickable(
+            .tvFocusable(
+                shape = CircleShape,
+                scaleOnFocus = 1.08f,
                 interactionSource = source,
                 indication = ripple(bounded = true, color = look.accent),
                 role = Role.Button,
+                focusRequester = focusRequester,
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onClick()
@@ -756,7 +792,8 @@ fun GlassCapsuleButton(
     prominent: Boolean = false,
     enabled: Boolean = true,
     tint: Color? = null,
-    backdrop: GlassBackdrop? = null
+    backdrop: GlassBackdrop? = null,
+    focusRequester: FocusRequester? = null
 ) {
     val look = LocalGlassLook.current
     val source = remember { MutableInteractionSource() }
@@ -770,11 +807,14 @@ fun GlassCapsuleButton(
             .glassPress(source, scale = 0.96f)
             .defaultMinSize(minHeight = 48.dp)
             .liquidGlass(shape = capsule, elevated = prominent, tintOverride = bgOverride, backdrop = backdrop)
-            .clickable(
-                interactionSource = source,
-                indication = ripple(bounded = true, color = accent),
+            .tvFocusable(
+                shape = capsule,
+                scaleOnFocus = 1.05f,
                 enabled = enabled,
                 role = Role.Button,
+                interactionSource = source,
+                indication = ripple(bounded = true, color = accent),
+                focusRequester = focusRequester,
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onClick()
@@ -836,17 +876,47 @@ fun GlassModalDialog(
     title: String,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    initialFocusRequester: FocusRequester? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val hostView = LocalView.current
+    val parentLastFocus = LocalLastTvFocusRequester.current
+    val returnTarget = remember(isTv) { if (isTv) parentLastFocus?.value else null }
+    val closeRequester = remember { FocusRequester() }
+    val dialogFocusState = remember { mutableStateOf<FocusRequester?>(null) }
+
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            if (isTv) {
+                hostView.post { runCatching { returnTarget?.requestFocus() } }
+            }
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismissRequest,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = true)
     ) {
-        CompositionLocalProvider(LocalGlassChrome provides null) {
+        BackHandler(onBack = onDismissRequest)
+        if (isTv && visible) {
+            LaunchedEffect(visible, initialFocusRequester) {
+                delay(60)
+                val focusedPrimary = initialFocusRequester != null &&
+                    runCatching { initialFocusRequester.requestFocus() }.isSuccess
+                if (!focusedPrimary) {
+                    runCatching { closeRequester.requestFocus() }
+                }
+            }
+        }
+        CompositionLocalProvider(
+            LocalGlassChrome provides null,
+            LocalLastTvFocusRequester provides dialogFocusState
+        ) {
             AnimatedVisibility(
                 visible = visible,
                 enter = fadeIn(tween(200)) + scaleIn(
@@ -861,9 +931,11 @@ fun GlassModalDialog(
                     tintOverride = look.sheet,
                     backdrop = null,
                     modifier = modifier
-                        .padding(horizontal = 20.dp, vertical = 24.dp)
-                        .widthIn(max = 520.dp)
+                        .padding(horizontal = if (isTv) 32.dp else 20.dp, vertical = 24.dp)
+                        .widthIn(max = if (isTv) 680.dp else 520.dp)
+                        .then(if (isTv) Modifier.heightIn(max = 480.dp) else Modifier)
                         .fillMaxWidth()
+                        .then(if (isTv) Modifier.focusGroup() else Modifier)
                 ) {
                     Column(
                         modifier = Modifier
@@ -909,7 +981,8 @@ fun GlassModalDialog(
                                 icon = GlassIcons.Close,
                                 contentDescription = stringResource(R.string.common_close),
                                 onClick = onDismissRequest,
-                                size = 40.dp
+                                size = 40.dp,
+                                focusRequester = closeRequester
                             )
                         }
                         Spacer(modifier = Modifier.height(14.dp))
@@ -927,27 +1000,67 @@ fun GlassSheet(
     title: String,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    initialFocusRequester: FocusRequester? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val hostView = LocalView.current
+    val parentLastFocus = LocalLastTvFocusRequester.current
+    val returnTarget = remember(isTv) { if (isTv) parentLastFocus?.value else null }
+    val closeRequester = remember { FocusRequester() }
+    val dialogFocusState = remember { mutableStateOf<FocusRequester?>(null) }
+
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            if (isTv) {
+                hostView.post { runCatching { returnTarget?.requestFocus() } }
+            }
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismissRequest,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = isTv,
+            dismissOnBackPress = true
+        )
     ) {
-        CompositionLocalProvider(LocalGlassChrome provides null) {
+        BackHandler(onBack = onDismissRequest)
+        if (isTv && visible) {
+            LaunchedEffect(visible, initialFocusRequester) {
+                delay(60)
+                val focusedPrimary = initialFocusRequester != null &&
+                    runCatching { initialFocusRequester.requestFocus() }.isSuccess
+                if (!focusedPrimary) {
+                    runCatching { closeRequester.requestFocus() }
+                }
+            }
+        }
+        CompositionLocalProvider(
+            LocalGlassChrome provides null,
+            LocalLastTvFocusRequester provides dialogFocusState
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(look.dim)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onDismissRequest
+                    .then(
+                        if (!isTv) {
+                            Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onDismissRequest
+                            )
+                        } else {
+                            Modifier
+                        }
                     ),
-                contentAlignment = Alignment.BottomCenter
+                contentAlignment = if (isTv) Alignment.Center else Alignment.BottomCenter
             ) {
                 AnimatedVisibility(
                     visible = visible,
@@ -957,30 +1070,44 @@ fun GlassSheet(
                     ) + fadeIn(tween(180)),
                     exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(tween(140))
                 ) {
-                    val sheetShape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
+                    val sheetShape = if (isTv) {
+                        RoundedCornerShape(28.dp)
+                    } else {
+                        RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
+                    }
                     Box(
                         modifier = modifier
-                            .widthIn(max = 600.dp)
+                            .then(if (isTv) Modifier.padding(horizontal = 32.dp, vertical = 20.dp) else Modifier)
+                            .widthIn(max = if (isTv) 720.dp else 600.dp)
                             .fillMaxWidth()
-                            .heightIn(max = 680.dp)
+                            .heightIn(max = if (isTv) 470.dp else 680.dp)
                             .liquidGlass(shape = sheetShape, elevated = true, tintOverride = look.sheet, backdrop = null)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = {}
+                            .then(if (isTv) Modifier.focusGroup() else Modifier)
+                            .then(
+                                if (!isTv) {
+                                    Modifier.clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = {}
+                                    )
+                                } else {
+                                    Modifier
+                                }
                             )
-                            .navigationBarsPadding()
-                            .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 20.dp)
+                            .then(if (!isTv) Modifier.navigationBarsPadding() else Modifier)
+                            .padding(start = 20.dp, end = 20.dp, top = if (isTv) 18.dp else 10.dp, bottom = 20.dp)
                     ) {
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.CenterHorizontally)
-                                    .size(width = 40.dp, height = 4.dp)
-                                    .clip(CircleShape)
-                                    .background(look.textMuted.copy(alpha = 0.55f))
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
+                            if (!isTv) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.CenterHorizontally)
+                                        .size(width = 40.dp, height = 4.dp)
+                                        .clip(CircleShape)
+                                        .background(look.textMuted.copy(alpha = 0.55f))
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1020,7 +1147,8 @@ fun GlassSheet(
                                     icon = GlassIcons.Close,
                                     contentDescription = stringResource(R.string.common_close),
                                     onClick = onDismissRequest,
-                                    size = 40.dp
+                                    size = 40.dp,
+                                    focusRequester = closeRequester
                                 )
                             }
                             Spacer(modifier = Modifier.height(12.dp))

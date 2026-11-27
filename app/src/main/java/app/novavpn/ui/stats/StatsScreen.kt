@@ -51,15 +51,21 @@ import app.novavpn.ui.glass.GlassDivider
 import app.novavpn.ui.glass.GlassIcons
 import app.novavpn.ui.glass.GlassRow
 import app.novavpn.ui.glass.GlassSegmented
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
 import app.novavpn.ui.glass.LocalGlassChrome
 import app.novavpn.ui.glass.LocalGlassLook
+import app.novavpn.ui.glass.LocalIsTv
 import app.novavpn.ui.glass.ReportScrollShrink
+import app.novavpn.ui.glass.tvReadOnlyFocusable
 import app.novavpn.ui.theme.JetBrainsMonoFamily
 import app.novavpn.ui.theme.countryCodeToFlag
 import app.novavpn.ui.theme.fmtDigits
 import app.novavpn.ui.theme.formatBytes
 import app.novavpn.ui.theme.formatDurationHms
 import com.example.R
+import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -78,20 +84,37 @@ fun StatsScreen(
     onTabBarShrinkChanged: (Boolean) -> Unit = {}
 ) {
     val look = LocalGlassLook.current
+    val isTv = LocalIsTv.current
+    val contentMaxWidth = if (isTv) 960.dp else 600.dp
+    val subTabFocus = remember { FocusRequester() }
+    LaunchedEffect(isTv) {
+        if (isTv) {
+            delay(60)
+            runCatching { subTabFocus.requestFocus() }
+        }
+    }
+
     var subTab by remember { mutableStateOf(StatsSubTab.USAGE) }
     var period by remember { mutableStateOf(UsagePeriod.WEEKLY) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
-            .padding(horizontal = 16.dp),
+            .then(
+                if (isTv) {
+                    Modifier.padding(start = 24.dp, end = 48.dp, top = 36.dp)
+                } else {
+                    Modifier
+                        .statusBarsPadding()
+                        .padding(horizontal = 16.dp)
+                }
+            ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(12.dp))
+        if (!isTv) Spacer(modifier = Modifier.height(12.dp))
         Row(
             modifier = Modifier
-                .widthIn(max = 600.dp)
+                .widthIn(max = contentMaxWidth)
                 .fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -121,8 +144,9 @@ fun StatsScreen(
             ),
             selected = subTab,
             onSelect = { subTab = it },
+            firstOptionFocusRequester = subTabFocus,
             modifier = Modifier
-                .widthIn(max = 600.dp)
+                .widthIn(max = contentMaxWidth)
                 .testTag("stats_subtab_selector")
         )
         Spacer(modifier = Modifier.height(12.dp))
@@ -138,13 +162,13 @@ fun StatsScreen(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 112.dp),
+                contentPadding = PaddingValues(bottom = if (isTv) 48.dp else 112.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (activeTab == StatsSubTab.USAGE) {
                     item {
-                        GlassCard(modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth()) {
+                        GlassCard(modifier = Modifier.widthIn(max = contentMaxWidth).fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 GlassSegmented(
                                     options = listOf(
@@ -195,13 +219,13 @@ fun StatsScreen(
                             text = stringResource(R.string.stats_recent_sessions),
                             style = MaterialTheme.typography.titleMedium,
                             color = look.textPrimary,
-                            modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth().padding(top = 4.dp)
+                            modifier = Modifier.widthIn(max = contentMaxWidth).fillMaxWidth().padding(top = 4.dp)
                         )
                     }
 
                     if (sessions.isEmpty()) {
                         item {
-                            GlassCard(modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth()) {
+                            GlassCard(modifier = Modifier.widthIn(max = contentMaxWidth).fillMaxWidth()) {
                                 GlassRow(
                                     title = stringResource(R.string.stats_no_sessions),
                                     subtitle = stringResource(R.string.stats_no_sessions_sub),
@@ -216,7 +240,12 @@ fun StatsScreen(
                                     .withZone(ZoneId.systemDefault())
                                     .format(Instant.ofEpochMilli(session.startedAtMs))
                             }
-                            GlassCard(modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth()) {
+                            GlassCard(
+                                modifier = Modifier
+                                    .widthIn(max = contentMaxWidth)
+                                    .fillMaxWidth()
+                                    .tvReadOnlyFocusable(RoundedCornerShape(26.dp))
+                            ) {
                                 GlassRow(
                                     title = "${countryCodeToFlag(session.exitCountryCode)} ${session.profileName}",
                                     subtitle = fmtDigits("$timeStr · ${formatDurationHms(session.durationSec)} · ↓ ${formatBytes(session.downloadBytes)} / ↑ ${formatBytes(session.uploadBytes)}"),
@@ -229,7 +258,7 @@ fun StatsScreen(
                     }
                 } else {
                     item {
-                        GlassCard(modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth()) {
+                        GlassCard(modifier = Modifier.widthIn(max = contentMaxWidth).fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -291,7 +320,10 @@ fun StatsScreen(
                                     val timeoutStr = stringResource(R.string.stats_timeout)
                                     diagnosticReport.latencies.forEach { ep ->
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .tvReadOnlyFocusable(RoundedCornerShape(10.dp))
+                                                .padding(horizontal = 4.dp, vertical = 2.dp),
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Text("${ep.label} (${ep.host})", style = MaterialTheme.typography.bodyMedium, color = look.textPrimary)

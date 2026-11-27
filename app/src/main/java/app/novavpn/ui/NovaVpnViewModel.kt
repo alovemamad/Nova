@@ -13,12 +13,17 @@ import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.novavpn.ServiceLocator
+import app.novavpn.core.DevicePlatform
 import app.novavpn.core.net.GitHubUpdater
 import app.novavpn.core.net.LanShareHelper
+import app.novavpn.core.net.SharedHttpClient
 import app.novavpn.data.log.LogRepository
 import app.novavpn.data.store.GeoResourceRepository
 import app.novavpn.data.store.ProfileShareCodec
 import app.novavpn.data.store.SettingsMigrator
+import com.example.R
+import okhttp3.Request
+import java.io.ByteArrayOutputStream
 import app.novavpn.domain.model.AetherProtocol
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.DataUsageDay
@@ -297,13 +302,83 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
 
     fun importProfileFromText(raw: String) {
         viewModelScope.launch {
-            val res = ProfileShareCodec.decodeFromText(raw)
-            res.onSuccess { prof ->
-                settingsRepo.saveProfile(prof, setActive = true)
-                _uiMessage.value = "Imported profile: ${prof.name}"
-            }.onFailure { err ->
-                _uiMessage.value = err.message ?: "Could not parse profile"
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) {
+                _uiMessage.value = "Could not parse profile"
+                return@launch
             }
+            val payloadResult = if (
+                trimmed.startsWith("https://", ignoreCase = true) ||
+                trimmed.startsWith("http://", ignoreCase = true)
+            ) {
+                fetchRemoteProfileText(trimmed)
+            } else {
+                Result.success(trimmed)
+            }
+            payloadResult.onSuccess { textPayload ->
+                decodeAndSaveImportedProfile(textPayload)
+            }.onFailure { err ->
+                _uiMessage.value = err.message ?: "Failed to fetch profile URL"
+            }
+        }
+    }
+
+    fun importProfileFromUri(uri: Uri) {
+        viewModelScope.launch {
+            val readResult = withContext(Dispatchers.IO) {
+                runCatching {
+                    val maxBytes = 512 * 1024
+                    appCtx.contentResolver.openInputStream(uri)?.use { stream ->
+                        val out = ByteArrayOutputStream()
+                        val buf = ByteArray(8192)
+                        var total = 0
+                        while (true) {
+                            val read = stream.read(buf)
+                            if (read <= 0) break
+                            total += read
+                            if (total > maxBytes) error("Selected file is too large (max 512 KB)")
+                            out.write(buf, 0, read)
+                        }
+                        out.toByteArray().toString(Charsets.UTF_8)
+                    } ?: error("Cannot open selected file")
+                }
+            }
+            readResult.onSuccess { fileContent ->
+                decodeAndSaveImportedProfile(fileContent)
+            }.onFailure { err ->
+                _uiMessage.value = err.message ?: "Could not read profile file"
+            }
+        }
+    }
+
+    private suspend fun fetchRemoteProfileText(url: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val client = SharedHttpClient.forTimeout(connectMs = 10_000L, readMs = 15_000L)
+            val req = Request.Builder().url(url).get().build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                val body = resp.body ?: error("Empty response body")
+                val maxBytes = 512 * 1024L
+                val source = body.source()
+                if (source.request(maxBytes + 1)) error("Profile response exceeds 512 KB")
+                source.readString(Charsets.UTF_8)
+            }
+        }
+    }
+
+    private suspend fun decodeAndSaveImportedProfile(rawPayload: String) {
+        val trimmed = rawPayload.trim()
+        val candidate = trimmed
+            .lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("novavpn://", ignoreCase = true) || it.startsWith("{") }
+            ?: trimmed
+        val res = ProfileShareCodec.decodeFromText(candidate)
+        res.onSuccess { prof ->
+            settingsRepo.saveProfile(prof, setActive = true)
+            _uiMessage.value = "Imported profile: ${prof.name}"
+        }.onFailure { err ->
+            _uiMessage.value = err.message ?: "Could not parse profile"
         }
     }
 
@@ -608,11 +683,14 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
                     val launched = runCatching {
                         GitHubUpdater.launchInstallOrRequestPermission(appCtx, file)
                     }.getOrElse { err ->
+                        val releaseLink = current.releaseUrl ?: GitHubUpdater.REPO_HTML_URL
+                        val msg = "${err.message ?: "Failed to launch installer"} · $releaseLink"
                         _updateInfo.value = _updateInfo.value.copy(
                             downloading = false,
                             downloadedApkPath = file.absolutePath,
-                            downloadError = err.message ?: "Failed to launch installer"
+                            downloadError = msg
                         )
+                        _uiMessage.value = msg
                         return@launch
                     }
                     _updateInfo.value = _updateInfo.value.copy(
@@ -635,7 +713,8 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun retryInstallDownloadedApk() {
-        val path = _updateInfo.value.downloadedApkPath ?: return
+        val current = _updateInfo.value
+        val path = current.downloadedApkPath ?: return
         val file = File(path)
         if (!file.exists()) {
             _updateInfo.value = _updateInfo.value.copy(downloadedApkPath = null)
@@ -644,7 +723,10 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
         val launched = runCatching {
             GitHubUpdater.launchInstallOrRequestPermission(appCtx, file)
         }.getOrElse { err ->
-            _updateInfo.value = _updateInfo.value.copy(downloadError = err.message)
+            val releaseLink = current.releaseUrl ?: GitHubUpdater.REPO_HTML_URL
+            val msg = "${err.message ?: "Failed to launch installer"} · $releaseLink"
+            _updateInfo.value = _updateInfo.value.copy(downloadError = msg)
+            _uiMessage.value = msg
             return
         }
         _updateInfo.value = _updateInfo.value.copy(needsInstallPermission = !launched)
@@ -662,12 +744,18 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun prepareVpnIntent(): Intent? {
-        return if (settings.value.vpnMode == VpnMode.VPN) VpnService.prepare(appCtx) else null
+        return if (settings.value.vpnMode == VpnMode.VPN) {
+            runCatching { VpnService.prepare(appCtx) }.getOrNull()
+        } else {
+            null
+        }
     }
 
     fun openVpnSystemSettings() {
-        val intent = Intent(Settings.ACTION_VPN_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { appCtx.startActivity(intent) }
+        val launched = DevicePlatform.safeStartActivity(appCtx, Intent(Settings.ACTION_VPN_SETTINGS))
+        if (!launched) {
+            _uiMessage.value = appCtx.getString(R.string.msg_system_settings_unavailable)
+        }
     }
 
     fun openBatteryOptimizationSettings() {
@@ -677,9 +765,8 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
             Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
         )
         for (candidate in candidates) {
-            candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            val launched = runCatching { appCtx.startActivity(candidate) }.isSuccess
-            if (launched) return
+            if (DevicePlatform.safeStartActivity(appCtx, candidate)) return
         }
+        _uiMessage.value = appCtx.getString(R.string.msg_battery_settings_unavailable)
     }
 }

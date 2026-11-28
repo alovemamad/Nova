@@ -52,6 +52,8 @@ class MainActivity : ComponentActivity() {
         if (DevicePlatform.isTv(this)) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
         enableEdgeToEdge()
 

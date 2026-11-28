@@ -323,4 +323,14 @@
     <string name="profiles_clipboard_empty">کلیپ‌بورد خالی است</string>
     <string name="ctrl_press_to_toggle">برای اتصال دکمه تایید را بزنید</string>
     <string name="ctrl_press_to_disconnect">متصل · برای قطع دکمه تایید را بزنید</string>
+
+    <!-- TUN Engine & Geo Diagnostics -->
+    <string name="tun_engine_auto">خودکار</string>
+    <string name="settings_tun_singbox_unavailable">هسته sing-box در این نسخه قرار داده نشده است</string>
+    <string name="settings_tun_unavailable_badge">موجود نیست</string>
+    <string name="stats_tun_engine">موتور TUN فعال</string>
+    <string name="geo_available_tags">دسته‌های موجود در فایل‌های واردشده: %1$s</string>
+    <string name="geo_iran_suggest_title">قوانین پیشنهادی برای iran.dat</string>
+    <string name="geo_iran_suggest_body">دسته‌های iran.dat (ads، other، ir) شناسایی شد. از geosite:ads برای مسدودسازی تبلیغات و geosite:other + geosite:ir برای اتصال مستقیم سایت‌های ایرانی استفاده شود؟</string>
+    <string name="geo_iran_suggest_apply">اعمال قوانین iran.dat</string>
 </resources>

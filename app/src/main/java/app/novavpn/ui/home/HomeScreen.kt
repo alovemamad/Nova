@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.novavpn.core.net.LanShareHelper
+import app.novavpn.core.tun.displayLabel
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.DropReason
 import app.novavpn.domain.model.PsiphonRegionInfo
@@ -684,7 +685,7 @@ fun HomeScreen(
                                             color = look.pingColor(status.pingMs)
                                         )
                                         Text(
-                                            text = status.activeTunEngine.name.replace("_", " "),
+                                            text = status.activeTunEngine.displayLabel(),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = look.textMuted,
                                             maxLines = 1,

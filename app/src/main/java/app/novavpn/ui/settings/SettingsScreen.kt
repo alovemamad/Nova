@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
@@ -55,6 +56,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.novavpn.core.DevicePlatform
 import app.novavpn.core.net.GitHubUpdater
+import app.novavpn.core.tun.SingBoxTunEngine
+import app.novavpn.data.store.GeoDiagnosticsState
 import app.novavpn.domain.model.AppLanguage
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.AppThemeMode
@@ -101,6 +104,7 @@ fun SettingsScreen(
     geoResources: List<GeoResourceItem> = emptyList(),
     isUpdatingGeoResources: Boolean = false,
     unresolvedGeoTags: List<String> = emptyList(),
+    geoDiagnostics: GeoDiagnosticsState = GeoDiagnosticsState(),
     geoActionError: String? = null,
     onRefreshBatteryOptimizationState: () -> Unit = {},
     onUpdateSettings: ((AppSettings) -> AppSettings) -> Unit,
@@ -120,6 +124,7 @@ fun SettingsScreen(
     onUpdateAllGeoResources: () -> Unit = {},
     onRefreshSingleGeoResource: (String) -> Unit = {},
     onDeleteGeoResource: (String) -> Unit = {},
+    onApplySuggestedIranGeoRules: () -> Unit = {},
     onPostMessage: (String) -> Unit = {},
     onTabBarShrinkChanged: (Boolean) -> Unit = {}
 ) {
@@ -208,15 +213,64 @@ fun SettingsScreen(
                         color = look.textSecondary
                     )
                     Spacer(modifier = Modifier.height(6.dp))
-                    GlassSegmented(
-                        options = listOf(
-                            TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV to "Auto (gVisor)",
+                    val singBoxAvailable = remember { SingBoxTunEngine.isAvailable() }
+                    val effectiveTunSelected = if (!singBoxAvailable && settings.tunEnginePreference == TunEnginePreference.SINGBOX_ONLY) {
+                        TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV
+                    } else {
+                        settings.tunEnginePreference
+                    }
+                    val tunOptions = if (singBoxAvailable) {
+                        listOf(
+                            TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV to stringResource(R.string.tun_engine_auto),
                             TunEnginePreference.SINGBOX_ONLY to "sing-box",
                             TunEnginePreference.HEV_SOCKS5_ONLY to "hev-socks5"
-                        ),
-                        selected = settings.tunEnginePreference,
-                        onSelect = { pref -> onUpdateSettings { it.copy(tunEnginePreference = pref) } }
+                        )
+                    } else {
+                        listOf(
+                            TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV to stringResource(R.string.tun_engine_auto),
+                            TunEnginePreference.HEV_SOCKS5_ONLY to "hev-socks5"
+                        )
+                    }
+                    GlassSegmented(
+                        options = tunOptions,
+                        selected = effectiveTunSelected,
+                        onSelect = { pref -> onUpdateSettings { it.copy(tunEnginePreference = pref) } },
+                        modifier = Modifier.testTag("settings_tun_engine_segmented")
                     )
+                    if (!singBoxAvailable) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val disabledRowShape = RoundedCornerShape(14.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .alpha(0.55f)
+                                .clip(disabledRowShape)
+                                .background(look.fill2, disabledRowShape)
+                                .border(0.8.dp, look.separator, disabledRowShape)
+                                .padding(horizontal = 12.dp, vertical = 9.dp)
+                                .testTag("settings_tun_singbox_unavailable_row"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "sing-box",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = look.textPrimary
+                                )
+                                Text(
+                                    text = stringResource(R.string.settings_tun_singbox_unavailable),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = look.textSecondary
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            GlassBadge(
+                                text = stringResource(R.string.settings_tun_unavailable_badge),
+                                color = look.textMuted
+                            )
+                        }
+                    }
                 }
                 GlassDivider()
                 GlassSwitchRow(
@@ -881,6 +935,8 @@ fun SettingsScreen(
             resources = geoResources,
             isUpdatingAll = isUpdatingGeoResources,
             unresolvedTags = unresolvedGeoTags,
+            availableTags = geoDiagnostics.availableTags,
+            suggestIranDatPreset = geoDiagnostics.suggestIranDatPreset,
             errorMessage = geoActionError,
             onClearError = onClearGeoError,
             onAddFromFile = onAddGeoFromUri,
@@ -889,6 +945,7 @@ fun SettingsScreen(
             onUpdateAll = onUpdateAllGeoResources,
             onRefreshSingle = onRefreshSingleGeoResource,
             onDeleteResource = onDeleteGeoResource,
+            onApplyIranDatSuggestion = onApplySuggestedIranGeoRules,
             onPostMessage = onPostMessage,
             onDismiss = {
                 onClearGeoError()

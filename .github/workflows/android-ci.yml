@@ -129,6 +129,12 @@ jobs:
             ./scripts/build-native.sh
           fi
 
+      # Optional: enable to compile sing-box libbox.aar (gVisor TUN) from upstream source
+      # - name: Build Optional sing-box libbox.aar
+      #   run: |
+      #     chmod +x scripts/build-libbox.sh
+      #     ./scripts/build-libbox.sh
+
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
@@ -146,13 +152,23 @@ jobs:
             local variant="$3"
             for apk in "${apk_dir}"/*.apk; do
               base="$(basename "$apk")"
-              case "$base" in
-                *arm64-v8a*)   cp "$apk" "dist/${prefix}-${TAG}-arm64-v8a.apk" ;;
-                *armeabi-v7a*) cp "$apk" "dist/${prefix}-${TAG}-armeabi-v7a.apk" ;;
-                *x86_64*)      cp "$apk" "dist/${prefix}-${TAG}-x86_64.apk" ;;
-                *universal*)   cp "$apk" "dist/${prefix}-${TAG}-universal.apk" ;;
-                *)             cp "$apk" "dist/${prefix}-${TAG}-${variant}.apk" ;;
-              esac
+              if [[ "$prefix" == "NovaVPN-TV" ]]; then
+                case "$base" in
+                  *arm64-v8a*)   cp "$apk" "dist/${prefix}-${TAG}-a64.apk" ;;
+                  *armeabi-v7a*) cp "$apk" "dist/${prefix}-${TAG}-a32.apk" ;;
+                  *x86_64*)      cp "$apk" "dist/${prefix}-${TAG}-intel.apk" ;;
+                  *universal*)   cp "$apk" "dist/${prefix}-${TAG}-all.apk" ;;
+                  *)             cp "$apk" "dist/${prefix}-${TAG}-${variant}.apk" ;;
+                esac
+              else
+                case "$base" in
+                  *arm64-v8a*)   cp "$apk" "dist/${prefix}-${TAG}-arm64-v8a.apk" ;;
+                  *armeabi-v7a*) cp "$apk" "dist/${prefix}-${TAG}-armeabi-v7a.apk" ;;
+                  *x86_64*)      cp "$apk" "dist/${prefix}-${TAG}-x86_64.apk" ;;
+                  *universal*)   cp "$apk" "dist/${prefix}-${TAG}-universal.apk" ;;
+                  *)             cp "$apk" "dist/${prefix}-${TAG}-${variant}.apk" ;;
+                esac
+              fi
             done
           }
 
@@ -218,7 +234,7 @@ jobs:
           else
             gh release create "${TAG}" dist/*.apk dist/SHA256SUMS.txt \
               --title "Nova VPN ${TAG}" \
-              --notes "Android TV: download NovaVPN-TV-${TAG}-arm64-v8a.apk (most TV boxes) or -armeabi-v7a.apk (older boxes)." \
+              --notes "Android TV: download NovaVPN-TV-${TAG}-a64.apk (most TV boxes), -a32.apk (older boxes), or -all.apk (universal)." \
               --generate-notes \
               --latest
           fi

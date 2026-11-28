@@ -8,11 +8,14 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import app.novavpn.core.tun.SingBoxTunEngine
+import app.novavpn.data.log.LogRepository
 import app.novavpn.domain.model.AetherProtocol
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.NovaBackupPayload
 import app.novavpn.domain.model.ObfuscationProfile
 import app.novavpn.domain.model.RouteChain
+import app.novavpn.domain.model.TunEnginePreference
 import app.novavpn.domain.model.VpnMode
 import app.novavpn.domain.model.VpnProfile
 import kotlinx.coroutines.flow.Flow
@@ -110,6 +113,21 @@ object SettingsMigrator {
                 it
             }
         }
+
+    /**
+     * When `libbox.aar` is not bundled, an older preference of [TunEnginePreference.SINGBOX_ONLY]
+     * would fail if not routed to `hev-socks5-tunnel`. Automatically migrate it to
+     * [TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV] while leaving `AUTO` / `HEV_SOCKS5_ONLY` untouched.
+     */
+    internal fun migrateTunEnginePreference(
+        settings: AppSettings,
+        singBoxAvailable: Boolean
+    ): Pair<AppSettings, Boolean> {
+        if (!singBoxAvailable && settings.tunEnginePreference == TunEnginePreference.SINGBOX_ONLY) {
+            return settings.copy(tunEnginePreference = TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV) to true
+        }
+        return settings to false
+    }
 
     private fun ensureIndependentAetherPreset(profiles: List<VpnProfile>): List<VpnProfile> {
         val hasIndependentAether = profiles.any { it.id == VpnProfile.PRESET_AETHER_ID }
@@ -260,6 +278,23 @@ class SettingsRepository(private val context: Context) {
                 val (socks, http) = SettingsMigrator.generateRandomPorts()
                 current.copy(localSocksPort = socks, localHttpPort = http, portsInitialized = true)
             }
+        }
+    }
+
+    suspend fun migrateUnavailableTunEngineIfNeeded(
+        singBoxAvailable: Boolean = SingBoxTunEngine.isAvailable()
+    ) {
+        var migrated = false
+        updateSettings { current ->
+            val (next, changed) = SettingsMigrator.migrateTunEnginePreference(current, singBoxAvailable)
+            if (changed) migrated = true
+            next
+        }
+        if (migrated) {
+            LogRepository.i(
+                "Settings",
+                "Migrated tunEnginePreference from SINGBOX_ONLY to AUTO (hev-socks5-tunnel) because libbox is unavailable"
+            )
         }
     }
 

@@ -37,7 +37,9 @@ object GeoDatParser {
         val cidrs: List<String> = emptyList(),
         val domains: List<String> = emptyList(),
         val matchedTags: Set<String> = emptySet(),
-        val detectedFormat: GeoResourceFormat = GeoResourceFormat.UNKNOWN
+        val detectedFormat: GeoResourceFormat = GeoResourceFormat.UNKNOWN,
+        val totalCountByTag: Map<String, Int> = emptyMap(),
+        val availableTags: Set<String> = emptySet()
     ) {
         fun isEmpty(): Boolean = cidrs.isEmpty() && domains.isEmpty()
     }
@@ -49,7 +51,9 @@ object GeoDatParser {
         val blockRules: List<String> = emptyList(),
         val blockCidrs: List<String> = emptyList(),
         val blockDomains: List<String> = emptyList(),
-        val unresolvedTags: Set<String> = emptySet()
+        val unresolvedTags: Set<String> = emptySet(),
+        val availableTags: Set<String> = emptySet(),
+        val tokenEntryCounts: Map<String, Int> = emptyMap()
     )
 
     /**
@@ -102,9 +106,55 @@ object GeoDatParser {
     }
 
     /**
-     * Extracts CIDR/domain rules matching any requested tag (e.g. "ir", "category-ads-all").
-     * For TEXT_RULES `.dat` files without protobuf sections, matches when [requestedTags] contains
-     * [fileTagHint] or `"all"` / `"custom"`.
+     * Scans a `.dat` file and returns every normalized category tag present (e.g. `all`, `ads`, `ir`, `other`).
+     */
+    fun inspectAllTags(file: File, fileTagHint: String = ""): Set<String> {
+        if (!file.exists() || !file.isFile || file.length() <= 0L) return emptySet()
+        val pbTags = LinkedHashSet<String>()
+        val ok = runCatching {
+            file.inputStream().buffered(64 * 1024).use { stream ->
+                val reader = ProtoReader(stream)
+                var sawEntry = false
+                while (reader.hasMore()) {
+                    val tag = reader.readTag() ?: break
+                    val fieldNumber = tag ushr 3
+                    val wireType = tag and 0x07
+                    if (fieldNumber == 1 && wireType == WIRE_LEN) {
+                        val entryLen = reader.readVarint32() ?: return@use false
+                        if (entryLen <= 0 || entryLen > 32 * 1024 * 1024) return@use false
+                        val sliceLen = minOf(entryLen, 512)
+                        val slice = reader.readExact(sliceLen) ?: return@use false
+                        if (entryLen > sliceLen && !reader.skipExact((entryLen - sliceLen).toLong())) {
+                            return@use false
+                        }
+                        val code = extractTagCodeFromSlice(slice)
+                        if (!code.isNullOrBlank()) {
+                            pbTags.add(code)
+                            sawEntry = true
+                        }
+                    } else {
+                        if (!reader.skipField(wireType)) return@use false
+                    }
+                }
+                sawEntry
+            }
+        }.getOrDefault(false)
+        if (ok && pbTags.isNotEmpty()) return pbTags
+
+        if (file.length() <= 4L * 1024L * 1024L) {
+            val textRes = runCatching { inspectTextRulesFile(file) }.getOrNull()
+            if (textRes != null && textRes.entryCount > 0) {
+                val hint = normalizeTag(fileTagHint.ifBlank { file.name }.substringBeforeLast('.'))
+                return if (hint.isNotBlank()) setOf(hint) else setOf("custom")
+            }
+        }
+        return emptySet()
+    }
+
+    /**
+     * Extracts CIDR/domain rules matching any requested tag (e.g. "ir", "other", "ads").
+     * Collects all available top-level tags, counts total entries per matched tag before capping,
+     * and sorts domain-suffix rules (`*.example.com`) ahead of full-domain rules before applying [maxRules].
      */
     fun extractRulesForTags(
         file: File,
@@ -112,15 +162,17 @@ object GeoDatParser {
         fileTagHint: String = "",
         maxRules: Int = 512
     ): ExtractedGeoRules {
-        if (requestedTags.isEmpty() || maxRules <= 0 || !file.exists() || !file.isFile) {
+        if (maxRules <= 0 || !file.exists() || !file.isFile) {
             return ExtractedGeoRules()
         }
         val normalizedWanted = requestedTags.map { normalizeTag(it) }.filter { it.isNotBlank() }.toSet()
-        if (normalizedWanted.isEmpty()) return ExtractedGeoRules()
 
         val cidrs = LinkedHashSet<String>()
-        val domains = LinkedHashSet<String>()
+        val suffixDomains = LinkedHashSet<String>()
+        val fullDomains = LinkedHashSet<String>()
         val matchedTags = LinkedHashSet<String>()
+        val totalCountByTag = LinkedHashMap<String, Int>()
+        val availableTags = LinkedHashSet<String>()
         var sawGeoIp = false
         var sawGeoSite = false
 
@@ -136,10 +188,12 @@ object GeoDatParser {
                         val parsedEntry = parseTopLevelEntryHeaderAndPayload(
                             entryBytes = entryBytes,
                             wantedTags = normalizedWanted,
-                            remainingBudget = (maxRules - cidrs.size - domains.size).coerceAtLeast(0),
                             cidrsOut = cidrs,
-                            domainsOut = domains,
-                            matchedTagsOut = matchedTags
+                            suffixDomainsOut = suffixDomains,
+                            fullDomainsOut = fullDomains,
+                            matchedTagsOut = matchedTags,
+                            totalCountByTagOut = totalCountByTag,
+                            availableTagsOut = availableTags
                         ) ?: return@use false
                         if (parsedEntry == GeoResourceFormat.V2RAY_GEOIP) sawGeoIp = true
                         if (parsedEntry == GeoResourceFormat.V2RAY_GEOSITE) sawGeoSite = true
@@ -152,37 +206,68 @@ object GeoDatParser {
         }.getOrDefault(false)
 
         if (parsedPb && (sawGeoIp || sawGeoSite)) {
+            val cappedCidrs = cidrs.take(maxRules)
+            val remainingDomainBudget = (maxRules - cappedCidrs.size).coerceAtLeast(0)
+            val prioritizedDomains = (suffixDomains.asSequence() + fullDomains.asSequence())
+                .distinct()
+                .take(remainingDomainBudget)
+                .toList()
             return ExtractedGeoRules(
-                cidrs = cidrs.take(maxRules),
-                domains = domains.take(maxRules),
+                cidrs = cappedCidrs,
+                domains = prioritizedDomains,
                 matchedTags = matchedTags,
-                detectedFormat = if (sawGeoIp && !sawGeoSite) GeoResourceFormat.V2RAY_GEOIP else GeoResourceFormat.V2RAY_GEOSITE
+                detectedFormat = if (sawGeoIp && !sawGeoSite) GeoResourceFormat.V2RAY_GEOIP else GeoResourceFormat.V2RAY_GEOSITE,
+                totalCountByTag = totalCountByTag,
+                availableTags = availableTags
             )
         }
 
         // Fallback plain-text `.dat` rule file matching filename stem (e.g. geoip:custom from custom.dat)
         val normalizedHint = normalizeTag(fileTagHint.substringBeforeLast('.'))
-        if (normalizedHint.isNotBlank() && (normalizedHint in normalizedWanted || "custom" in normalizedWanted || "all" in normalizedWanted)) {
-            if (file.length() <= 4L * 1024L * 1024L) {
-                runCatching {
-                    file.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
-                        lines.forEach { raw ->
-                            if (cidrs.size + domains.size >= maxRules) return@forEach
-                            val token = raw.substringBefore('#').trim()
-                            if (token.isEmpty()) return@forEach
-                            classifyTextRule(token, cidrs, domains)
-                        }
+        if (normalizedHint.isNotBlank() && file.length() <= 4L * 1024L * 1024L) {
+            val allDomains = LinkedHashSet<String>()
+            var totalValid = 0
+            val matchesHint = normalizedHint in normalizedWanted || "custom" in normalizedWanted || "all" in normalizedWanted
+            runCatching {
+                file.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
+                    lines.forEach { raw ->
+                        val token = raw.substringBefore('#').trim()
+                        if (token.isEmpty()) return@forEach
+                        val valid = classifyTextRule(
+                            token = token,
+                            cidrsOut = if (matchesHint) cidrs else null,
+                            domainsOut = if (matchesHint) allDomains else null
+                        )
+                        if (valid) totalValid++
                     }
                 }
-                if (cidrs.isNotEmpty() || domains.isNotEmpty()) {
-                    matchedTags.add(normalizedHint)
-                    return ExtractedGeoRules(
-                        cidrs = cidrs.toList(),
-                        domains = domains.toList(),
-                        matchedTags = matchedTags,
-                        detectedFormat = GeoResourceFormat.TEXT_RULES
-                    )
+            }
+            if (totalValid > 0) {
+                availableTags.add(normalizedHint)
+            }
+            if (matchesHint && (cidrs.isNotEmpty() || allDomains.isNotEmpty())) {
+                matchedTags.add(normalizedHint)
+                totalCountByTag[normalizedHint] = totalValid
+                allDomains.forEach { dom ->
+                    if (dom.startsWith("*.")) suffixDomains.add(dom) else fullDomains.add(dom)
                 }
+                val cappedCidrs = cidrs.take(maxRules)
+                val remainingDomainBudget = (maxRules - cappedCidrs.size).coerceAtLeast(0)
+                val prioritizedDomains = (suffixDomains.asSequence() + fullDomains.asSequence())
+                    .distinct()
+                    .take(remainingDomainBudget)
+                    .toList()
+                return ExtractedGeoRules(
+                    cidrs = cappedCidrs,
+                    domains = prioritizedDomains,
+                    matchedTags = matchedTags,
+                    detectedFormat = GeoResourceFormat.TEXT_RULES,
+                    totalCountByTag = totalCountByTag,
+                    availableTags = availableTags
+                )
+            }
+            if (availableTags.isNotEmpty()) {
+                return ExtractedGeoRules(availableTags = availableTags)
             }
         }
 
@@ -363,13 +448,35 @@ object GeoDatParser {
         }
     }
 
+    private fun extractTagCodeFromSlice(slice: ByteArray): String? {
+        val reader = ByteProtoReader(slice)
+        while (reader.hasMore()) {
+            val tag = reader.readTagOrNull() ?: break
+            val fieldNumber = tag ushr 3
+            val wireType = tag and 0x07
+            if (fieldNumber <= 0) return null
+            if (fieldNumber == 1 && wireType == WIRE_LEN) {
+                val strBytes = reader.readBytesOrNull(maxLen = 256) ?: break
+                val decoded = normalizeTag(strBytes.toString(StandardCharsets.UTF_8))
+                if (decoded.isNotEmpty() && decoded.all { !it.isISOControl() }) {
+                    return decoded
+                }
+            } else {
+                if (!reader.skipField(wireType)) break
+            }
+        }
+        return null
+    }
+
     private fun parseTopLevelEntryHeaderAndPayload(
         entryBytes: ByteArray,
         wantedTags: Set<String>,
-        remainingBudget: Int,
         cidrsOut: MutableSet<String>,
-        domainsOut: MutableSet<String>,
-        matchedTagsOut: MutableSet<String>
+        suffixDomainsOut: MutableSet<String>,
+        fullDomainsOut: MutableSet<String>,
+        matchedTagsOut: MutableSet<String>,
+        totalCountByTagOut: MutableMap<String, Int>,
+        availableTagsOut: MutableSet<String>
     ): GeoResourceFormat? {
         // Scan field 1 (`country_code`) first without allocating sub-messages unless matched
         val pass1 = ByteProtoReader(entryBytes)
@@ -394,14 +501,15 @@ object GeoDatParser {
         }
 
         if (entryTag.isNullOrBlank()) return null
-        if (entryTag !in wantedTags || remainingBudget <= 0) {
+        availableTagsOut.add(entryTag)
+        if (entryTag !in wantedTags) {
             return formatGuess.takeIf { it != GeoResourceFormat.UNKNOWN } ?: GeoResourceFormat.V2RAY_GEOIP
         }
 
         matchedTagsOut.add(entryTag)
-        var added = 0
+        var totalDecodedForEntry = 0
         val pass2 = ByteProtoReader(entryBytes)
-        while (pass2.hasMore() && added < remainingBudget) {
+        while (pass2.hasMore()) {
             val tag = pass2.readTagOrNull() ?: break
             val field = tag ushr 3
             val wire = tag and 0x07
@@ -411,23 +519,24 @@ object GeoDatParser {
                 if (sniff == GeoResourceFormat.V2RAY_GEOSITE) {
                     formatGuess = GeoResourceFormat.V2RAY_GEOSITE
                     val domainRule = decodeDomainEntry(itemBytes)
-                    if (domainRule != null && domainsOut.add(domainRule)) {
-                        added++
+                    if (domainRule != null) {
+                        totalDecodedForEntry++
+                        if (domainRule.startsWith("*.")) suffixDomainsOut.add(domainRule)
+                        else fullDomainsOut.add(domainRule)
                     }
                 } else {
                     val cidrRule = decodeCidrEntry(itemBytes)
                     if (cidrRule != null) {
                         formatGuess = GeoResourceFormat.V2RAY_GEOIP
-                        if (cidrsOut.add(cidrRule)) {
-                            added++
-                        }
+                        totalDecodedForEntry++
+                        cidrsOut.add(cidrRule)
                     } else {
                         val domainRule = decodeDomainEntry(itemBytes)
                         if (domainRule != null) {
                             formatGuess = GeoResourceFormat.V2RAY_GEOSITE
-                            if (domainsOut.add(domainRule)) {
-                                added++
-                            }
+                            totalDecodedForEntry++
+                            if (domainRule.startsWith("*.")) suffixDomainsOut.add(domainRule)
+                            else fullDomainsOut.add(domainRule)
                         }
                     }
                 }
@@ -435,6 +544,7 @@ object GeoDatParser {
                 if (!pass2.skipField(wire)) break
             }
         }
+        totalCountByTagOut[entryTag] = (totalCountByTagOut[entryTag] ?: 0) + totalDecodedForEntry
         return formatGuess
     }
 

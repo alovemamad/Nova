@@ -41,6 +41,7 @@ class NovaVpnApplication : Application() {
             appScope.launch {
                 try {
                     ServiceLocator.settingsRepository.ensurePerInstallRandomPorts()
+                    ServiceLocator.settingsRepository.migrateUnavailableTunEngineIfNeeded()
                     ServiceLocator.geoResourceRepository.loadInitial()
                 } catch (t: Throwable) {
                     Log.e("NovaVpnApp", "startup async init failed", t)

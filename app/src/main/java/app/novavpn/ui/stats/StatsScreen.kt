@@ -40,9 +40,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.novavpn.core.tun.SingBoxTunEngine
+import app.novavpn.core.tun.TunEngineManager
+import app.novavpn.core.tun.displayLabel
 import app.novavpn.domain.model.DataUsageDay
 import app.novavpn.domain.model.DiagnosticReport
 import app.novavpn.domain.model.SessionRecord
+import app.novavpn.domain.model.TunEnginePreference
+import app.novavpn.domain.model.TunEngineType
 import app.novavpn.ui.glass.GlassBadge
 import app.novavpn.ui.glass.GlassCapsuleButton
 import app.novavpn.ui.glass.GlassCard
@@ -78,6 +83,8 @@ fun StatsScreen(
     dailyUsage: List<DataUsageDay>,
     sessions: List<SessionRecord>,
     diagnosticReport: DiagnosticReport,
+    activeTunEngine: TunEngineType = TunEngineType.NONE,
+    tunEnginePreference: TunEnginePreference = TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV,
     onRunDiagnostics: () -> Unit,
     onApplySafeFix: () -> Unit,
     onClearStats: () -> Unit,
@@ -290,6 +297,22 @@ fun StatsScreen(
                                         )
                                     }
                                 }
+
+                                val singBoxAvailable = remember { SingBoxTunEngine.isAvailable() }
+                                val effectiveEngineLabel = if (activeTunEngine != TunEngineType.NONE) {
+                                    activeTunEngine.displayLabel()
+                                } else {
+                                    TunEngineManager.resolveEngineTypes(tunEnginePreference, singBoxAvailable)
+                                        .first()
+                                        .displayLabel()
+                                }
+                                GlassDivider()
+                                GlassRow(
+                                    title = stringResource(R.string.stats_tun_engine),
+                                    subtitle = effectiveEngineLabel,
+                                    icon = GlassIcons.Server,
+                                    modifier = Modifier.testTag("stats_tun_engine_row")
+                                )
 
                                 if (diagnosticReport.timestampMs > 0L) {
                                     GlassDivider()

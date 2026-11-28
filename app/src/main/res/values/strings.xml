@@ -323,4 +323,14 @@
     <string name="profiles_clipboard_empty">Clipboard is empty</string>
     <string name="ctrl_press_to_toggle">Press OK to connect</string>
     <string name="ctrl_press_to_disconnect">Connected · Press OK to disconnect</string>
+
+    <!-- TUN Engine & Geo Diagnostics -->
+    <string name="tun_engine_auto">Auto</string>
+    <string name="settings_tun_singbox_unavailable">sing-box core is not bundled in this build</string>
+    <string name="settings_tun_unavailable_badge">Unavailable</string>
+    <string name="stats_tun_engine">Active TUN Engine</string>
+    <string name="geo_available_tags">Available categories in imported files: %1$s</string>
+    <string name="geo_iran_suggest_title">Suggested rules for iran.dat</string>
+    <string name="geo_iran_suggest_body">Detected iran.dat categories (ads, other, ir). Use geosite:ads to block ads and geosite:other + geosite:ir for direct Iranian sites?</string>
+    <string name="geo_iran_suggest_apply">Apply iran.dat Rules</string>
 </resources>

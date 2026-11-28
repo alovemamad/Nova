@@ -74,6 +74,8 @@ fun GeoResourcesDialog(
     resources: List<GeoResourceItem>,
     isUpdatingAll: Boolean,
     unresolvedTags: List<String> = emptyList(),
+    availableTags: List<String> = emptyList(),
+    suggestIranDatPreset: Boolean = false,
     errorMessage: String?,
     onClearError: () -> Unit,
     onAddFromFile: (Uri) -> Unit,
@@ -82,6 +84,7 @@ fun GeoResourcesDialog(
     onUpdateAll: () -> Unit,
     onRefreshSingle: (String) -> Unit,
     onDeleteResource: (String) -> Unit,
+    onApplyIranDatSuggestion: () -> Unit = {},
     onPostMessage: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
@@ -234,7 +237,63 @@ fun GeoResourcesDialog(
                             style = MaterialTheme.typography.bodySmall,
                             color = look.textPrimary
                         )
+                        if (availableTags.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = stringResource(
+                                    R.string.geo_available_tags,
+                                    availableTags.joinToString(", ")
+                                ),
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFamily),
+                                color = look.textSecondary
+                            )
+                        }
                     }
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = suggestIranDatPreset) {
+            val suggestShape = RoundedCornerShape(16.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+                    .clip(suggestShape)
+                    .background(look.accent.copy(alpha = 0.14f), suggestShape)
+                    .border(0.8.dp, look.accent.copy(alpha = 0.42f), suggestShape)
+                    .testTag("geo_iran_suggest_banner")
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = GlassIcons.Bolt,
+                            contentDescription = null,
+                            tint = look.accent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.geo_iran_suggest_title),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = look.accent
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.geo_iran_suggest_body),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = look.textPrimary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    GlassCapsuleButton(
+                        text = stringResource(R.string.geo_iran_suggest_apply),
+                        icon = GlassIcons.CheckCircle,
+                        prominent = true,
+                        onClick = onApplyIranDatSuggestion,
+                        modifier = Modifier.testTag("geo_iran_suggest_apply_button")
+                    )
                 }
             }
         }

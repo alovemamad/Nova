@@ -3,6 +3,7 @@ package app.novavpn.ui.onboarding
 import android.Manifest
 import android.app.Activity
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -76,6 +77,10 @@ fun OnboardingScreen(
     var page by remember { mutableIntStateOf(0) }
     var vpnGranted by remember { mutableStateOf(prepareVpnIntent() == null) }
     var notifGranted by remember { mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) }
+
+    BackHandler(enabled = page > 0) {
+        page--
+    }
 
     LaunchedEffect(isTv) {
         if (isTv) {

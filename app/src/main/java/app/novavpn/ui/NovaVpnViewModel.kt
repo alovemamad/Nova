@@ -18,6 +18,7 @@ import app.novavpn.core.net.GitHubUpdater
 import app.novavpn.core.net.LanShareHelper
 import app.novavpn.core.net.SharedHttpClient
 import app.novavpn.data.log.LogRepository
+import app.novavpn.data.store.GeoDiagnosticsState
 import app.novavpn.data.store.GeoResourceRepository
 import app.novavpn.data.store.ProfileShareCodec
 import app.novavpn.data.store.SettingsMigrator
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,9 +84,16 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
 
     val geoResources: StateFlow<List<GeoResourceItem>> = geoResourceRepo.resources
     val isUpdatingGeoResources: StateFlow<Boolean> = geoResourceRepo.isUpdatingAll
-    val unresolvedGeoTags: StateFlow<List<String>> = combine(geoResources, profiles) { _, profileList ->
-        geoResourceRepo.findUnresolvedGeoTags(profileList)
-    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    val geoDiagnostics: StateFlow<GeoDiagnosticsState> = combine(
+        geoResources,
+        profiles,
+        activeProfile
+    ) { _, profileList, active ->
+        geoResourceRepo.inspectGeoDiagnostics(profileList, active)
+    }.stateIn(viewModelScope, SharingStarted.Lazily, GeoDiagnosticsState())
+    val unresolvedGeoTags: StateFlow<List<String>> = geoDiagnostics
+        .map { it.unresolvedTags }
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private val _geoActionError = MutableStateFlow<String?>(null)
     val geoActionError: StateFlow<String?> = _geoActionError.asStateFlow()
@@ -490,6 +499,17 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun applySuggestedIranGeoRules() {
+        viewModelScope.launch {
+            val current = settingsRepo.getActiveProfile()
+            val updated = GeoResourceRepository.applyIranDatSuggestionToProfile(current)
+            if (updated != current) {
+                settingsRepo.saveProfile(updated, setActive = true)
+                _uiMessage.value = "Updated ${updated.name} rules for iran.dat (geosite:other, geosite:ir, geosite:ads)"
+            }
+        }
+    }
+
     private fun decodeQrTextFromImageUri(uri: Uri): Result<String> = runCatching {
         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         appCtx.contentResolver.openInputStream(uri)?.use { stream ->
@@ -604,7 +624,10 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 _updateInfo.value = UpdateInfo(checking = true)
-                val info = diagnosticsEngine.checkForUpdates(currentVersion)
+                val info = diagnosticsEngine.checkForUpdates(
+                    currentVersion = currentVersion,
+                    isTv = DevicePlatform.isTv(appCtx)
+                )
                 settingsRepo.updateSettings {
                     it.copy(lastAutoUpdateCheckMs = System.currentTimeMillis())
                 }
@@ -627,7 +650,10 @@ class NovaVpnViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
                 settingsRepo.updateSettings { it.copy(lastAutoUpdateCheckMs = now) }
-                val info = diagnosticsEngine.checkForUpdates(currentVersion)
+                val info = diagnosticsEngine.checkForUpdates(
+                    currentVersion = currentVersion,
+                    isTv = DevicePlatform.isTv(appCtx)
+                )
                 val snoozedForThisTag = info.latestTag != null &&
                     info.latestTag == s.snoozedUpdateTag &&
                     now < s.snoozedUpdateUntilMs

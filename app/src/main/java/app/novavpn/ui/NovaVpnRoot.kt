@@ -110,6 +110,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
     val batteryIgnored by viewModel.batteryOptimizationIgnored.collectAsStateWithLifecycle()
     val geoResources by viewModel.geoResources.collectAsStateWithLifecycle()
     val isUpdatingGeoResources by viewModel.isUpdatingGeoResources.collectAsStateWithLifecycle()
+    val geoDiagnostics by viewModel.geoDiagnostics.collectAsStateWithLifecycle()
     val unresolvedGeoTags by viewModel.unresolvedGeoTags.collectAsStateWithLifecycle()
     val geoActionError by viewModel.geoActionError.collectAsStateWithLifecycle()
     val uiMessage by viewModel.uiMessage.collectAsStateWithLifecycle()
@@ -381,6 +382,8 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         dailyUsage = dailyUsage,
                                                         sessions = sessions,
                                                         diagnosticReport = diagReport,
+                                                        activeTunEngine = status.activeTunEngine,
+                                                        tunEnginePreference = settings.tunEnginePreference,
                                                         onRunDiagnostics = { viewModel.runDiagnostics() },
                                                         onApplySafeFix = { viewModel.applySafeConnectionFix() },
                                                         onClearStats = { viewModel.clearUsageStats() },
@@ -397,6 +400,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         geoResources = geoResources,
                                                         isUpdatingGeoResources = isUpdatingGeoResources,
                                                         unresolvedGeoTags = unresolvedGeoTags,
+                                                        geoDiagnostics = geoDiagnostics,
                                                         geoActionError = geoActionError,
                                                         onRefreshBatteryOptimizationState = { viewModel.refreshBatteryOptimizationState() },
                                                         onUpdateSettings = { t -> viewModel.updateSettings(t) },
@@ -416,6 +420,7 @@ fun NovaVpnRoot(viewModel: NovaVpnViewModel = viewModel()) {
                                                         onUpdateAllGeoResources = { viewModel.refreshAllGeoResources() },
                                                         onRefreshSingleGeoResource = { id -> viewModel.refreshGeoResource(id) },
                                                         onDeleteGeoResource = { id -> viewModel.deleteGeoResource(id) },
+                                                        onApplySuggestedIranGeoRules = { viewModel.applySuggestedIranGeoRules() },
                                                         onPostMessage = { msg -> viewModel.postMessage(msg) },
                                                         onTabBarShrinkChanged = { tabBarShrunk = it }
                                                     )

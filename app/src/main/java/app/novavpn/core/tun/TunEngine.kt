@@ -26,6 +26,12 @@ import java.io.File
 
 class TunEngineException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+fun TunEngineType.displayLabel(): String = when (this) {
+    TunEngineType.SING_BOX_LIBBOX -> "sing-box (libbox)"
+    TunEngineType.HEV_SOCKS5_TUNNEL -> "hev-socks5-tunnel"
+    TunEngineType.NONE -> "—"
+}
+
 interface TunEngine {
     val type: TunEngineType
     suspend fun start(
@@ -558,11 +564,15 @@ class TunEngineManager(private val context: Context) {
     ): Result<TunEngineType> {
         stopTun()
         val fd = tunInterface.fd
-        val enginesToTry: List<TunEngine> = when (preference) {
-            TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV ->
-                if (SingBoxTunEngine.isAvailable()) listOf(singBox, hev) else listOf(hev)
-            TunEnginePreference.SINGBOX_ONLY -> listOf(singBox)
-            TunEnginePreference.HEV_SOCKS5_ONLY -> listOf(hev)
+        val singBoxAvailable = SingBoxTunEngine.isAvailable()
+        if (preference == TunEnginePreference.SINGBOX_ONLY && !singBoxAvailable) {
+            LogRepository.w("TunManager", "sing-box requested but libbox missing; using hev")
+        }
+        val enginesToTry: List<TunEngine> = resolveEngineTypes(preference, singBoxAvailable).map { type ->
+            when (type) {
+                TunEngineType.SING_BOX_LIBBOX -> singBox
+                TunEngineType.HEV_SOCKS5_TUNNEL, TunEngineType.NONE -> hev
+            }
         }
 
         var lastError: Throwable? = null
@@ -606,6 +616,28 @@ class TunEngineManager(private val context: Context) {
                 throw c
             } catch (_: Throwable) {
             }
+        }
+    }
+
+    companion object {
+        fun resolveEngineTypes(
+            preference: TunEnginePreference,
+            singBoxAvailable: Boolean
+        ): List<TunEngineType> = when (preference) {
+            TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV ->
+                if (singBoxAvailable) {
+                    listOf(TunEngineType.SING_BOX_LIBBOX, TunEngineType.HEV_SOCKS5_TUNNEL)
+                } else {
+                    listOf(TunEngineType.HEV_SOCKS5_TUNNEL)
+                }
+            TunEnginePreference.SINGBOX_ONLY ->
+                if (singBoxAvailable) {
+                    listOf(TunEngineType.SING_BOX_LIBBOX)
+                } else {
+                    listOf(TunEngineType.HEV_SOCKS5_TUNNEL)
+                }
+            TunEnginePreference.HEV_SOCKS5_ONLY ->
+                listOf(TunEngineType.HEV_SOCKS5_TUNNEL)
         }
     }
 }

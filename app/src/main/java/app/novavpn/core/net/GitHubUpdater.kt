@@ -13,7 +13,6 @@ import app.novavpn.core.DevicePlatform
 import app.novavpn.core.runCatchingCancellable
 import app.novavpn.data.log.LogRepository
 import app.novavpn.domain.model.UpdateInfo
-import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -63,7 +62,7 @@ object GitHubUpdater {
     suspend fun checkLatestRelease(
         currentVersion: String,
         supportedAbis: List<String> = Build.SUPPORTED_ABIS.toList(),
-        isTv: Boolean = BuildConfig.IS_TV
+        isTv: Boolean
     ): UpdateInfo = withContext(Dispatchers.IO) {
         runCatchingCancellable {
             val client = httpClient()
@@ -117,7 +116,7 @@ object GitHubUpdater {
         body: String,
         currentVersion: String,
         supportedAbis: List<String> = listOf("arm64-v8a", "armeabi-v7a", "x86_64"),
-        isTv: Boolean = BuildConfig.IS_TV
+        isTv: Boolean = false
     ): UpdateInfo {
         val obj = json.parseToJsonElement(body).jsonObject
         val tag = obj["tag_name"]?.jsonPrimitive?.content.orEmpty()
@@ -179,7 +178,7 @@ object GitHubUpdater {
     internal fun selectBestApkAsset(
         assets: List<ReleaseApkAsset>,
         supportedAbis: List<String>,
-        isTv: Boolean = BuildConfig.IS_TV
+        isTv: Boolean = false
     ): ReleaseApkAsset? {
         val filtered = assets.filter { asset ->
             if (!asset.name.endsWith(".apk", ignoreCase = true)) return@filter false
@@ -187,6 +186,33 @@ object GitHubUpdater {
             if (isTv) isTvAsset else !isTvAsset
         }
         if (filtered.isEmpty()) return null
+
+        if (isTv) {
+            // TV APK filenames intentionally avoid standard ABI substrings ("arm64-v8a", "armeabi-v7a",
+            // "x86_64", "universal") so older phone updaters (v1.0.9-v1.0.11) can never match a TV APK.
+            val tvAbiTokens = mapOf(
+                "arm64-v8a" to listOf("a64"),
+                "armeabi-v7a" to listOf("a32"),
+                "x86_64" to listOf("intel")
+            )
+            for (abi in supportedAbis) {
+                val normalizedAbi = abi.lowercase(Locale.US)
+                val tokens = tvAbiTokens[normalizedAbi] ?: continue
+                val found = filtered.firstOrNull { asset ->
+                    val lower = asset.name.lowercase(Locale.US)
+                    tokens.any { tok -> Regex("(^|[-_.])$tok([-_.]|$)").containsMatchIn(lower) }
+                }
+                if (found != null) return found
+            }
+            return filtered.firstOrNull { asset ->
+                val lower = asset.name.lowercase(Locale.US)
+                Regex("(^|[-_.])all([-_.]|$)").containsMatchIn(lower)
+            } ?: filtered.firstOrNull { asset ->
+                val lower = asset.name.lowercase(Locale.US)
+                !hasExplicitAbiTag(lower) && !hasExplicitTvAbiTag(lower)
+            }
+        }
+
         val abiPatterns = mapOf(
             "arm64-v8a" to listOf("arm64-v8a", "arm64", "aarch64"),
             "armeabi-v7a" to listOf("armeabi-v7a", "armeabi", "armv7"),
@@ -213,6 +239,10 @@ object GitHubUpdater {
                 val lower = asset.name.lowercase(Locale.US)
                 !hasExplicitAbiTag(lower)
             }
+    }
+
+    private fun hasExplicitTvAbiTag(lowerName: String): Boolean {
+        return Regex("(^|[-_.])(a64|a32|intel)([-_.]|$)").containsMatchIn(lowerName)
     }
 
     private fun hasExplicitAbiTag(lowerName: String): Boolean {

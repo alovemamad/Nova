@@ -1,7 +1,10 @@
 package app.novavpn.data.store
 
+import app.novavpn.core.tun.TunEngineManager
 import app.novavpn.domain.model.AppSettings
 import app.novavpn.domain.model.RouteChain
+import app.novavpn.domain.model.TunEnginePreference
+import app.novavpn.domain.model.TunEngineType
 import app.novavpn.domain.model.VpnMode
 import app.novavpn.domain.model.VpnProfile
 import org.junit.Assert.assertEquals
@@ -117,5 +120,54 @@ class SettingsMigrationTest {
         assertEquals(12, migrated.getValue("custom").validateSecs)
         assertEquals(VpnProfile.DEFAULT_VALIDATE_SECS, migrated.getValue("new").validateSecs)
         assertEquals(8, VpnProfile.DEFAULT_VALIDATE_SECS)
+    }
+
+    @Test
+    fun `migrates SINGBOX_ONLY to AUTO when libbox is missing and leaves other prefs untouched`() {
+        val (migrated, changed) = SettingsMigrator.migrateTunEnginePreference(
+            AppSettings(tunEnginePreference = TunEnginePreference.SINGBOX_ONLY),
+            singBoxAvailable = false
+        )
+        assertTrue(changed)
+        assertEquals(TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV, migrated.tunEnginePreference)
+
+        val (unchangedWhenPresent, changedPresent) = SettingsMigrator.migrateTunEnginePreference(
+            AppSettings(tunEnginePreference = TunEnginePreference.SINGBOX_ONLY),
+            singBoxAvailable = true
+        )
+        assertFalse(changedPresent)
+        assertEquals(TunEnginePreference.SINGBOX_ONLY, unchangedWhenPresent.tunEnginePreference)
+
+        val (unchangedHev, changedHev) = SettingsMigrator.migrateTunEnginePreference(
+            AppSettings(tunEnginePreference = TunEnginePreference.HEV_SOCKS5_ONLY),
+            singBoxAvailable = false
+        )
+        assertFalse(changedHev)
+        assertEquals(TunEnginePreference.HEV_SOCKS5_ONLY, unchangedHev.tunEnginePreference)
+    }
+
+    @Test
+    fun `TunEngineManager resolveEngineTypes skips sing-box when libbox missing`() {
+        assertEquals(
+            listOf(TunEngineType.HEV_SOCKS5_TUNNEL),
+            TunEngineManager.resolveEngineTypes(TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV, singBoxAvailable = false)
+        )
+        assertEquals(
+            listOf(TunEngineType.HEV_SOCKS5_TUNNEL),
+            TunEngineManager.resolveEngineTypes(TunEnginePreference.SINGBOX_ONLY, singBoxAvailable = false)
+        )
+        assertEquals(
+            listOf(TunEngineType.HEV_SOCKS5_TUNNEL),
+            TunEngineManager.resolveEngineTypes(TunEnginePreference.HEV_SOCKS5_ONLY, singBoxAvailable = false)
+        )
+
+        assertEquals(
+            listOf(TunEngineType.SING_BOX_LIBBOX, TunEngineType.HEV_SOCKS5_TUNNEL),
+            TunEngineManager.resolveEngineTypes(TunEnginePreference.AUTO_SINGBOX_FALLBACK_HEV, singBoxAvailable = true)
+        )
+        assertEquals(
+            listOf(TunEngineType.SING_BOX_LIBBOX),
+            TunEngineManager.resolveEngineTypes(TunEnginePreference.SINGBOX_ONLY, singBoxAvailable = true)
+        )
     }
 }

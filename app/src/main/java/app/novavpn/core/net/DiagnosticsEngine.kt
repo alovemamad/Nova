@@ -422,7 +422,7 @@ class DiagnosticsEngine {
 
     suspend fun checkForUpdates(
         currentVersion: String,
-        isTv: Boolean = com.example.BuildConfig.IS_TV
+        isTv: Boolean
     ): UpdateInfo =
         GitHubUpdater.checkLatestRelease(currentVersion, isTv = isTv)
 }

@@ -1,0 +1,65 @@
+TASK: Fix 4 bugs in Nova VPN (current main, v1.0.12). Do not touch the connection-speed logic, geo rules, signing config or secrets. Keep the phone build behaviour identical except where stated.
+
+======================================================================
+BUG 1 - Phones that updated through the in-app updater are stuck in landscape
+======================================================================
+Root cause (confirmed from code):
+ a) Phone clients v1.0.9-v1.0.11 have the OLD GitHubUpdater.selectBestApkAsset with NO "-TV-" filter. It loops over ABIs and takes the first asset whose name contains "arm64-v8a" etc. The release now contains NovaVPN-TV-<tag>-arm64-v8a.apk (and sorts before NovaVPN-<tag>-...), so those phones downloaded and installed the TV APK.
+ b) The TV APK (app/src/tv/AndroidManifest.xml) hard-codes android:screenOrientation="landscape" on MainActivity and MainActivity also sets requestedOrientation=LANDSCAPE when DevicePlatform.isTv(), and DevicePlatform.isTv() returns true whenever BuildConfig.IS_TV is true. So the TV APK on a phone = landscape + TV UI forever.
+ c) The v1.0.12 TV APK's updater picks only "-TV-" assets, so those phones never return to the phone build.
+
+Fixes:
+ 1. app/src/tv/AndroidManifest.xml: REMOVE android:screenOrientation="landscape". Never lock orientation in the manifest.
+ 2. DevicePlatform.isTv(context) must be based on the REAL device, not on the build flavor:
+      true if PackageManager.FEATURE_LEANBACK  OR  UiModeManager.currentModeType == UI_MODE_TYPE_TELEVISION  OR  (BuildConfig.IS_TV AND the device lacks FEATURE_TOUCHSCREEN).
+    Remove the unconditional `if (BuildConfig.IS_TV) return true`. Cache the result.
+ 3. MainActivity: lock landscape only when DevicePlatform.isTv(this) is true (already so, keep it); otherwise do not set requestedOrientation at all (and explicitly leave the default UNSPECIFIED).
+ 4. Updater: select assets by the REAL device type, not BuildConfig. checkLatestRelease/parseLatestReleaseJson/selectBestApkAsset get `isTv` from DevicePlatform.isTv(context) (pass it from the caller; keep the parameter for tests). Result: a TV APK that is installed on a phone will update itself to the PHONE APK on the next release (same applicationId and same signature, so Android accepts it).
+ 5. NEW TV ASSET NAMES so the OLD clients (v1.0.9-v1.0.11, which we cannot change) can never match a TV asset. The old code matches any name containing: arm64-v8a, arm64, aarch64, armeabi-v7a, armeabi, armv7, x86_64, x64, amd64, x86, and prefers names containing "universal". So TV assets must contain NONE of those strings. Use:
+        NovaVPN-TV-${TAG}-a64.apk      (arm64-v8a)
+        NovaVPN-TV-${TAG}-a32.apk      (armeabi-v7a)
+        NovaVPN-TV-${TAG}-intel.apk    (x86_64)
+        NovaVPN-TV-${TAG}-all.apk      (universal)
+    Phone assets keep their current names. Update android-ci.yml (copy_split_apks for the TV build must rename abi tokens with this mapping), the release notes line, and selectBestApkAsset: TV mode maps a64->arm64-v8a, a32->armeabi-v7a, intel->x86_64, all->universal and considers only names containing "-TV-"; phone mode ignores names containing "-TV-".
+ 6. Update GitHubUpdaterTest: (a) release with phone + TV assets -> phone picks phone asset for each ABI + universal fallback; (b) TV picks the TV asset for each ABI + "all" fallback; (c) release with NO TV assets -> TV mode returns null asset without crashing; (d) simulate the OLD algorithm on the new asset list and assert it never selects a "-TV-" asset (write the old matching logic inside the test); (e) SHA256SUMS.txt is never chosen.
+ 7. Also run the phone-build unit tests/assemble with `-PtvBuild=true` NOT set and confirm the merged phone manifest has no LEANBACK_LAUNCHER, no screenOrientation, and that the TV merged manifest has no screenOrientation either.
+
+======================================================================
+BUG 2 - Choosing the "sing-box" TUN engine does not work
+======================================================================
+Root cause (confirmed from code/repo): SingBoxTunEngine uses reflection on io.nekohasekai.libbox.Libbox, but libbox.aar is NOT in the repo (app/libs contains only hev-socks5-tunnel.aar, scripts/build-native.sh and the CI check only fetch/verify hev). So Libbox is never found: SINGBOX_ONLY always fails with "libbox.aar is not bundled in app/libs/", and "Auto (gVisor)" silently uses hev.
+Do this (do NOT try to download libbox from the internet inside the app; the sandbox/CI may not have it):
+ 1. In Settings, show the sing-box option as unavailable when !SingBoxTunEngine.isAvailable(): disabled/greyed row with the text "sing-box core is not bundled in this build". Rename "Auto (gVisor)" to "Auto" and show the engine that is actually used ("hev-socks5-tunnel") in the Stats/Home details.
+ 2. If a saved profile has tunEnginePreference == SINGBOX_ONLY and libbox is unavailable, migrate it automatically to AUTO (hev) at startup (same place the other profile migrations run, e.g. migrateValidateSecs in SettingsDataStore) and log one line. Do not fail the connection.
+ 3. In TunEngineManager.startTun: for SINGBOX_ONLY with libbox missing, fall back to hev instead of returning failure, and log a warning "sing-box requested but libbox missing; using hev".
+ 4. Add an OPTIONAL build step (scripts/build-libbox.sh + a commented-out/conditional CI step) that builds libbox.aar from the official SagerNet/sing-box source (`go install` gomobile, `make lib_android` or `go run ./cmd/internal/build_libbox -target android`, tags with_gvisor,with_clash_api etc.), outputs app/libs/libbox.aar, and keeps the aar OUT of git unless I add it. If libbox.aar is present, SingBoxTunEngine.isAvailable() becomes true automatically. Be honest in the final answer about what you could not build/verify. Also double check the reflection adapter against the libbox PlatformInterface of the sing-box version used (method names/signatures differ between versions); if it cannot be verified, say so.
+ 5. Unit test: the migration SINGBOX_ONLY->AUTO when libbox is unavailable, and the fallback selection list in TunEngineManager (make the "engines to try" selection a pure function so it can be tested).
+
+======================================================================
+BUG 3 - Find and fix other problems in the TV work (review pass)
+======================================================================
+Review the TV commit (871cd7c) and the changed files yourself and fix real problems only. Things to check specifically:
+ - Anything that still uses BuildConfig.IS_TV to decide runtime behaviour (DiagnosticsEngine.kt line ~425, NovaTheme.kt via DevicePlatform): it must use the real-device check so a TV APK on a phone behaves like a phone (touch UI, drag bottom bar, widgets/tile enabled again - note the TV manifest REMOVES NovaTileService and the widget receivers; since a TV APK may land on phones, consider NOT removing them with tools:node="remove" and instead leaving them declared but no-op on TV, which the code already does via DevicePlatform.isTv).
+ - The TV APK declares uses-feature touchscreen/camera/etc required=false; confirm the PHONE manifest still works on phones and is not accidentally filtered out of Play Protect / package installer.
+ - CI: confirm the phone and TV outputs never overwrite each other and that SHA256SUMS.txt lists every APK. Confirm unit tests run for BOTH builds.
+ - Updater download/installation path on TV (unknown-sources intent guarded with try/catch).
+ - Focus handling: dialogs return focus, BACK closes dialogs, no focus trap in the bottom tab row.
+List every issue found with file and line, and what you changed.
+
+FINAL: run ./gradlew testDebugUnitTest and assembleDebug for phone and for -PtvBuild=true. Report what you could not test (real TV, real phone update, libbox).
+
+======================================================================
+BUG 4 - Iranian sites do not open directly: log shows "Compiled geo rules: direct=0, block=502" and "routing rules loaded: 502 block, 4 direct"
+======================================================================
+Context: the 4 direct rules are only the defaults (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, *.ir). Nothing from geo data reached the direct list. The imported geo file is iran-hosted-domains `iran.dat`, whose categories are: all, ads, proxy, ir, other, tld-ir (it does NOT contain `category-ads-all`). GeoResourceRepository.compileRulesForProfile(maxPerDirection=512) caps each direction.
+Do:
+ 1. In GeoResourceRepository.compileRulesForProfile log, per rule token (e.g. geosite:other, geosite:ir), how many entries were found in the loaded .dat, and WARN clearly when a token resolves to 0 entries or the category does not exist in any imported file (e.g. "geosite:category-ads-all not found in imported geo files; available: all, ads, proxy, ir, other, tld-ir").
+ 2. Show the same warning in the Geo Resources dialog (not only the log), plus a one-tap suggestion: if only iran.dat is imported, suggest `geosite:ads` for block and `geosite:other` + `geosite:ir` for direct, and let the user apply it with one button.
+ 3. Verify end to end that a `geosite:other` (and `geosite:ir`) direct rule really compiles to N>0 domain rules and is passed to Aether (--route-direct) and to the TUN layer; add a unit test with a tiny fake .dat containing categories ir/other/ads.
+ 4. The 512 cap: when a category has more than 512 entries, do not silently truncate; log "truncated X of Y", prefer domain-suffix rules (shorter list) first, and raise the cap to 2048 if Aether accepts it (check the Aether flags/limits in the repo docs; if it cannot, keep 512 and say so in the final answer).
+ 5. Make sure the default VpnProfile directRules/blockRules defaults are unchanged for existing users; do not overwrite user-edited rules.
+
+======================================================================
+KEEP IN MIND (already working, do not regress)
+======================================================================
+Connection speed (cached core ready ~0.5s), the direct battery-optimization request, glass UI/bottom bar migration, and the geo import. Do not change them.

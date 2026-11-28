@@ -40,6 +40,12 @@ sealed class GeoValidationException(message: String) : IOException(message) {
     class NetworkFailure(message: String) : GeoValidationException(message)
 }
 
+data class GeoDiagnosticsState(
+    val unresolvedTags: List<String> = emptyList(),
+    val availableTags: List<String> = emptyList(),
+    val suggestIranDatPreset: Boolean = false
+)
+
 class GeoResourceRepository(private val context: Context) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -400,94 +406,16 @@ class GeoResourceRepository(private val context: Context) {
         profile: VpnProfile,
         maxPerDirection: Int = 512
     ): GeoDatParser.CompiledProfileGeoRules = withContext(Dispatchers.IO) {
-        val directParsed = RoutingRuleParser.parse(profile.directRules).validRules
-        val blockParsed = RoutingRuleParser.parse(profile.blockRules).validRules
-
-        val directGeoIpTags = directParsed.filter { it.kind == RuleKind.GEOIP }.map { it.value }.toSet()
-        val directGeoSiteTags = directParsed.filter { it.kind == RuleKind.GEOSITE }.map { it.value }.toSet()
-        val blockGeoIpTags = blockParsed.filter { it.kind == RuleKind.GEOIP }.map { it.value }.toSet()
-        val blockGeoSiteTags = blockParsed.filter { it.kind == RuleKind.GEOSITE }.map { it.value }.toSet()
-
-        if (directGeoIpTags.isEmpty() && directGeoSiteTags.isEmpty() &&
-            blockGeoIpTags.isEmpty() && blockGeoSiteTags.isEmpty()
-        ) {
-            return@withContext GeoDatParser.CompiledProfileGeoRules()
-        }
-
         val readyItems = _resources.value.filter { it.status == GeoResourceStatus.READY }
-        val directCidrs = LinkedHashSet<String>()
-        val directDomains = LinkedHashSet<String>()
-        val blockCidrs = LinkedHashSet<String>()
-        val blockDomains = LinkedHashSet<String>()
-        val matchedTags = LinkedHashSet<String>()
-
-        fun extractCached(item: GeoResourceItem, wantedTags: Set<String>, limit: Int): GeoDatParser.ExtractedGeoRules {
-            if (wantedTags.isEmpty() || limit <= 0) return GeoDatParser.ExtractedGeoRules()
-            val file = File(storageDir, item.localFileName)
-            if (!file.isFile || file.length() <= 0L) return GeoDatParser.ExtractedGeoRules()
-            val key = "${item.id}:${item.sha256}:${wantedTags.sorted().joinToString(",")}:$limit"
-            compiledTagCache[key]?.let { return it }
-            val extracted = GeoDatParser.extractRulesForTags(
-                file = file,
-                requestedTags = wantedTags,
-                fileTagHint = item.name,
-                maxRules = limit
-            )
-            if (compiledTagCache.size > 64) compiledTagCache.clear()
-            compiledTagCache[key] = extracted
-            return extracted
-        }
-
-        for (item in readyItems) {
-            if (directGeoIpTags.isNotEmpty() &&
-                (item.format == GeoResourceFormat.V2RAY_GEOIP || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
-            ) {
-                val res = extractCached(item, directGeoIpTags, maxPerDirection)
-                directCidrs.addAll(res.cidrs)
-                directDomains.addAll(res.domains)
-                matchedTags.addAll(res.matchedTags)
+        compileRulesFromItems(
+            profile = profile,
+            readyItems = readyItems,
+            resolveFile = { item -> File(storageDir, item.localFileName) },
+            maxPerDirection = maxPerDirection,
+            compiledTagCache = compiledTagCache,
+            logSink = { isWarn, tag, message ->
+                if (isWarn) LogRepository.w(tag, message) else LogRepository.i(tag, message)
             }
-            if (directGeoSiteTags.isNotEmpty() &&
-                (item.format == GeoResourceFormat.V2RAY_GEOSITE || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
-            ) {
-                val res = extractCached(item, directGeoSiteTags, maxPerDirection)
-                directCidrs.addAll(res.cidrs)
-                directDomains.addAll(res.domains)
-                matchedTags.addAll(res.matchedTags)
-            }
-            if (blockGeoIpTags.isNotEmpty() &&
-                (item.format == GeoResourceFormat.V2RAY_GEOIP || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
-            ) {
-                val res = extractCached(item, blockGeoIpTags, maxPerDirection)
-                blockCidrs.addAll(res.cidrs)
-                blockDomains.addAll(res.domains)
-                matchedTags.addAll(res.matchedTags)
-            }
-            if (blockGeoSiteTags.isNotEmpty() &&
-                (item.format == GeoResourceFormat.V2RAY_GEOSITE || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
-            ) {
-                val res = extractCached(item, blockGeoSiteTags, maxPerDirection)
-                blockCidrs.addAll(res.cidrs)
-                blockDomains.addAll(res.domains)
-                matchedTags.addAll(res.matchedTags)
-            }
-        }
-
-        val allRequested = directGeoIpTags + directGeoSiteTags + blockGeoIpTags + blockGeoSiteTags
-        val unresolved = allRequested - matchedTags
-        val dCidrs = directCidrs.take(maxPerDirection)
-        val dDomains = directDomains.take((maxPerDirection - dCidrs.size).coerceAtLeast(0))
-        val bCidrs = blockCidrs.take(maxPerDirection)
-        val bDomains = blockDomains.take((maxPerDirection - bCidrs.size).coerceAtLeast(0))
-
-        GeoDatParser.CompiledProfileGeoRules(
-            directRules = dCidrs + dDomains,
-            directCidrs = dCidrs,
-            directDomains = dDomains,
-            blockRules = bCidrs + bDomains,
-            blockCidrs = bCidrs,
-            blockDomains = bDomains,
-            unresolvedTags = unresolved
         )
     }
 
@@ -499,6 +427,20 @@ class GeoResourceRepository(private val context: Context) {
         val readyItems = _resources.value.filter { it.status == GeoResourceStatus.READY }
         findUnresolvedGeoTagsInItems(
             profiles = profiles,
+            readyItems = readyItems,
+            resolveFile = { item -> File(storageDir, item.localFileName) },
+            compiledTagCache = compiledTagCache
+        )
+    }
+
+    suspend fun inspectGeoDiagnostics(
+        profiles: List<VpnProfile>,
+        activeProfile: VpnProfile?
+    ): GeoDiagnosticsState = withContext(Dispatchers.IO) {
+        val readyItems = _resources.value.filter { it.status == GeoResourceStatus.READY }
+        findGeoDiagnosticsInItems(
+            profiles = profiles,
+            activeProfile = activeProfile,
             readyItems = readyItems,
             resolveFile = { item -> File(storageDir, item.localFileName) },
             compiledTagCache = compiledTagCache
@@ -705,12 +647,189 @@ class GeoResourceRepository(private val context: Context) {
             return name.replace(Regex("[^A-Za-z0-9._-]"), "_").takeLast(64).ifBlank { "resource.dat" }
         }
 
+        internal fun compileRulesFromItems(
+            profile: VpnProfile,
+            readyItems: List<GeoResourceItem>,
+            resolveFile: (GeoResourceItem) -> File,
+            maxPerDirection: Int = 512,
+            compiledTagCache: ConcurrentHashMap<String, GeoDatParser.ExtractedGeoRules>? = null,
+            logSink: (isWarn: Boolean, tag: String, message: String) -> Unit = { _, _, _ -> }
+        ): GeoDatParser.CompiledProfileGeoRules {
+            val directParsed = RoutingRuleParser.parse(profile.directRules).validRules
+            val blockParsed = RoutingRuleParser.parse(profile.blockRules).validRules
+
+            val directGeoIpTags = directParsed.filter { it.kind == RuleKind.GEOIP && it.value != "private" }.map { it.value }.toSet()
+            val directGeoSiteTags = directParsed.filter { it.kind == RuleKind.GEOSITE && it.value != "private" }.map { it.value }.toSet()
+            val blockGeoIpTags = blockParsed.filter { it.kind == RuleKind.GEOIP && it.value != "private" }.map { it.value }.toSet()
+            val blockGeoSiteTags = blockParsed.filter { it.kind == RuleKind.GEOSITE && it.value != "private" }.map { it.value }.toSet()
+
+            if (directGeoIpTags.isEmpty() && directGeoSiteTags.isEmpty() &&
+                blockGeoIpTags.isEmpty() && blockGeoSiteTags.isEmpty()
+            ) {
+                return GeoDatParser.CompiledProfileGeoRules()
+            }
+
+            val directCidrs = LinkedHashSet<String>()
+            val directDomains = LinkedHashSet<String>()
+            val blockCidrs = LinkedHashSet<String>()
+            val blockDomains = LinkedHashSet<String>()
+            val matchedGeoIp = LinkedHashSet<String>()
+            val matchedGeoSite = LinkedHashSet<String>()
+            val availableTags = LinkedHashSet<String>()
+            val totalCountsGeoIp = LinkedHashMap<String, Int>()
+            val totalCountsGeoSite = LinkedHashMap<String, Int>()
+
+            fun extractCached(item: GeoResourceItem, wantedTags: Set<String>, limit: Int): GeoDatParser.ExtractedGeoRules {
+                if (wantedTags.isEmpty() || limit <= 0) return GeoDatParser.ExtractedGeoRules()
+                val file = resolveFile(item)
+                if (!file.isFile || file.length() <= 0L) return GeoDatParser.ExtractedGeoRules()
+                val key = "${item.id}:${item.sha256}:${wantedTags.sorted().joinToString(",")}:$limit"
+                compiledTagCache?.get(key)?.let { return it }
+                val extracted = GeoDatParser.extractRulesForTags(
+                    file = file,
+                    requestedTags = wantedTags,
+                    fileTagHint = item.name,
+                    maxRules = limit
+                )
+                if (compiledTagCache != null) {
+                    if (compiledTagCache.size > 64) compiledTagCache.clear()
+                    compiledTagCache[key] = extracted
+                }
+                return extracted
+            }
+
+            for (item in readyItems) {
+                var itemScanned = false
+                if (directGeoIpTags.isNotEmpty() &&
+                    (item.format == GeoResourceFormat.V2RAY_GEOIP || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+                ) {
+                    val res = extractCached(item, directGeoIpTags, maxPerDirection)
+                    directCidrs.addAll(res.cidrs)
+                    directDomains.addAll(res.domains)
+                    matchedGeoIp.addAll(res.matchedTags)
+                    availableTags.addAll(res.availableTags)
+                    res.totalCountByTag.forEach { (k, v) -> totalCountsGeoIp[k] = (totalCountsGeoIp[k] ?: 0) + v }
+                    itemScanned = true
+                }
+                if (directGeoSiteTags.isNotEmpty() &&
+                    (item.format == GeoResourceFormat.V2RAY_GEOSITE || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+                ) {
+                    val res = extractCached(item, directGeoSiteTags, maxPerDirection)
+                    directCidrs.addAll(res.cidrs)
+                    directDomains.addAll(res.domains)
+                    matchedGeoSite.addAll(res.matchedTags)
+                    availableTags.addAll(res.availableTags)
+                    res.totalCountByTag.forEach { (k, v) -> totalCountsGeoSite[k] = (totalCountsGeoSite[k] ?: 0) + v }
+                    itemScanned = true
+                }
+                if (blockGeoIpTags.isNotEmpty() &&
+                    (item.format == GeoResourceFormat.V2RAY_GEOIP || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+                ) {
+                    val res = extractCached(item, blockGeoIpTags, maxPerDirection)
+                    blockCidrs.addAll(res.cidrs)
+                    blockDomains.addAll(res.domains)
+                    matchedGeoIp.addAll(res.matchedTags)
+                    availableTags.addAll(res.availableTags)
+                    res.totalCountByTag.forEach { (k, v) -> totalCountsGeoIp[k] = (totalCountsGeoIp[k] ?: 0) + v }
+                    itemScanned = true
+                }
+                if (blockGeoSiteTags.isNotEmpty() &&
+                    (item.format == GeoResourceFormat.V2RAY_GEOSITE || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
+                ) {
+                    val res = extractCached(item, blockGeoSiteTags, maxPerDirection)
+                    blockCidrs.addAll(res.cidrs)
+                    blockDomains.addAll(res.domains)
+                    matchedGeoSite.addAll(res.matchedTags)
+                    availableTags.addAll(res.availableTags)
+                    res.totalCountByTag.forEach { (k, v) -> totalCountsGeoSite[k] = (totalCountsGeoSite[k] ?: 0) + v }
+                    itemScanned = true
+                }
+                if (!itemScanned) {
+                    val f = resolveFile(item)
+                    if (f.isFile && f.length() > 0L) {
+                        availableTags.addAll(GeoDatParser.inspectAllTags(f, item.name))
+                    }
+                }
+            }
+
+            // Ensure domain suffixes (*.domain) always precede full domains across merged results
+            val sortedDirectDomains = directDomains.sortedBy { if (it.startsWith("*.")) 0 else 1 }
+            val sortedBlockDomains = blockDomains.sortedBy { if (it.startsWith("*.")) 0 else 1 }
+
+            val dCidrs = directCidrs.take(maxPerDirection)
+            val dDomains = sortedDirectDomains.take((maxPerDirection - dCidrs.size).coerceAtLeast(0))
+            val bCidrs = blockCidrs.take(maxPerDirection)
+            val bDomains = sortedBlockDomains.take((maxPerDirection - bCidrs.size).coerceAtLeast(0))
+
+            val tokenCounts = LinkedHashMap<String, Int>()
+            val availStr = if (availableTags.isEmpty()) "none" else availableTags.joinToString(", ")
+
+            fun logTokens(prefix: String, tags: Set<String>, totalCounts: Map<String, Int>) {
+                for (tag in tags) {
+                    val token = "$prefix:$tag"
+                    val foundCount = totalCounts[tag] ?: 0
+                    tokenCounts[token] = foundCount
+                    if (foundCount > 0) {
+                        logSink(false, "GeoResources", "$token -> $foundCount entries found in loaded .dat")
+                        if (foundCount > maxPerDirection) {
+                            logSink(
+                                true,
+                                "GeoResources",
+                                "$token: truncated $maxPerDirection of $foundCount entries (limit=$maxPerDirection, domain suffixes prioritized)"
+                            )
+                        }
+                    } else {
+                        logSink(
+                            true,
+                            "GeoResources",
+                            "$token not found in imported geo files; available: $availStr"
+                        )
+                    }
+                }
+            }
+
+            logTokens("geoip", directGeoIpTags + blockGeoIpTags, totalCountsGeoIp)
+            logTokens("geosite", directGeoSiteTags + blockGeoSiteTags, totalCountsGeoSite)
+
+            val unresolved = LinkedHashSet<String>()
+            (directGeoSiteTags + blockGeoSiteTags).filterNot { it in matchedGeoSite }.forEach { unresolved.add(it) }
+            (directGeoIpTags + blockGeoIpTags).filterNot { it in matchedGeoIp }.forEach { unresolved.add(it) }
+
+            return GeoDatParser.CompiledProfileGeoRules(
+                directRules = dCidrs + dDomains,
+                directCidrs = dCidrs,
+                directDomains = dDomains,
+                blockRules = bCidrs + bDomains,
+                blockCidrs = bCidrs,
+                blockDomains = bDomains,
+                unresolvedTags = unresolved,
+                availableTags = availableTags,
+                tokenEntryCounts = tokenCounts
+            )
+        }
+
         internal fun findUnresolvedGeoTagsInItems(
             profiles: List<VpnProfile>,
             readyItems: List<GeoResourceItem>,
             resolveFile: (GeoResourceItem) -> File,
             compiledTagCache: ConcurrentHashMap<String, GeoDatParser.ExtractedGeoRules>? = null
         ): List<String> {
+            return findGeoDiagnosticsInItems(
+                profiles = profiles,
+                activeProfile = profiles.firstOrNull(),
+                readyItems = readyItems,
+                resolveFile = resolveFile,
+                compiledTagCache = compiledTagCache
+            ).unresolvedTags
+        }
+
+        internal fun findGeoDiagnosticsInItems(
+            profiles: List<VpnProfile>,
+            activeProfile: VpnProfile?,
+            readyItems: List<GeoResourceItem>,
+            resolveFile: (GeoResourceItem) -> File,
+            compiledTagCache: ConcurrentHashMap<String, GeoDatParser.ExtractedGeoRules>? = null
+        ): GeoDiagnosticsState {
             val wantedGeoIpTags = LinkedHashSet<String>()
             val wantedGeoSiteTags = LinkedHashSet<String>()
             for (profile in profiles) {
@@ -725,17 +844,20 @@ class GeoResourceRepository(private val context: Context) {
                     }
                 }
             }
-            if (wantedGeoIpTags.isEmpty() && wantedGeoSiteTags.isEmpty()) return emptyList()
 
             val matchedGeoIp = LinkedHashSet<String>()
             val matchedGeoSite = LinkedHashSet<String>()
+            val availableTags = LinkedHashSet<String>()
 
-            fun extractCachedForKind(item: GeoResourceItem, wantedTags: Set<String>): Set<String> {
-                if (wantedTags.isEmpty()) return emptySet()
+            fun extractCachedForKind(item: GeoResourceItem, wantedTags: Set<String>): GeoDatParser.ExtractedGeoRules {
                 val file = resolveFile(item)
-                if (!file.isFile || file.length() <= 0L) return emptySet()
+                if (!file.isFile || file.length() <= 0L) return GeoDatParser.ExtractedGeoRules()
+                if (wantedTags.isEmpty()) {
+                    val tags = GeoDatParser.inspectAllTags(file, item.name)
+                    return GeoDatParser.ExtractedGeoRules(availableTags = tags)
+                }
                 val key = "${item.id}:${item.sha256}:${wantedTags.sorted().joinToString(",")}:512"
-                compiledTagCache?.get(key)?.let { return it.matchedTags }
+                compiledTagCache?.get(key)?.let { return it }
                 val extracted = GeoDatParser.extractRulesForTags(
                     file = file,
                     requestedTags = wantedTags,
@@ -746,26 +868,91 @@ class GeoResourceRepository(private val context: Context) {
                     if (compiledTagCache.size > 64) compiledTagCache.clear()
                     compiledTagCache[key] = extracted
                 }
-                return extracted.matchedTags
+                return extracted
             }
 
             for (item in readyItems) {
+                var inspectedAny = false
                 if (wantedGeoIpTags.isNotEmpty() &&
                     (item.format == GeoResourceFormat.V2RAY_GEOIP || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
                 ) {
-                    matchedGeoIp.addAll(extractCachedForKind(item, wantedGeoIpTags))
+                    val res = extractCachedForKind(item, wantedGeoIpTags)
+                    matchedGeoIp.addAll(res.matchedTags)
+                    availableTags.addAll(res.availableTags)
+                    inspectedAny = true
                 }
                 if (wantedGeoSiteTags.isNotEmpty() &&
                     (item.format == GeoResourceFormat.V2RAY_GEOSITE || item.format == GeoResourceFormat.TEXT_RULES || item.format == GeoResourceFormat.UNKNOWN)
                 ) {
-                    matchedGeoSite.addAll(extractCachedForKind(item, wantedGeoSiteTags))
+                    val res = extractCachedForKind(item, wantedGeoSiteTags)
+                    matchedGeoSite.addAll(res.matchedTags)
+                    availableTags.addAll(res.availableTags)
+                    inspectedAny = true
+                }
+                if (!inspectedAny) {
+                    val f = resolveFile(item)
+                    if (f.isFile && f.length() > 0L) {
+                        availableTags.addAll(GeoDatParser.inspectAllTags(f, item.name))
+                    }
                 }
             }
 
-            return buildList {
+            val unresolved = buildList {
                 wantedGeoSiteTags.filterNot { it in matchedGeoSite }.forEach { add("geosite:$it") }
                 wantedGeoIpTags.filterNot { it in matchedGeoIp }.forEach { add("geoip:$it") }
             }
+
+            val hasIranDatCategories = "ads" in availableTags && "other" in availableTags && "ir" in availableTags
+            val suggestIranDat = if (hasIranDatCategories && activeProfile != null) {
+                val activeDirectTags = RoutingRuleParser.parse(activeProfile.directRules).validRules
+                    .filter { it.kind == RuleKind.GEOSITE }
+                    .map { it.value }
+                    .toSet()
+                val activeBlockTags = RoutingRuleParser.parse(activeProfile.blockRules).validRules
+                    .filter { it.kind == RuleKind.GEOSITE }
+                    .map { it.value }
+                    .toSet()
+                val needsDirect = "other" !in activeDirectTags || "ir" !in activeDirectTags
+                val needsBlock = "ads" !in activeBlockTags || ("category-ads-all" in activeBlockTags && "category-ads-all" !in availableTags)
+                needsDirect || needsBlock
+            } else {
+                false
+            }
+
+            return GeoDiagnosticsState(
+                unresolvedTags = unresolved,
+                availableTags = availableTags.toList(),
+                suggestIranDatPreset = suggestIranDat
+            )
+        }
+
+        /**
+         * Updates the active profile to use `iran.dat` categories (`direct: geosite:other, geosite:ir`;
+         * `block: geosite:ads`), replacing only an unresolved `geosite:category-ads-all` entry while
+         * preserving all user-edited IPs, CIDRs, domains, and custom rules.
+         */
+        fun applyIranDatSuggestionToProfile(profile: VpnProfile): VpnProfile {
+            val existingDirect = profile.directRules
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toMutableList()
+            val directLower = existingDirect.map { it.lowercase(Locale.US) }.toMutableSet()
+            if (directLower.add("geosite:other")) existingDirect.add("geosite:other")
+            if (directLower.add("geosite:ir")) existingDirect.add("geosite:ir")
+
+            val existingBlock = profile.blockRules
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.equals("geosite:category-ads-all", ignoreCase = true) }
+                .toMutableList()
+            val blockLower = existingBlock.map { it.lowercase(Locale.US) }.toMutableSet()
+            if (blockLower.add("geosite:ads")) existingBlock.add("geosite:ads")
+
+            return profile.copy(
+                directRules = existingDirect.joinToString("\n"),
+                blockRules = existingBlock.joinToString("\n")
+            )
         }
     }
 }

@@ -153,14 +153,14 @@ class GitHubUpdaterTest {
     fun `selectBestApkAsset strictly separates phone and TV APKs in combined release`() {
         val mixedAssets = listOf(
             ReleaseApkAsset("SHA256SUMS.txt", "https://example.com/SHA256SUMS.txt", 256L),
+            ReleaseApkAsset("NovaVPN-TV-v2.1.0-a64.apk", "https://example.com/tv-a64.apk", 26_100_000L),
+            ReleaseApkAsset("NovaVPN-TV-v2.1.0-a32.apk", "https://example.com/tv-a32.apk", 24_100_000L),
+            ReleaseApkAsset("NovaVPN-TV-v2.1.0-intel.apk", "https://example.com/tv-intel.apk", 25_100_000L),
+            ReleaseApkAsset("NovaVPN-TV-v2.1.0-all.apk", "https://example.com/tv-all.apk", 48_100_000L),
             ReleaseApkAsset("NovaVPN-v2.1.0-arm64-v8a.apk", "https://example.com/phone-arm64.apk", 26_000_000L),
             ReleaseApkAsset("NovaVPN-v2.1.0-armeabi-v7a.apk", "https://example.com/phone-v7a.apk", 24_000_000L),
             ReleaseApkAsset("NovaVPN-v2.1.0-x86_64.apk", "https://example.com/phone-x86_64.apk", 25_000_000L),
-            ReleaseApkAsset("NovaVPN-v2.1.0-universal.apk", "https://example.com/phone-uni.apk", 48_000_000L),
-            ReleaseApkAsset("NovaVPN-TV-v2.1.0-arm64-v8a.apk", "https://example.com/tv-arm64.apk", 26_100_000L),
-            ReleaseApkAsset("NovaVPN-TV-v2.1.0-armeabi-v7a.apk", "https://example.com/tv-v7a.apk", 24_100_000L),
-            ReleaseApkAsset("NovaVPN-TV-v2.1.0-x86_64.apk", "https://example.com/tv-x86_64.apk", 25_100_000L),
-            ReleaseApkAsset("NovaVPN-TV-v2.1.0-universal.apk", "https://example.com/tv-uni.apk", 48_100_000L)
+            ReleaseApkAsset("NovaVPN-v2.1.0-universal.apk", "https://example.com/phone-uni.apk", 48_000_000L)
         )
 
         // Phone build (isTv = false) picks only phone APKs
@@ -170,10 +170,24 @@ class GitHubUpdaterTest {
         assertEquals("NovaVPN-v2.1.0-universal.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("riscv64"), isTv = false)?.name)
 
         // TV build (isTv = true) picks only TV APKs
-        assertEquals("NovaVPN-TV-v2.1.0-arm64-v8a.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("arm64-v8a"), isTv = true)?.name)
-        assertEquals("NovaVPN-TV-v2.1.0-armeabi-v7a.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("armeabi-v7a"), isTv = true)?.name)
-        assertEquals("NovaVPN-TV-v2.1.0-x86_64.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("x86_64"), isTv = true)?.name)
-        assertEquals("NovaVPN-TV-v2.1.0-universal.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("riscv64"), isTv = true)?.name)
+        assertEquals("NovaVPN-TV-v2.1.0-a64.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("arm64-v8a"), isTv = true)?.name)
+        assertEquals("NovaVPN-TV-v2.1.0-a32.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("armeabi-v7a"), isTv = true)?.name)
+        assertEquals("NovaVPN-TV-v2.1.0-intel.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("x86_64"), isTv = true)?.name)
+        assertEquals("NovaVPN-TV-v2.1.0-all.apk", GitHubUpdater.selectBestApkAsset(mixedAssets, listOf("riscv64"), isTv = true)?.name)
+
+        // Simulate old v1.0.9-v1.0.11 phone ABI matching (substring check with NO -TV- filter):
+        // because TV filenames come first and use a64/a32/intel/all, old phone updaters skip all TV APKs
+        // and still land on the phone APK instead of bricking a phone into TV mode.
+        val legacyPhoneMatch = { abiAliases: List<String> ->
+            mixedAssets.firstOrNull { asset ->
+                asset.name.endsWith(".apk", ignoreCase = true) &&
+                    abiAliases.any { alias -> asset.name.lowercase().contains(alias) }
+            }
+        }
+        assertEquals("NovaVPN-v2.1.0-arm64-v8a.apk", legacyPhoneMatch(listOf("arm64-v8a", "arm64", "aarch64"))?.name)
+        assertEquals("NovaVPN-v2.1.0-armeabi-v7a.apk", legacyPhoneMatch(listOf("armeabi-v7a", "armeabi", "armv7"))?.name)
+        assertEquals("NovaVPN-v2.1.0-x86_64.apk", legacyPhoneMatch(listOf("x86_64", "x64", "amd64"))?.name)
+        assertEquals("NovaVPN-v2.1.0-universal.apk", legacyPhoneMatch(listOf("universal", "all-abi"))?.name)
     }
 
     @Test

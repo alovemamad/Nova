@@ -22,3 +22,4 @@ keystore.properties
 *.apk
 *.aab
 /native-src/
+app/libs/libbox.aar
